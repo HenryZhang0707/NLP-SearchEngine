@@ -1,0 +1,89 @@
+# NLP-SearchEngine
+
+基于 **BM25 + 向量数据库 + 两阶段 Router** 的中文自适应混合搜索引擎（NLP 大作业）。离线构建 BM25 与向量数据库，在线按需触发向量检索，用 RRF 融合排名。
+
+- [设计与分工](DESIGN.md)
+- [跨组 API 契约](contracts/RETRIEVAL.md)
+- [开题汇报 PDF](slides/proposal.pdf) / [Typst 源文件](slides/proposal.typ)
+- [实施计划与历史讨论](PLAN.md)
+
+## 目录结构
+
+```text
+contracts/    双方共有：analyzer、IndexReader、向量/编码 Protocol、HTTP schema、conformance
+  retrieval.py          A2：EmbeddingSpec / VectorManifest / TextEncoder / VectorWriter / VectorReader
+  api.py                B：四种 mode、路由回显、阶段耗时与 JSON Schema
+  RETRIEVAL.md          字段、发布、错误和版本兼容说明
+offline/      离线侧：BM25 与向量数据库都在这里构建
+  build.py              倒排表、tf/df、长度/位置与 BM25 参数
+  build_hybrid.py       统一双索引构建编排（依赖注入）
+  vector_build.py       文档批量编码、写库协议、快照校验与 manifest 发布；Qdrant writer 桩
+  disk_index.py         IndexReader 的真实磁盘实现
+online/       在线侧：查询编码、BM25、Router、向量召回、RRF、高亮、HTTP
+  router.py             规则选择器，不读 qrels、不调用大模型
+  fusion.py             RRF 排名融合
+  vector_index.py       内存精确向量测试替身；Qdrant reader 桩
+  engine.py             lexical / dense / hybrid / adaptive 四模式编排
+fixtures/     tiny_corpus.jsonl 与既有 tiny_index（仅词法产物）
+tests/        标准库 runner；安装 pytest 后也可直接运行 pytest
+```
+
+纪律：跨组只依赖 contracts/；在线不 import offline.*（除 DiskIndex），离线不 import online.*。BM25 离线“构建”指索引/统计，查询打分仍在在线侧。
+
+## 快速开始：词法闭环与契约测试（无额外依赖）
+
+```bash
+# 1. 构建词法索引（保留旧目录，不在框架更新中修改既有 fixtures）
+python3 -m offline.build --corpus fixtures/tiny_corpus.jsonl \
+    --out /tmp/nlp-tiny-bm25 --dataset tiny --k1 1.2 --b 0.75
+
+# 2. 词法 conformance
+python3 -m contracts.conformance /tmp/nlp-tiny-bm25 fixtures/tiny_corpus.jsonl
+
+# 3. 全部测试：包含离线双索引、假向量、路由与真实本地 HTTP 请求
+python3 tests/run.py
+
+# 4. 启动词法服务；真实向量适配器尚未接入 CLI
+python3 -m online.server --index /tmp/nlp-tiny-bm25 --port 8000
+
+curl -s -X POST localhost:8000/search -H 'Content-Type: application/json' \
+    -d '{"query": "心肌梗死 症状", "mode": "lexical", "k": 5}'
+curl -s localhost:8000/index/info
+```
+
+当前 CLI 的 vector_ready=false。dense/hybrid 请求返回 503；adaptive 如需语义分支会明确标记 fallback，不能把降级结果当成成功的混合评测。
+
+## 扩充后的构建/在线接线
+
+真实 embedding 和 Qdrant 适配器由两组分别补齐；以下是已冻结的调用结构，**不是已可用的生产示例**：
+
+```python
+# 离线：writer 配置相同 out_dir 下的快照导出目录
+bundle = build_hybrid(corpus_path, out_dir, dataset,
+                      encoder=document_encoder, writer=vector_writer,
+                      collection="dataset-build-id")
+
+# 在线：仅加载/查询同版产物，不建库
+engine = SearchEngine(lexical_reader, encoder=query_encoder, vectors=vector_reader,
+                      config=RetrievalConfig(candidate_k=200, rrf_c=60))
+response = engine.search(SearchRequest(query="手机掉水里怎么办", mode="adaptive"))
+```
+
+四种请求模式：
+
+| mode | 行为 |
+|---|---|
+| lexical（默认） | 仅 BM25；兼容 TF-IDF |
+| dense | 仅向量检索 |
+| hybrid | 每次 BM25 + 向量，RRF 融合 |
+| adaptive | 先 BM25，规则 Router 决定是否语义补充与融合 |
+
+HTTP 响应 v2.0 新增 routing / timings_ms；普通自然语言查询改为 OR 词项候选。显式布尔/短语当前仍报 400，未实现前不会被 Router 静默绕过。详细参数、分页和兼容规则见契约文档。
+
+## 当前状态与后续工作
+
+**已可用**：bigram 占位分词、词法构建/读取、BM25/TF-IDF、普通 OR 查询、Top-K/高亮/HTTP；双索引构建编排、指纹/配置/快照发布检查；规则 Router、RRF、四模式编排、降级和阶段耗时；假编码器 + 内存精确向量的契约测试。
+
+**待实现**：真实 embedding 模型适配器；Qdrant/HNSW 建库、快照与只读查询适配器；真实服务启动接线；布尔/短语过滤；独立评测器、UI、全量性能优化。
+
+RM3/SLM 查询扩展仍是旧桩，不是当前必做主线。内存测试通过不代表真实语义质量或 HNSW 性能已经验收。

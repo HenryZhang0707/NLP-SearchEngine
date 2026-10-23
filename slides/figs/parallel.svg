@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="520" viewBox="0 0 1100 520">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#7a8aa0"/>
+    </marker>
+  </defs>
+
+  <!-- 共享分词器 -->
+  <rect x="353" y="34" width="400" height="76" rx="12" fill="#23373b" opacity="0.06"/>
+  <rect x="350" y="30" width="400" height="76" rx="12" fill="#eef1f5" stroke="#64748b" stroke-width="2"/>
+  <text x="550" y="78" font-family="MiSans, Noto Sans CJK SC" font-size="20" font-weight="bold" text-anchor="middle" fill="#1f2937">共享契约：分词器 / ID / 编码器</text>
+
+  <!-- 离线组 -->
+  <rect x="43" y="214" width="400" height="170" rx="12" fill="#23373b" opacity="0.06"/>
+  <rect x="40" y="210" width="400" height="170" rx="12" fill="#f3f7fd" stroke="#2563eb" stroke-width="2"/>
+  <g font-family="MiSans, Noto Sans CJK SC">
+    <text x="72" y="256" font-size="23" font-weight="bold" fill="#2563eb">离线组</text>
+    <text x="72" y="298" font-size="20" fill="#1f2937">构建 BM25 与向量数据库</text>
+    <text x="72" y="334" font-size="20" fill="#1f2937">交付双索引 / 快照 / 校验</text>
+  </g>
+
+  <!-- 在线组 -->
+  <rect x="663" y="214" width="400" height="170" rx="12" fill="#23373b" opacity="0.06"/>
+  <rect x="660" y="210" width="400" height="170" rx="12" fill="#f0faf9" stroke="#0d9488" stroke-width="2"/>
+  <g font-family="MiSans, Noto Sans CJK SC">
+    <text x="692" y="256" font-size="23" font-weight="bold" fill="#0d9488">在线组</text>
+    <text x="692" y="298" font-size="20" fill="#1f2937">用假索引与假向量库先开发</text>
+    <text x="692" y="334" font-size="20" fill="#1f2937">实现 Router / 召回 / RRF</text>
+  </g>
+
+  <line x1="430" y1="110" x2="268" y2="202" stroke="#7a8aa0" stroke-width="2.5" marker-end="url(#arr)"/>
+  <line x1="670" y1="110" x2="832" y2="202" stroke="#7a8aa0" stroke-width="2.5" marker-end="url(#arr)"/>
+  <line x1="440" y1="295" x2="652" y2="295" stroke="#7a8aa0" stroke-width="2.5" marker-end="url(#arr)"/>
+  <text x="548" y="278" font-family="MiSans, Noto Sans CJK SC" font-size="17" text-anchor="middle" fill="#64748b">双索引小样本</text>
+
+  <!-- 同一套测试 -->
+  <rect x="273" y="412" width="560" height="84" rx="12" fill="#23373b" opacity="0.15"/>
+  <rect x="270" y="408" width="560" height="84" rx="12" fill="#23373b"/>
+  <text x="550" y="461" font-family="MiSans, Noto Sans CJK SC" font-size="20" font-weight="bold" text-anchor="middle" fill="#ffffff">契约测试覆盖 ID / 向量配置 / 检索路由</text>
+
+  <line x1="240" y1="384" x2="414" y2="400" stroke="#7a8aa0" stroke-width="2.5" marker-end="url(#arr)"/>
+  <line x1="860" y1="384" x2="686" y2="400" stroke="#7a8aa0" stroke-width="2.5" marker-end="url(#arr)"/>
+</svg>

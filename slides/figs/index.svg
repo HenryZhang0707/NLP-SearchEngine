@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="440" viewBox="0 0 1000 440">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#7a8aa0"/>
+    </marker>
+  </defs>
+
+  <!-- 左：三篇文档 -->
+  <g font-family="MiSans, Noto Sans CJK SC">
+    <rect x="23" y="39" width="205" height="92" rx="12" fill="#23373b" opacity="0.06"/>
+    <rect x="20" y="36" width="205" height="92" rx="12" fill="#e8eefc" stroke="#2563eb" stroke-width="2"/>
+    <text x="42" y="72" font-size="21" font-weight="bold" fill="#1f2937">文档 1</text>
+    <text x="42" y="106" font-size="19" fill="#475569">心肌梗死的早期症状</text>
+
+    <rect x="23" y="171" width="205" height="92" rx="12" fill="#23373b" opacity="0.06"/>
+    <rect x="20" y="168" width="205" height="92" rx="12" fill="#e8eefc" stroke="#2563eb" stroke-width="2"/>
+    <text x="42" y="204" font-size="21" font-weight="bold" fill="#1f2937">文档 2</text>
+    <text x="42" y="238" font-size="19" fill="#475569">糖尿病饮食指南</text>
+
+    <rect x="23" y="303" width="205" height="92" rx="12" fill="#23373b" opacity="0.06"/>
+    <rect x="20" y="300" width="205" height="92" rx="12" fill="#e8eefc" stroke="#2563eb" stroke-width="2"/>
+    <text x="42" y="336" font-size="21" font-weight="bold" fill="#1f2937">文档 3</text>
+    <text x="42" y="370" font-size="19" fill="#475569">心肌梗死急救方法</text>
+  </g>
+
+  <!-- 汇聚箭头 -->
+  <line x1="231" y1="82" x2="269" y2="150" stroke="#7a8aa0" stroke-width="2.5" marker-end="url(#arr)"/>
+  <line x1="231" y1="214" x2="269" y2="228" stroke="#7a8aa0" stroke-width="2.5" marker-end="url(#arr)"/>
+  <line x1="231" y1="346" x2="269" y2="310" stroke="#7a8aa0" stroke-width="2.5" marker-end="url(#arr)"/>
+
+  <!-- 中：倒排索引表 -->
+  <rect x="278" y="43" width="432" height="364" rx="12" fill="#23373b" opacity="0.06"/>
+  <rect x="275" y="40" width="432" height="364" rx="12" fill="#f4f6f9" stroke="#64748b" stroke-width="2"/>
+  <text x="491" y="88" font-family="MiSans, Noto Sans CJK SC" font-size="26" font-weight="bold" text-anchor="middle" fill="#1f2937">倒排索引</text>
+  <text x="491" y="114" font-family="MiSans, Noto Sans CJK SC" font-size="16" text-anchor="middle" fill="#64748b">分词后按词项归并</text>
+  <line x1="295" y1="126" x2="687" y2="126" stroke="#cbd5e1" stroke-width="1.5"/>
+  <g font-family="MiSans, Noto Sans CJK SC" font-size="21">
+    <text x="295" y="162" font-weight="bold" fill="#1f2937">心肌梗死</text>
+    <text x="434" y="162" fill="#7a8aa0">→</text>
+    <text x="472" y="162" fill="#475569">[文档 1, 文档 3]</text>
+
+    <text x="295" y="218" font-weight="bold" fill="#1f2937">症状</text>
+    <text x="434" y="218" fill="#7a8aa0">→</text>
+    <text x="472" y="218" fill="#475569">[文档 1]</text>
+
+    <text x="295" y="274" font-weight="bold" fill="#1f2937">急救</text>
+    <text x="434" y="274" fill="#7a8aa0">→</text>
+    <text x="472" y="274" fill="#475569">[文档 3]</text>
+
+    <text x="295" y="330" font-weight="bold" fill="#1f2937">饮食</text>
+    <text x="434" y="330" fill="#7a8aa0">→</text>
+    <text x="472" y="330" fill="#475569">[文档 2]</text>
+  </g>
+  <text x="295" y="382" font-family="MiSans, Noto Sans CJK SC" font-size="17" fill="#94a3b8">…共 N 个词项，落盘后只读</text>
+
+  <!-- 右：查询与命中 -->
+  <line x1="713" y1="200" x2="762" y2="200" stroke="#7a8aa0" stroke-width="2.5" marker-end="url(#arr)"/>
+  <rect x="773" y="153" width="190" height="92" rx="12" fill="#23373b" opacity="0.06"/>
+  <rect x="770" y="150" width="190" height="92" rx="12" fill="#e0f2f0" stroke="#0d9488" stroke-width="2"/>
+  <text x="865" y="182" font-family="MiSans, Noto Sans CJK SC" font-size="17" text-anchor="middle" fill="#0d9488">查询</text>
+  <text x="865" y="216" font-family="MiSans, Noto Sans CJK SC" font-size="21" font-weight="bold" text-anchor="middle" fill="#1f2937">「心肌梗死」</text>
+
+  <line x1="865" y1="246" x2="865" y2="292" stroke="#0d9488" stroke-width="2.5" marker-end="url(#arr)"/>
+  <rect x="753" y="303" width="225" height="72" rx="12" fill="#23373b" opacity="0.06"/>
+  <rect x="750" y="300" width="225" height="72" rx="12" fill="#ffffff" stroke="#0d9488" stroke-width="2"/>
+  <text x="862" y="344" font-family="MiSans, Noto Sans CJK SC" font-size="18" font-weight="bold" text-anchor="middle" fill="#0d9488">命中：文档 1、文档 3</text>
+</svg>

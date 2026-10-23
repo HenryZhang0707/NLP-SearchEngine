@@ -1,0 +1,86 @@
+"""离线向量数据库构建骨架：批量编码 -> 写入向量库 -> 发布 manifest。
+
+真实模型和 Qdrant 快照上传/发布由适配器实现。本模块不 import online。
+"""
+
+import json
+from dataclasses import replace
+from pathlib import Path
+
+from contracts.index_format import sha256_of
+from contracts.reader import IndexReader
+from contracts.retrieval import (
+    VECTOR_MANIFEST, TextEncoder, VectorManifest, VectorRecord, VectorWriter,
+    corpus_fingerprint, validate_vector,
+)
+
+
+def build_vectors(reader: IndexReader, encoder: TextEncoder, writer: VectorWriter,
+                  out_dir: Path, collection: str, batch_size: int = 32,
+                  backend: str = "qdrant-hnsw", index_params: dict | None = None
+                  ) -> VectorManifest:
+    """仅在 writer 成功消费全部记录后发布元数据；目标目录须为新的构建目录。
+
+    一文档一向量。title + '\\n' + text，前缀/截断由编码器按 spec 执行。
+    不允许覆盖已发布的向量 manifest；真实后端也须使用新的 collection。
+    """
+    out_dir = Path(out_dir)
+    target = out_dir / VECTOR_MANIFEST
+    if target.exists():
+        raise ValueError("向量产物已存在；请使用新的输出目录与 collection")
+    if type(batch_size) is not int or batch_size <= 0:
+        raise ValueError("batch_size 必须是正整数")
+    ids = [reader.doc(i).doc_id for i in range(reader.n_docs)]
+    if len(ids) != len(set(ids)):
+        raise ValueError("doc_id 不唯一")
+    manifest = VectorManifest(
+        corpus_sha256=corpus_fingerprint(reader), n_docs=reader.n_docs,
+        embedding=encoder.spec, collection=collection, backend=backend,
+        index_params=dict(index_params or {}),
+    )
+    consumed = 0
+
+    def records():
+        nonlocal consumed
+        for start in range(0, reader.n_docs, batch_size):
+            docs = [reader.doc(i) for i in range(start, min(start + batch_size, reader.n_docs))]
+            vectors = encoder.encode_documents([f"{d.title}\n{d.text}" for d in docs])
+            if len(vectors) != len(docs):
+                raise ValueError("编码器输出数量与输入文档数不符")
+            for doc, vector in zip(docs, vectors):
+                validate_vector(vector, encoder.spec)
+                consumed += 1
+                yield VectorRecord(doc.docid, doc.doc_id, tuple(vector))
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    published = writer.replace(manifest, records())
+    if consumed != reader.n_docs:
+        raise ValueError("writer 未消费全部文档，不能发布 manifest")
+    if not isinstance(published, VectorManifest) or replace(published, snapshot_files={}) != manifest:
+        raise ValueError("writer 必须返回仅补齐 snapshot_files 的 VectorManifest")
+    if backend == "qdrant-hnsw" and not published.snapshot_files:
+        raise ValueError("Qdrant 构建必须交付带校验和的快照")
+    for name, digest in published.snapshot_files.items():
+        snapshot = out_dir / name
+        if not snapshot.is_file() or sha256_of(snapshot) != digest:
+            raise ValueError("快照不存在或 SHA256 校验失败")
+    manifest = published
+    pending = target.with_suffix(".json.tmp")
+    pending.write_text(json.dumps(manifest.to_dict(), ensure_ascii=False, indent=2),
+                       encoding="utf-8")
+    pending.replace(target)
+    return manifest
+
+
+class QdrantSnapshotWriter:
+    """离线组待实现：建新 collection、upsert、校验点数/ID、导出只读快照。
+
+    SDK 依赖只允许留在适配器内部。不得在此偷偷调用在线检索模块。
+    """
+
+    def __init__(self, url: str, snapshot_dir: Path):
+        self.url = url
+        self.snapshot_dir = Path(snapshot_dir)
+
+    def replace(self, manifest: VectorManifest, records) -> VectorManifest:
+        raise NotImplementedError("TODO: 实现 Qdrant 构建与快照发布，遵守 VectorWriter")

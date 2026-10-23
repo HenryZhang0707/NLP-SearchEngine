@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="430" viewBox="0 0 640 430">
+  <g font-family="MiSans, Noto Sans CJK SC">
+    <text x="165" y="42" font-size="20" font-weight="bold" text-anchor="middle" fill="#1f2937">排序 A</text>
+    <rect x="33" y="64" width="270" height="280" rx="12" fill="#23373b" opacity="0.06"/>
+    <rect x="30" y="60" width="270" height="280" rx="12" fill="#f0faf9" stroke="#0d9488" stroke-width="2"/>
+    <g font-size="18" fill="#334155">
+      <text x="64" y="112">第 1 名</text>
+      <text x="64" y="162">第 2 名</text>
+      <text x="64" y="212">第 3 名</text>
+      <text x="64" y="262">第 4 名</text>
+      <text x="64" y="312">第 5 名</text>
+    </g>
+    <circle cx="240" cy="104" r="10" fill="#0d9488"/>
+    <circle cx="240" cy="154" r="10" fill="#0d9488"/>
+    <circle cx="240" cy="204" r="10" fill="#cbd5e1"/>
+    <circle cx="240" cy="254" r="10" fill="#0d9488"/>
+    <circle cx="240" cy="304" r="10" fill="#cbd5e1"/>
+    <text x="165" y="382" font-size="21" font-weight="bold" text-anchor="middle" fill="#0d9488">得分高</text>
+
+    <text x="475" y="42" font-size="20" font-weight="bold" text-anchor="middle" fill="#1f2937">排序 B</text>
+    <rect x="343" y="64" width="270" height="280" rx="12" fill="#23373b" opacity="0.06"/>
+    <rect x="340" y="60" width="270" height="280" rx="12" fill="#ffffff" stroke="#cbd5e1" stroke-width="2"/>
+    <g font-size="18" fill="#334155">
+      <text x="374" y="112">第 1 名</text>
+      <text x="374" y="162">第 2 名</text>
+      <text x="374" y="212">第 3 名</text>
+      <text x="374" y="262">第 4 名</text>
+      <text x="374" y="312">第 5 名</text>
+    </g>
+    <circle cx="550" cy="104" r="10" fill="#cbd5e1"/>
+    <circle cx="550" cy="154" r="10" fill="#cbd5e1"/>
+    <circle cx="550" cy="204" r="10" fill="#0d9488"/>
+    <circle cx="550" cy="254" r="10" fill="#cbd5e1"/>
+    <circle cx="550" cy="304" r="10" fill="#0d9488"/>
+    <text x="475" y="382" font-size="21" font-weight="bold" text-anchor="middle" fill="#d97706">得分低</text>
+  </g>
+</svg>

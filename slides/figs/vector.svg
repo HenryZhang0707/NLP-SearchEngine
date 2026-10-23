@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="242" viewBox="0 0 1120 242">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#7a8aa0"/></marker>
+  </defs>
+  <g fill="none" stroke="#7a8aa0" stroke-width="2.5" marker-end="url(#arr)">
+    <path d="M228 63 H296"/><path d="M578 63 H646"/>
+    <path d="M228 183 H296"/><path d="M578 183 H646"/>
+    <path d="M875 100 V138"/>
+  </g>
+  <g font-family="MiSans, Noto Sans CJK SC" text-anchor="middle">
+    <text x="43" y="69" font-size="21" font-weight="bold" fill="#2563eb">离线</text>
+    <text x="43" y="189" font-size="21" font-weight="bold" fill="#0d9488">在线</text>
+    <rect x="88" y="26" width="140" height="74" rx="11" fill="#e8eefc" stroke="#2563eb" stroke-width="2"/>
+    <text x="158" y="70" font-size="23" fill="#1f2937">文档文本</text>
+    <rect x="304" y="26" width="274" height="74" rx="11" fill="#e8eefc" stroke="#2563eb" stroke-width="2"/>
+    <text x="441" y="57" font-size="23" font-weight="bold" fill="#1f2937">预训练 embedding 编码</text>
+    <text x="441" y="84" font-size="17" fill="#64748b">文本 → 归一化稠密向量</text>
+    <rect x="654" y="26" width="442" height="74" rx="11" fill="#e8eefc" stroke="#2563eb" stroke-width="2"/>
+    <text x="875" y="57" font-size="23" font-weight="bold" fill="#2563eb">向量数据库：文档 ID + 向量</text>
+    <text x="875" y="84" font-size="17" fill="#64748b">拟用单机 Qdrant，构建 HNSW 索引</text>
+    <rect x="88" y="146" width="140" height="74" rx="11" fill="#e0f2f0" stroke="#0d9488" stroke-width="2"/>
+    <text x="158" y="190" font-size="23" fill="#1f2937">查询文本</text>
+    <rect x="304" y="146" width="274" height="74" rx="11" fill="#e0f2f0" stroke="#0d9488" stroke-width="2"/>
+    <text x="441" y="177" font-size="23" font-weight="bold" fill="#1f2937">同一编码器生成查询向量</text>
+    <text x="441" y="204" font-size="17" fill="#64748b">进入与文档相同的向量空间</text>
+    <rect x="654" y="146" width="442" height="74" rx="11" fill="#e0f2f0" stroke="#0d9488" stroke-width="2"/>
+    <text x="875" y="177" font-size="23" font-weight="bold" fill="#0d9488">近邻搜索 → 相似文档 Top-N</text>
+    <text x="875" y="204" font-size="17" fill="#64748b">按余弦相似度寻找语义接近的文档</text>
+  </g>
+</svg>

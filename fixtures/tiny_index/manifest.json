@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "dataset": "tiny",
+  "n_docs": 10,
+  "avgdl": 23.3,
+  "analyzer": {
+    "name": "simple-bigram",
+    "version": "0.1.0",
+    "config_hash": "12bee770ee080a665c95862486cc711c658b8d5bbacf6e06dce6d9cc01fc0926"
+  },
+  "files": {
+    "docs.jsonl": "677b3e4ed28cb1a06786b9f7e2280d0f30e3ca8d878e326a0fe2a5418eeeba1a",
+    "postings.jsonl": "cdeaf080d7ad4b11cf1b2a8b6937e05767e48721613f25f7795bc46674ff224d",
+    "offsets.jsonl": "89cd21abda73b566554dac7d47454df0406a48f1c6fad424f12589f27e97f0fd",
+    "stats.json": "55a3ce78ebacffb204a2de4c252a16c550a6dcfe8214427618001c25787938c1"
+  }
+}

@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="340" viewBox="0 0 1280 340">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#7a8aa0"/></marker>
+  </defs>
+  <rect x="680" y="94" width="570" height="130" rx="14" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+  <g fill="none" stroke="#7a8aa0" stroke-width="2.5" marker-end="url(#arr)">
+    <path d="M145 165 H182"/>
+    <path d="M365 165 H402"/>
+    <path d="M625 165 H692"/>
+    <path d="M650 165 V39 H752"/>
+    <path d="M650 165 V130 H1105 V132"/>
+    <path d="M815 200 V241 H1000 V252"/>
+    <path d="M1105 200 V241 H1000" marker-end="none"/>
+    <path d="M278 206 V291 H752" stroke-dasharray="7 5"/>
+  </g>
+  <g font-family="MiSans, Noto Sans CJK SC" text-anchor="middle">
+    <text x="278" y="86" font-size="23" font-weight="bold" fill="#0d9488">阶段一 · 词法检索</text>
+    <text x="965" y="119" font-size="21" font-weight="bold" fill="#d97706">阶段二 · 查询预处理（择一）</text>
+    <rect x="10" y="124" width="135" height="82" rx="12" fill="#eef1f5" stroke="#64748b" stroke-width="2"/>
+    <text x="78" y="158" font-size="24" font-weight="bold" fill="#1f2937">查询解析</text>
+    <text x="78" y="187" font-size="18" fill="#64748b">识别显式约束</text>
+    <rect x="190" y="124" width="175" height="82" rx="12" fill="#e0f2f0" stroke="#0d9488" stroke-width="2"/>
+    <text x="278" y="158" font-size="25" font-weight="bold" fill="#1f2937">首轮 BM25</text>
+    <text x="278" y="187" font-size="18" fill="#64748b">保留 Top-N 候选</text>
+    <rect x="410" y="114" width="215" height="102" rx="12" fill="#fdf3e7" stroke="#d97706" stroke-width="2.5"/>
+    <text x="518" y="149" font-size="25" font-weight="bold" fill="#d97706">轻量规则 Router</text>
+    <text x="518" y="178" font-size="19" fill="#1f2937">查询特征 + 首轮结果</text>
+    <text x="518" y="204" font-size="18" fill="#64748b">结合质量信号与预算</text>
+    <rect x="760" y="8" width="480" height="62" rx="12" fill="#e0f2f0" stroke="#0d9488" stroke-width="2"/>
+    <text x="1000" y="34" font-size="24" font-weight="bold" fill="#0d9488">直接返回 BM25 结果</text>
+    <text x="1000" y="58" font-size="18" fill="#64748b">跳过 SLM、查询编码与向量检索</text>
+    <rect x="700" y="140" width="230" height="60" rx="10" fill="#e8eefc" stroke="#2563eb" stroke-width="2"/>
+    <text x="815" y="166" font-size="23" font-weight="bold" fill="#2563eb">保留原查询</text>
+    <text x="815" y="190" font-size="17" fill="#64748b">不调用 SLM</text>
+    <rect x="980" y="140" width="250" height="60" rx="10" fill="#fdf3e7" stroke="#d97706" stroke-width="2"/>
+    <text x="1105" y="166" font-size="23" font-weight="bold" fill="#d97706">SLM 受控扩写</text>
+    <text x="1105" y="190" font-size="17" fill="#64748b">原查询 + 同义词 / 短改写</text>
+    <rect x="760" y="260" width="480" height="66" rx="12" fill="#e0f2f0" stroke="#0d9488" stroke-width="2"/>
+    <text x="1000" y="288" font-size="23" font-weight="bold" fill="#1f2937">查询编码 → 向量检索 → RRF → Top-K</text>
+    <text x="1000" y="314" font-size="17" fill="#64748b">改写仅用于语义补充，复用原始 BM25 排名</text>
+    <text x="510" y="280" font-size="19" fill="#64748b">复用首轮 BM25 排名</text>
+  </g>
+</svg>
