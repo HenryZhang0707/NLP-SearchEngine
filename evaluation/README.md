@@ -57,9 +57,13 @@ python3 -m evaluation.prepare_dataset \
 
 For the public RocketQA DuReader-Retrieval baseline archive, use the dedicated
 streaming adapter instead of treating the archive as generic JSONL. It writes
-`corpus.jsonl`, `queries.dev.tsv`, `qrels.dev.tsv`, and a SHA256/count manifest;
+`corpus.jsonl`, `queries.dev.jsonl`, `qrels.dev.tsv`, and a SHA256/count manifest;
 the output remains an official `dev` split because the archive has no official
-test labels:
+test labels. Queries use escaped JSONL rather than TSV so embedded newlines,
+tabs, and Unicode line separators round-trip without creating extra query IDs.
+Pass `queries.dev.jsonl` directly to the evaluator's `--queries` option.
+`--archive-sha256` requires `--archive`; missing archives or mismatched hashes
+are rejected before any output files or directory are created:
 
 ```bash
 python3 -m evaluation.prepare_dureader \

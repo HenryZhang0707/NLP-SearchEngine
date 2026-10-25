@@ -33,7 +33,7 @@ from .evaluate import EvaluationError
 
 
 DEFAULT_ARCHIVE_URL = (
-    "https://dataset-bj.cdn.bcebos.com/dureader-retrieval/"
+    "https://dataset-bj.cdn.bcebos.com/qianyan/"
     "dureader-retrieval-baseline-dataset.tar.gz"
 )
 
@@ -140,7 +140,10 @@ def _write_queries(path: Path, queries: Sequence[tuple[str, str]]) -> dict:
     digest = hashlib.sha256()
     with path.open("wb") as handle:
         for qid, query in queries:
-            line = f"{qid}\t{query}\n".encode("utf-8")
+            # Escape embedded newlines and Unicode line separators so even
+            # splitlines()-based clients see exactly one physical row per query.
+            line = (json.dumps({"qid": qid, "query": query}, ensure_ascii=True,
+                               separators=(",", ":")) + "\n").encode("utf-8")
             handle.write(line)
             digest.update(line)
     return {"sha256": digest.hexdigest(), "bytes": path.stat().st_size}
@@ -195,8 +198,9 @@ def prepare_dureader(root: str | Path, out: str | Path, *, archive: str | Path |
         raise EvaluationError(f"官方 DuReader 根目录不存在: {root}")
     if out.exists() and (not out.is_dir() or any(out.iterdir())):
         raise EvaluationError(f"输出目录必须不存在或为空: {out}")
-    out.mkdir(parents=True, exist_ok=True)
     if archive_sha256 is not None:
+        if archive is None:
+            raise EvaluationError("--archive-sha256 必须与 --archive 一起提供")
         expected_hash = archive_sha256.lower()
         if len(expected_hash) != 64 or any(char not in "0123456789abcdef" for char in expected_hash):
             raise EvaluationError("archive_sha256 必须是 64 位十六进制")
@@ -218,8 +222,9 @@ def prepare_dureader(root: str | Path, out: str | Path, *, archive: str | Path |
         raise EvaluationError(f"官方 dev 查询数不符: {len(queries)} != {expected_queries}")
     if expected_qrels is not None and len(qrels) != expected_qrels:
         raise EvaluationError(f"官方 dev qrels 数不符: {len(qrels)} != {expected_qrels}")
+    out.mkdir(parents=True, exist_ok=True)
     corpus_info = _write_corpus(out / "corpus.jsonl", parts, index_map)
-    query_info = _write_queries(out / "queries.dev.tsv", queries)
+    query_info = _write_queries(out / "queries.dev.jsonl", queries)
     qrel_info = _write_qrels(out / "qrels.dev.tsv", qrels)
     manifest = {
         "schema_version": 1,
@@ -239,7 +244,7 @@ def prepare_dureader(root: str | Path, out: str | Path, *, archive: str | Path |
         "counts": {"documents": corpus_info["documents"], **dev_counts},
         "files": {
             "corpus.jsonl": corpus_info,
-            "queries.dev.tsv": query_info,
+            "queries.dev.jsonl": query_info,
             "qrels.dev.tsv": qrel_info,
         },
     }
