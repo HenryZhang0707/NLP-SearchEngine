@@ -62,7 +62,7 @@ curl -s localhost:8000/index/info
 ## 扩充后的构建/在线接线
 
 真实 embedding 和 Qdrant 适配器是可选依赖，默认安装不下载模型。安装
-`sentence-transformers` 与 `qdrant-client` 后，可以用固定 manifest 启动完整向量服务：
+`sentence-transformers` 与 `qdrant-client>=1.16`，并运行 Qdrant 1.16+ 后，可以用固定 manifest 启动完整向量服务：
 
 ```python
 # 离线：writer 配置相同 out_dir 下的快照导出目录
@@ -85,7 +85,8 @@ python3 -m online.server --index /path/to/bm25 \
 ```
 
 服务会从 manifest 读取模型 ID、固定 revision、维度、前缀和截断配置，并校验
-Qdrant collection 与倒排索引的语料指纹。
+Qdrant collection 中持久化的完整构建元数据、真实维度／距离和精确文档数，随后校验与倒排索引的语料指纹。
+缺少构建元数据的旧 collection 必须用新 writer 重建；不会只凭同维度或外部 manifest 放行。
 
 四种请求模式：
 

@@ -4,7 +4,8 @@ import math
 from typing import Sequence
 
 from contracts.retrieval import (
-    RetrievalUnavailable, VectorHit, VectorManifest, VectorRecord, validate_vector,
+    VECTOR_BUILD_METADATA_KEY, RetrievalUnavailable, VectorHit, VectorManifest,
+    VectorRecord, validate_vector,
 )
 
 
@@ -53,16 +54,27 @@ class QdrantVectorIndex:
         self._collection = manifest.collection
         try:
             info = self._client.get_collection(self._collection)
-            config = getattr(info, "config", None)
-            params = getattr(config, "params", None)
-            vectors = getattr(params, "vectors", None)
-            size = getattr(vectors, "size", None)
-            if size is not None and size != manifest.embedding.dimension:
-                raise ValueError("Qdrant collection 维度与 manifest 不一致")
-        except ValueError:
-            raise
         except Exception as error:
             raise RetrievalUnavailable(f"无法读取 Qdrant collection: {error}") from error
+        config = getattr(info, "config", None)
+        params = getattr(config, "params", None)
+        vectors = getattr(params, "vectors", None)
+        if getattr(vectors, "size", None) != manifest.embedding.dimension:
+            raise ValueError("Qdrant collection 维度与 manifest 不一致或不是单向量配置")
+        distance = getattr(vectors, "distance", None)
+        if getattr(distance, "value", distance) != "Cosine":
+            raise ValueError("Qdrant collection 必须使用 Cosine 距离")
+        metadata = getattr(config, "metadata", None)
+        if not isinstance(metadata, dict) or VECTOR_BUILD_METADATA_KEY not in metadata:
+            raise ValueError("Qdrant collection 缺少构建元数据；请使用 1.16+ 服务和客户端重建")
+        if metadata[VECTOR_BUILD_METADATA_KEY] != manifest.build_metadata():
+            raise ValueError("Qdrant collection 构建元数据与 manifest 不一致，请加载同版本产物")
+        try:
+            count = self._client.count(collection_name=self._collection, exact=True).count
+        except Exception as error:
+            raise RetrievalUnavailable(f"无法核对 Qdrant collection 点数: {error}") from error
+        if type(count) is not int or count != manifest.n_docs:
+            raise ValueError(f"Qdrant collection 点数与 manifest 不一致: {count} != {manifest.n_docs}")
 
     def manifest(self) -> VectorManifest:
         return self._manifest

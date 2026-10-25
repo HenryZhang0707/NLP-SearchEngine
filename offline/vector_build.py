@@ -10,7 +10,8 @@ from pathlib import Path
 from contracts.index_format import sha256_of
 from contracts.reader import IndexReader
 from contracts.retrieval import (
-    VECTOR_MANIFEST, TextEncoder, VectorManifest, VectorRecord, VectorWriter,
+    VECTOR_BUILD_METADATA_KEY, VECTOR_MANIFEST, TextEncoder, VectorManifest,
+    VectorRecord, VectorWriter,
     corpus_fingerprint, validate_vector,
 )
 
@@ -75,9 +76,9 @@ def build_vectors(reader: IndexReader, encoder: TextEncoder, writer: VectorWrite
 class QdrantSnapshotWriter:
     """Build a Qdrant collection and publish a verified local snapshot.
 
-    ``qdrant-client`` is imported lazily so the stdlib lexical workflow keeps
-    working without the optional vector stack. Each build uses a fresh
-    collection; callers should pass a versioned collection name.
+    Qdrant and ``qdrant-client`` must support collection metadata (1.16+).
+    The SDK is imported lazily so the stdlib lexical workflow keeps working
+    without the optional stack. Each build uses a fresh, versioned collection.
     """
 
     def __init__(self, url: str, snapshot_dir: Path, batch_size: int = 128,
@@ -119,6 +120,7 @@ class QdrantSnapshotWriter:
             vectors_config=models.VectorParams(
                 size=manifest.embedding.dimension, distance=models.Distance.COSINE,
             ),
+            metadata={VECTOR_BUILD_METADATA_KEY: manifest.build_metadata()},
         )
         for start in range(0, len(records), self.batch_size):
             batch = records[start:start + self.batch_size]
@@ -131,8 +133,14 @@ class QdrantSnapshotWriter:
                 wait=True,
             )
         info = client.get_collection(manifest.collection)
-        count = getattr(info, "points_count", None)
-        if count is not None and count != len(records):
+        metadata = getattr(getattr(info, "config", None), "metadata", None)
+        if (not isinstance(metadata, dict)
+                or metadata.get(VECTOR_BUILD_METADATA_KEY) != manifest.build_metadata()):
+            raise ValueError("Qdrant 未保存构建元数据；需要 Qdrant / qdrant-client 1.16+")
+        # CollectionInfo.points_count is approximate; startup/publication needs
+        # the exact count, even while Qdrant is optimizing segments.
+        count = client.count(collection_name=manifest.collection, exact=True).count
+        if type(count) is not int or count != len(records):
             raise ValueError(f"Qdrant 点数不符: {count} != {len(records)}")
         try:
             snapshot = client.create_snapshot(collection_name=manifest.collection)

@@ -14,6 +14,7 @@ from .reader import IndexReader
 
 VECTOR_SCHEMA_VERSION = 1
 VECTOR_MANIFEST = "vector_manifest.json"
+VECTOR_BUILD_METADATA_KEY = "nlp_search_engine"
 
 
 class RetrievalUnavailable(RuntimeError):
@@ -74,6 +75,17 @@ class VectorManifest:
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+    def build_metadata(self) -> dict:
+        """Metadata persisted with the collection before snapshot creation.
+
+        Snapshot hashes are excluded: embedding them in the snapshot itself
+        would create a circular checksum dependency. All build identity fields
+        (including the full embedding spec) remain independently verifiable.
+        """
+        value = self.to_dict()
+        value.pop("snapshot_files")
+        return value
 
     @classmethod
     def from_dict(cls, value: dict) -> "VectorManifest":
