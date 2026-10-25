@@ -31,7 +31,21 @@ def _lex(query: str) -> list[_Token]:
         if query[i].isspace():
             i += 1
             continue
-        if query[i] in "()":
+        if query[i] == "(":
+            # Natural-language queries sometimes use ``( )`` as punctuation,
+            # especially in fill-in-the-blank questions. An empty pair has
+            # no boolean meaning, so ignore it; non-empty parentheses remain
+            # grammar tokens and are still validated strictly below.
+            closing = i + 1
+            while closing < len(query) and query[closing].isspace():
+                closing += 1
+            if closing < len(query) and query[closing] == ")":
+                i = closing + 1
+                continue
+            tokens.append(_Token("(", "(", i))
+            i += 1
+            continue
+        if query[i] == ")":
             tokens.append(_Token(query[i], query[i], i))
             i += 1
             continue

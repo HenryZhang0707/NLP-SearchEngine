@@ -130,6 +130,7 @@ def test_parser_supports_phrase_and_rejects_malformed_syntax():
         except QuerySyntaxError:
             continue
         raise AssertionError(f"非法查询未被拒绝: {query!r}")
+    assert parse("爱国诗人是( )")["terms"] == ["爱国诗人是"]
 
 
 def test_boolean_filter_honors_and_not_and_phrase_positions():
