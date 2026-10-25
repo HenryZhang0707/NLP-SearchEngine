@@ -2,8 +2,12 @@
 
 import json
 import math
+import re
+import subprocess
+import sys
 import tempfile
 import threading
+import time
 from dataclasses import replace
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -411,6 +415,41 @@ def test_typed_backend_failure_falls_back_only_for_adaptive():
     vectors.search = unavailable
     assert engine.search(SearchRequest("soaked", mode="adaptive")).routing.fallback
     _raises(RetrievalUnavailable, lambda: engine.search(SearchRequest("soaked", mode="hybrid")))
+
+
+def test_server_cli_bind_address_is_configurable_and_local_by_default():
+    root = Path(__file__).resolve().parent.parent
+    for host in (None, "0.0.0.0"):
+        command = [sys.executable, "-u", "-m", "online.server", "--port", "0",
+                   "--index", str(root / "fixtures" / "tiny_index")]
+        if host is not None:
+            command += ["--host", host]
+        with tempfile.TemporaryFile(mode="a+b") as log:
+            process = subprocess.Popen(command, cwd=root, stdin=subprocess.DEVNULL,
+                                       stdout=log, stderr=log)
+            try:
+                deadline = time.monotonic() + 10
+                while time.monotonic() < deadline:
+                    log.seek(0)
+                    output = log.read().decode("utf-8", errors="replace")
+                    address = re.search(r"(127\.0\.0\.1|0\.0\.0\.0):(\d+)", output)
+                    if address is not None:
+                        break
+                    if process.poll() is not None:
+                        raise AssertionError(f"服务启动失败: {output}")
+                    time.sleep(0.05)
+                else:
+                    raise AssertionError(f"服务启动超时: {output}")
+                assert address.group(1) == (host or "127.0.0.1")
+                with urlopen(f"http://127.0.0.1:{address.group(2)}/health", timeout=5) as response:
+                    assert json.load(response)["status"] == "ok"
+            finally:
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=5)
 
 
 ALL_TESTS = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

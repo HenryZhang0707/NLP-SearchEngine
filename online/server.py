@@ -137,6 +137,7 @@ def make_handler(engine: SearchEngine, static_root: Path | None = None):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="搜索引擎 HTTP 服务")
     ap.add_argument("--index", required=True)
+    ap.add_argument("--host", default="127.0.0.1", help="监听地址；0.0.0.0 允许外部访问")
     ap.add_argument("--port", type=int, default=8000)
     ap.add_argument("--candidate-k", type=int, default=200)
     ap.add_argument("--rrf-c", type=float, default=60.0)
@@ -162,5 +163,7 @@ if __name__ == "__main__":
             ap.error(f"向量后端初始化失败: {error}")
     engine = SearchEngine(reader, encoder, vectors, RetrievalConfig(
         candidate_k=args.candidate_k, rrf_c=args.rrf_c))
-    print(f"索引已加载（{engine.reader.n_docs} 篇），监听 :{args.port}")
-    ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(engine)).serve_forever()
+    server = ThreadingHTTPServer((args.host, args.port), make_handler(engine))
+    print(f"索引已加载（{engine.reader.n_docs} 篇），监听 {server.server_address[0]}:{server.server_port}",
+          flush=True)
+    server.serve_forever()
