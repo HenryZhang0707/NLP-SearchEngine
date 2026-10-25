@@ -50,6 +50,8 @@ python3 -m contracts.conformance /tmp/nlp-tiny-bm25 fixtures/tiny_corpus.jsonl
 
 结果为 37 项仓库契约测试、7 项评测器和数据准备测试全部通过，tiny 索引 conformance 通过。启动服务后，lexical 搜索、`/health`、`/index/info`、浏览器静态资源和 dense 未配置时的 503 行为均已验证。对 tiny 磁盘索引重复执行 1,000 次 BM25 查询，当前容器测得 p50 约 0.10 ms、p95 约 0.14 ms；这只是小样本工程冒烟，不能替代 DuRetrieval 全量结果。
 
+另用公开 C-MTEB DuRetrieval 快照（5000 篇文档、100 条查询、425 条 qrels）做了外部闭环冒烟。按固定划分取 80 条测试查询，BM25 得到 nDCG@10=0.8065、Recall@10=0.8194、MRR@10=0.8872、MAP@100=0.7350，HTTP 平均延迟 4.33 ms、p50 3.83 ms、p95 6.65 ms。该快照不是课程要求的 100001/2000/9839 版本，这些数字只验证管线，不代表最终成绩。
+
 ## 4. 全量实验流程
 
 1. 固定 DuRetrieval 数据版本、查询划分和 qrels；先在开发集冻结 Router 阈值。
