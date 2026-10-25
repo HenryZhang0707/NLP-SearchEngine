@@ -117,6 +117,7 @@ engine = SearchEngine(reader, encoder=query_encoder, vectors=vector_reader,
 - adaptive：先 BM25，再由规则决定是否做向量召回与 RRF；执行模式回显 lexical 或 hybrid。
 - 非 lexical 只允许 scorer=bm25、expander=none；不支持的组合报 400，不能悄悄忽略。
 - 普通查询使用 OR 候选，未知词不会清空其他词的候选；这是与旧骨架隐式 AND 的明确变化。parser 已支持显式 `AND`、`OR`、`NOT`、括号和双引号连续短语，并标注 `explicit_constraints`。adaptive 遇到硬约束走词法，hybrid 在 RRF 前保留过滤结果，dense 对显式约束返回 400，不能绕过约束。
+- `parsed.terms` 只包含正向评分词；NOT 的排除词仍保留在 `parsed.ast` 中作为硬过滤，不参与 BM25/TF-IDF 加分或高亮。双重否定按极性恢复正向词。
 - candidate_k、rrf_c、路由阈值和 policy_version 是服务级配置。非 lexical 必须 `offset+k <= candidate_k`，融合后的池也截为 candidate_k，然后分页。请求不允许临时覆盖池大小。
 
 ### 响应
