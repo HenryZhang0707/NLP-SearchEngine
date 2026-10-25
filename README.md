@@ -115,6 +115,8 @@ python3 -m evaluation.evaluate \
 `evaluation.compare` 可对两组 TREC run 做可复现的 query-level paired bootstrap。详见
 [evaluation/README.md](evaluation/README.md)。
 
+外部数据版本、下载限制和课程规模校验见 [evaluation/RESOURCES.md](evaluation/RESOURCES.md)。
+
 ## 当前状态与后续工作
 
 **已可用**：bigram 占位分词、词法构建/读取、BM25/TF-IDF、普通 OR 查询、布尔/短语过滤、Top-K/高亮/HTTP；双索引构建编排、Qdrant upsert/快照发布检查；规则 Router、RRF、四模式编排、降级和阶段耗时；可选 Sentence-Transformers/Qdrant 适配器；浏览器 UI、HTTP-only 评测器与标准库测试。

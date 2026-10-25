@@ -6,6 +6,8 @@
 
 提案中的 DuRetrieval 全量实验需要单独下载语料、queries 和 qrels。仓库只保留 tiny fixture 和可复现代码，不把约 100,001 篇文档或模型文件提交进版本库。
 
+资源核验见 [evaluation/RESOURCES.md](evaluation/RESOURCES.md)。官方公开的 DuReader-Retrieval 版本约有 809 万段落、86K 训练查询、2K 开发查询和 4K 测试查询，并要求注册后下载；这与提案中的 100001/2000/9839 课程快照不同，不能混用。当前环境访问官方 CDN 和 AI Studio 返回 HTTP 403，因此报告不伪造全量数据或语义实验数字。
+
 ## 2. 已完成实现
 
 ### 词法与查询处理
