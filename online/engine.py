@@ -16,7 +16,7 @@ from contracts.retrieval import (
 )
 
 from . import parser, scorers
-from .expanders import EXPANDERS, ExpanderNotReady
+from .expanders import EXPANDERS
 from .fusion import rrf
 from .highlight import build_highlights
 from .router import QueryFeatures, RuleRouter
@@ -87,15 +87,20 @@ class SearchEngine:
         candidate_docs = None
         if explicit:
             candidate_docs = scorers.boolean_docs(self.reader, parsed["ast"], analyzer.analyze)
+        if explicit and req.expander != "none":
+            raise ApiError("显式布尔/短语约束不支持 query expansion")
         expanded = EXPANDERS[req.expander](self.reader, req.query, terms)
-        if expanded:
-            raise ExpanderNotReady("旧查询扩展权重尚未接入打分，不返回伪扩展成绩")
+        expanded_terms = [item["term"] for item in expanded]
+        scoring_terms = terms + expanded_terms
+        term_weights = {term: 1.0 for term in terms}
+        term_weights.update({item["term"]: float(item["w"]) for item in expanded})
 
         ranked = []
         if req.mode != "dense":
             start = time.perf_counter()
-            scores = scorers.SCORERS[req.scorer](self.reader, terms,
-                                                 candidate_docs=candidate_docs)
+            scores = scorers.SCORERS[req.scorer](self.reader, scoring_terms,
+                                                 candidate_docs=candidate_docs,
+                                                 term_weights=term_weights)
             if candidate_docs:
                 # A NOT-only query, or the negative branch of an OR, has no
                 # positive BM25 contribution. Keep those hard-filtered docs

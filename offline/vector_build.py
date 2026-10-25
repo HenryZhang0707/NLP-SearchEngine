@@ -106,8 +106,12 @@ class QdrantSnapshotWriter:
         client = QdrantClient(url=self.url, timeout=self.timeout)
         try:
             client.get_collection(manifest.collection)
-        except Exception:
-            pass
+        except Exception as error:
+            # Only a confirmed 404 means the versioned collection is new.
+            # Network, TLS, and authentication failures must stop the build
+            # instead of being misread as an empty destination.
+            if getattr(error, "status_code", None) != 404:
+                raise RuntimeError(f"无法检查 Qdrant collection: {error}") from error
         else:
             raise ValueError(f"Qdrant collection 已存在: {manifest.collection}")
         client.create_collection(

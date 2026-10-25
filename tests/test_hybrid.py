@@ -326,7 +326,10 @@ def test_http_contract_success_errors_and_capabilities():
         assert post({"query": '"phone'})[0] == 400
         assert post({"query": "phone", "mode": "dense"})[0] == 503
         assert post({"query": "phone", "mode": "hybrid", "offset": 200})[0] == 400
-        assert post({"query": "phone", "expander": "rm3"})[0] == 501
+        rm3_status, rm3_body = post({"query": "phone", "expander": "rm3"})
+        assert rm3_status == 200
+        assert rm3_body["expanded"] and all(item["src"] == "rm3" for item in rm3_body["expanded"])
+        assert post({"query": "phone", "expander": "slm"})[0] == 501
         with urlopen(base + "/index/info", timeout=5) as response:
             assert json.load(response)["retrieval"]["vector_ready"] is False
     finally:

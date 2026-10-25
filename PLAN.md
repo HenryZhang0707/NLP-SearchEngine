@@ -5,13 +5,13 @@
 | 顺序 | 离线组 | 在线组 | 联合验收 |
 |---|---|---|---|
 | E0 契约冻结 | 文档 ID、BM25 产物、向量 manifest/快照规则 | TextEncoder/VectorReader 消费方式、四模式 HTTP、Router/RRF | 假模型/假向量与 HTTP 契约测试；代码骨架已落地 |
-| E1 小样本真实双路闭环 | 补真实编码器、Qdrant 建库/快照；交付 tiny 双索引 | 接只读 Qdrant、查询编码、启动版本校验；补显式语法/过滤 | 真产物 → HTTP → 评测器，不以假向量测试代替 |
+| E1 小样本真实双路闭环 | 可选 Sentence-Transformers/Qdrant writer 已接线；tiny 词法产物和 manifest 校验可复现 | Qdrant reader、查询编码、启动版本校验、显式语法/过滤、UI 已接线 | HTTP evaluator 和内存假向量已验收；真实模型/Qdrant 双路仍需外部实例 |
 | E2 三条固定基线 | 全量 BM25 + 向量库、构建/存储/内存记录 | BM25/纯向量/固定混合；固定模型、候选池与 RRF 参数 | 同一语料和查询划分，BM25 对齐 bm25s |
 | E3 自适应与交付 | 排查 ID/版本/快照问题，提供只读稳定产物 | 开发集定路由、测试集四组对照、UI/报告 | nDCG/Recall、延迟、向量尝试/成功/降级率及成本权衡 |
 
 工作边界：**离线负责 BM25 构建和向量数据库构建；在线负责查询编码、Router、向量召回与 RRF 融合**。不训练模型、不生成答案。两侧只共享 contracts/；在线只读离线产物。
 
-当前真实模型和 Qdrant 仍是待实现适配器，不宣称已建成真实向量数据库。运行 `python3 tests/run.py` 验证框架契约，运行 `typst compile slides/proposal.typ slides/proposal.pdf` 更新汇报。
+当前真实模型和 Qdrant 适配器已作为可选依赖接入，但本环境没有模型权重、DuRetrieval 全量数据或 Qdrant 实例，因此不宣称已完成真实语义质量和 HNSW 性能验收。默认运行 `python3 tests/run.py` 与 `python3 -m unittest evaluation.test_evaluate` 验证框架；有真实数据后再运行 HTTP evaluator 和四组实验。运行 `typst compile slides/proposal.typ slides/proposal.pdf` 可更新汇报。
 
 ---
 

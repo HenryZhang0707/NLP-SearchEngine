@@ -119,4 +119,4 @@ python3 -m evaluation.evaluate \
 
 **待完成的实验工作**：下载并固定 DuRetrieval 语料、queries、qrels，按开发/测试划分运行四组实验，记录 nDCG/Recall/延迟和 paired bootstrap 区间；这些数据与模型下载不随仓库提交。
 
-RM3/SLM 查询扩展仍是旧桩，不是当前必做主线。内存测试通过不代表真实语义质量或 HNSW 性能已经验收。
+RM3 已实现为确定性的本地伪相关反馈扩展；SLM 仍需要外部固定模型与离线缓存，返回 501。扩展不改变显式布尔/短语约束。内存测试通过不代表真实语义质量或 HNSW 性能已经验收。

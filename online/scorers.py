@@ -13,7 +13,8 @@ from contracts.reader import IndexReader
 
 
 def bm25(reader: IndexReader, terms: list, k1: float | None = None, b: float | None = None,
-         match_all: bool = False, candidate_docs: set[int] | None = None) -> dict:
+         match_all: bool = False, candidate_docs: set[int] | None = None,
+         term_weights: dict[str, float] | None = None) -> dict:
     """返回 {docid: score}；自然语言查询默认词项并集，硬约束由过滤层处理。"""
     spec = BM25Spec(**reader.manifest().get("bm25", {}))
     k1 = spec.k1 if k1 is None else k1
@@ -22,6 +23,7 @@ def bm25(reader: IndexReader, terms: list, k1: float | None = None, b: float | N
     cand = _candidate_docs(reader, terms, match_all) if candidate_docs is None else set(candidate_docs)
     scores = defaultdict(float)
     n = reader.n_docs
+    term_weights = term_weights or {}
     for term in terms:
         df = reader.df(term)
         if df == 0:
@@ -31,16 +33,18 @@ def bm25(reader: IndexReader, terms: list, k1: float | None = None, b: float | N
             if docid not in cand:
                 continue
             dl = reader.doc_length(docid)
-            scores[docid] += idf * tf * (k1 + 1) / (tf + k1 * (1 - b + b * dl / reader.avgdl))
+            scores[docid] += term_weights.get(term, 1.0) * idf * tf * (k1 + 1) / (tf + k1 * (1 - b + b * dl / reader.avgdl))
     return dict(scores)
 
 
 def tfidf(reader: IndexReader, terms: list, match_all: bool = False,
-          candidate_docs: set[int] | None = None) -> dict:
+          candidate_docs: set[int] | None = None,
+          term_weights: dict[str, float] | None = None) -> dict:
     """兼容的 TF-IDF 基线：tf 取 1+log，idf 取 log(N/df)。"""
     cand = _candidate_docs(reader, terms, match_all) if candidate_docs is None else set(candidate_docs)
     scores = defaultdict(float)
     n = reader.n_docs
+    term_weights = term_weights or {}
     for term in terms:
         df = reader.df(term)
         if df == 0:
@@ -49,7 +53,7 @@ def tfidf(reader: IndexReader, terms: list, match_all: bool = False,
         for docid, tf, _ in reader.postings(term):
             if docid not in cand:
                 continue
-            scores[docid] += (1 + math.log(tf)) * idf
+            scores[docid] += term_weights.get(term, 1.0) * (1 + math.log(tf)) * idf
     return dict(scores)
 
 

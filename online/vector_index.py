@@ -1,4 +1,4 @@
-"""在线向量库读取接口的测试替身与生产适配器桩。只读，不负责建库。"""
+"""在线向量库读取接口的内存替身与可选 Qdrant 只读适配器。"""
 
 import math
 from typing import Sequence
