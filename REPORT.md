@@ -6,7 +6,7 @@
 
 提案中的 DuRetrieval 全量实验需要单独下载语料、queries 和 qrels。仓库只保留 tiny fixture 和可复现代码，不把约 100,001 篇文档或模型文件提交进版本库。
 
-资源核验见 [evaluation/RESOURCES.md](evaluation/RESOURCES.md)。已从 RocketQA 官方下载脚本指向的公开 CDN 获取并核验 baseline archive：8,096,668 个 passage、2,000 个 dev 查询和 9,839 条去重 qrels（原始答案段落链接 9,863 条）。该公开 archive 没有官方 test labels，与提案中要求的课程快照和官方 DuReader 版本不能混用；真实 embedding、GPU 编码、Qdrant 和全量语义实验仍需可用的集群配额，报告不伪造这些结果。
+资源核验见 [evaluation/RESOURCES.md](evaluation/RESOURCES.md)。已从 RocketQA 官方下载脚本指向的公开 CDN 获取并核验 baseline archive：8,096,668 个 passage、2,000 个 dev 查询和 9,839 条去重 qrels（原始答案段落链接 9,863 条）。该公开 archive 没有官方 test labels，与提案中要求的课程快照和官方 DuReader 版本不能混用；真实 embedding、GPU 编码、Qdrant 和全量语义实验必须在集群任务中逐项验收，报告不伪造这些结果。
 
 ## 2. 已完成实现
 
@@ -53,6 +53,8 @@ python3 -m contracts.conformance /tmp/nlp-tiny-bm25 fixtures/tiny_corpus.jsonl
 
 历史上另用公开 C-MTEB DuRetrieval 快照（5000 篇文档、100 条查询、425 条 qrels）做了外部闭环冒烟。按固定划分取 80 条测试查询，旧版 Top-10 HTTP 请求下 BM25 得到 nDCG@10=0.8065、Recall@10=0.8194、MRR@10=0.8872，平均延迟 4.33 ms、p50 3.83 ms、p95 6.65 ms。修复审阅问题时发现旧评测器默认只召回 10 条，却标记 MAP@100，因此撤下该 MAP 数值；新的默认评测会召回 100 条，并需要重新测量 MAP 和完整请求延迟。该快照不是课程要求的 100001/2000/9839 版本，这些历史数字只验证管线，不代表最终成绩。
 
+为验证官方资源上的闭环，另对官方 dev corpus 的固定 20,000 篇前缀运行了 19 条命中查询。BM25 冒烟结果为 nDCG@10=0.5032、Recall@10=0.5789、MRR@10=0.4781、MAP@100=0.4920，平均延迟 57.85 ms、p50 52.59 ms、p95 79.15 ms；TF-IDF 和 RM3 也分别生成了独立 TREC run。该结果只覆盖官方全量的一个文档前缀和 19 条查询，不能写成全量成绩；向量未就绪时 adaptive 的 fallback 比例为 10/19。
+
 ## 4. 全量实验流程
 
 1. 固定 DuRetrieval 数据版本、查询划分和 qrels；先在开发集冻结 Router 阈值。
@@ -73,4 +75,4 @@ python3 -m evaluation.evaluate \
 
 ## 5. 当前限制
 
-默认分词器仍是可解释的 bigram 占位实现；公开 baseline 只有 dev 标注，真实分词对齐、预训练模型选择、Qdrant HNSW 参数和全量性能数字需要团队根据课程数据与算力完成冻结。当前 GPU 集群任务受平台配额不足阻断，因此四组真实语义实验、Qdrant 运行和 paired bootstrap 结果尚未声称完成。RM3 已作为确定性的本地伪相关反馈扩展接入；SLM 仍需要外部固定模型与离线缓存，返回 501。
+默认分词器仍是可解释的 bigram 占位实现；公开 baseline 只有 dev 标注，真实分词对齐、预训练模型选择、Qdrant HNSW 参数和全量性能数字需要团队根据课程数据与算力完成冻结。四组真实语义实验、Qdrant 运行和 paired bootstrap 结果仍未声称完成；GPU 集群任务已提交，待容器就绪后继续执行并保留完整运行证据。RM3 已作为确定性的本地伪相关反馈扩展接入；SLM 仍需要外部固定模型与离线缓存，返回 501。
