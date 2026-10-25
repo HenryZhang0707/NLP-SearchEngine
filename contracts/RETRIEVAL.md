@@ -76,12 +76,14 @@ class VectorReader(Protocol):
 - `build_vectors` 核验快照文件 SHA256，最后原子重命名发布 vector_manifest.json。构建失败不发布 manifest；调用方清理失败的新 collection/临时目录，不能污染旧线上版本。构建目录只能有一个 writer，不支持并发发布。
 - reader 返回 `VectorHit(docid, doc_id, score)`；score 是 cosine 相似度，越大越好，不是距离。最多 limit 条唯一结果，按 score 降序、内部 docid 升序；ANN 搜索不保证与精确全扫同集合。
 - 真实适配器须从已恢复的 collection 读取并核对嵌入配置/语料指纹等元数据，恢复时检查快照 SHA256；不能只信调用者传入的 manifest。
+- Qdrant 服务与 `qdrant-client` 均要求 1.16+（collection metadata）。writer 创建 collection 时在 `config.metadata.nlp_search_engine` 保存 `VectorManifest.build_metadata()`：包含完整构建身份，仅排除 `snapshot_files`，避免快照包含自身校验和的循环依赖。reader 启动时逐字段比对这些持久化元数据，核对单向量维度、Cosine 距离，并使用 `count(exact=True)` 核对文档数，不依赖近似 `points_count`。缺元数据的旧 collection 必须重建，不能根据外部 manifest 补填后冒充已验证产物。
 - 超时、模型/后端不可用统一包装成 `RetrievalUnavailable`。不要把任意编程错误吞成空列表。
 
 ### 接线与启动校验
 
 ```python
-# 离线；encoder / writer 由实际适配器提供，真实 SDK 接入仍待实现
+# 离线；encoder / writer 由实际适配器提供。仓库提供可选的
+# Sentence-Transformers 编码器与 Qdrant writer，默认零依赖路径不加载它们
 build_hybrid(corpus_path, out_dir, dataset,
              encoder, writer, collection="dataset-build-id")
 
@@ -90,7 +92,7 @@ engine = SearchEngine(reader, encoder=query_encoder, vectors=vector_reader,
                       config=RetrievalConfig(candidate_k=200, rrf_c=60))
 ```
 
-`SearchEngine` 要求 encoder/vectors 同时存在或同时缺省。启动时核对完整 EmbeddingSpec、文档数与 corpus_sha256；不匹配拒绝启动，不降级掩盖版本错误。实际命中再核对内/外部 ID 和合法分数。未接入真实 SDK 的内存实现必须标记 memory-exact，不冒充 Qdrant/HNSW。
+`SearchEngine` 要求 encoder/vectors 同时存在或同时缺省。启动时核对完整 EmbeddingSpec、文档数与 corpus_sha256；不匹配拒绝启动，不降级掩盖版本错误。实际命中再核对内/外部 ID 和合法分数。内存实现必须标记 memory-exact，不冒充 Qdrant/HNSW；真实适配器需通过 `--vector-url` 与 `--vector-manifest` 接入。
 
 ## 4. 接口 B：HTTP v2.0
 
@@ -115,7 +117,8 @@ engine = SearchEngine(reader, encoder=query_encoder, vectors=vector_reader,
 - hybrid：每次查询 BM25 + 向量，用 RRF；score_kind=rrf。
 - adaptive：先 BM25，再由规则决定是否做向量召回与 RRF；执行模式回显 lexical 或 hybrid。
 - 非 lexical 只允许 scorer=bm25、expander=none；不支持的组合报 400，不能悄悄忽略。
-- 普通查询使用 OR 候选，未知词不会清空其他词的候选；这是与旧骨架隐式 AND 的明确变化。显式布尔/引号/括号当前未实现，一律 400；未来 parser 必须标注 explicit_constraints，adaptive 遇到硬约束走词法，dense/hybrid 不允许绕过约束。
+- 普通查询使用 OR 候选，未知词不会清空其他词的候选；这是与旧骨架隐式 AND 的明确变化。parser 已支持显式 `AND`、`OR`、`NOT`、括号和双引号连续短语，并标注 `explicit_constraints`。adaptive 遇到硬约束走词法，hybrid 在 RRF 前保留过滤结果，dense 对显式约束返回 400，不能绕过约束。
+- `parsed.terms` 只包含正向评分词；NOT 的排除词仍保留在 `parsed.ast` 中作为硬过滤，不参与 BM25/TF-IDF 加分或高亮。双重否定按极性恢复正向词。
 - candidate_k、rrf_c、路由阈值和 policy_version 是服务级配置。非 lexical 必须 `offset+k <= candidate_k`，融合后的池也截为 candidate_k，然后分页。请求不允许临时覆盖池大小。
 
 ### 响应
@@ -156,18 +159,18 @@ engine = SearchEngine(reader, encoder=query_encoder, vectors=vector_reader,
 
 | 情况 | 状态 |
 |---|---|
-| 非法请求、分页超候选池、未实现的查询语法 | 400 |
-| 旧 RM3/SLM 未实现扩展 | 501 |
+| 非法请求、分页超候选池、非法查询语法或 dense 显式约束 | 400 |
+| SLM 需要外部模型与缓存 | 501 |
 | dense / hybrid 缺编码器/向量库，或运行失败 | 503，code=vector_unavailable |
 | adaptive 语义分支失败 | 200，明确 fallback=true；评测需单列 |
 | 双索引或模型版本不一致 | 启动失败，不接受请求 |
 
-`GET /index/info`：原词法 manifest + retrieval={vector_ready, config, vector_manifest}。`GET /health` 仅报告原词法服务健康，不代表向量可用。当前 CLI 尚未接入真实编码器/Qdrant，vector_ready=false 是正确行为。
+`GET /index/info`：原词法 manifest + retrieval={vector_ready, config, vector_manifest}。`GET /health` 仅报告原词法服务健康，不代表向量可用。默认 CLI 不带向量参数时 vector_ready=false；提供可选的 vector URL、manifest 和依赖后才报告向量就绪。
 
-## 5. 契约验收与尚未实现部分
+## 5. 契约验收与当前边界
 
-运行 `python3 tests/run.py`：覆盖 DiskIndex/MemoryIndex conformance、双索引批次和发布、快照校验、模型/语料错配、向量维度/归一化、Router/RRF、四模式、分页、显式语法拒绝、降级和 HTTP 状态/响应结构。
+运行 `python3 tests/run.py`：覆盖 DiskIndex/MemoryIndex conformance、双索引批次和发布、快照校验、模型/语料错配、向量维度/归一化、Router/RRF、四模式、分页、布尔/短语位置过滤、降级、HTTP 状态/响应结构和静态 UI 路由。`python3 -m unittest evaluation.test_evaluate` 覆盖 HTTP-only evaluator 的 qrels/run 读取与指标输出。
 
-零依赖 runner 检查本仓库 schema 使用的响应子集，不是完整 JSON Schema 引擎。接入 UI/评测器时可用标准 JSON Schema 验证器直接消费 api.py 的两个 schema。
+零依赖 runner 检查本仓库 schema 使用的响应子集，不是完整 JSON Schema 引擎。UI 和评测器可用标准 JSON Schema 验证器直接消费 api.py 的两个 schema。
 
-待填桩：`offline.vector_build.QdrantSnapshotWriter`、`online.vector_index.QdrantVectorIndex`，以及实现 TextEncoder 的真实 embedding 适配器。现在通过注入假编码器与 MemoryVectorIndex 验证编排；没有真实模型推理、真实 Qdrant 建库或 HNSW 性能结论。
+真实模型权重、DuRetrieval 全量语料/qrels 和 Qdrant 服务不随仓库提供，因此当前没有真实语义质量或 HNSW 性能结论。RM3 是确定性的本地伪相关反馈扩展；SLM 仍需要外部固定模型与离线缓存并返回 501，二者都不改变显式约束，也不会自动混入四组主实验。

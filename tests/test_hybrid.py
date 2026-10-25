@@ -2,13 +2,18 @@
 
 import json
 import math
+import re
+import subprocess
+import sys
 import tempfile
 import threading
+import time
 from dataclasses import replace
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
+from unittest.mock import patch
 
 from contracts.api import (
     ApiError, MODES, REQUEST_JSON_SCHEMA, RESPONSE_JSON_SCHEMA, SearchRequest,
@@ -25,6 +30,7 @@ from offline.vector_build import build_vectors
 from online.engine import SearchEngine
 from online.fusion import rrf
 from online.memory_index import MemoryIndex
+from online.parser import QuerySyntaxError
 from online.router import QueryFeatures, RuleRouter
 from online.scorers import bm25
 from online.server import make_handler
@@ -207,12 +213,16 @@ def test_router_hard_constraints_always_stay_lexical():
     assert router.decide(QueryFeatures(False, 2, 1, 2, 0.01)).reason == "small_relative_gap"
 
 
-def test_unimplemented_explicit_syntax_still_rejected():
-    from online.parser import QuerySyntaxError
+def test_explicit_syntax_is_filtered_before_optional_vector_search():
     engine, encoder, _ = _setup()
-    for mode in MODES:
-        _raises(QuerySyntaxError, lambda: engine.search(SearchRequest('"phone"', mode=mode)))
-    assert encoder.query_calls == 0
+    lexical = engine.search(SearchRequest('"phone water"', mode="lexical"))
+    assert [r.doc_id for r in lexical.results] == ["z"]
+    adaptive = engine.search(SearchRequest('"phone water"', mode="adaptive"))
+    assert [r.doc_id for r in adaptive.results] == ["z"]
+    hybrid = engine.search(SearchRequest('"phone water"', mode="hybrid"))
+    assert [r.doc_id for r in hybrid.results] == ["z"]
+    _raises(ApiError, lambda: engine.search(SearchRequest('"phone water"', mode="dense")))
+    _raises(QuerySyntaxError, lambda: engine.search(SearchRequest('"phone water', mode="lexical")))
 
 
 def test_missing_vector_backend_is_visible_not_silent():
@@ -317,12 +327,45 @@ def test_http_contract_success_errors_and_capabilities():
         _check_schema(body, RESPONSE_JSON_SCHEMA)
         assert post([])[0] == 400
         assert post({"query": "phone", "k": True})[0] == 400
-        assert post({"query": '"phone"'})[0] == 400
+        assert post({"query": '"phone"'})[0] == 200
+        assert post({"query": '"phone'})[0] == 400
         assert post({"query": "phone", "mode": "dense"})[0] == 503
         assert post({"query": "phone", "mode": "hybrid", "offset": 200})[0] == 400
-        assert post({"query": "phone", "expander": "rm3"})[0] == 501
+        rm3_status, rm3_body = post({"query": "phone", "expander": "rm3"})
+        assert rm3_status == 200
+        assert rm3_body["expanded"] and all(item["src"] == "rm3" for item in rm3_body["expanded"])
+        assert post({"query": "phone", "expander": "slm"})[0] == 501
         with urlopen(base + "/index/info", timeout=5) as response:
             assert json.load(response)["retrieval"]["vector_ready"] is False
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_http_ui_static_routes_are_safe_and_present():
+    engine = SearchEngine(MemoryIndex.from_corpus(CORPUS))
+    server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(engine))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_port}"
+    try:
+        with urlopen(base + "/", timeout=5) as response:
+            assert response.status == 200
+            assert "中文搜索引擎" in response.read().decode("utf-8")
+        # Both registered JavaScript MIME types occur in system MIME databases.
+        for mime_type in ("text/javascript", "application/javascript"):
+            with patch("online.server.mimetypes.guess_type", return_value=(mime_type, None)):
+                with urlopen(base + "/static/app.js", timeout=5) as response:
+                    assert response.status == 200
+                    assert response.headers.get_content_type() == mime_type
+                    assert response.headers.get_content_charset() == "utf-8"
+        try:
+            urlopen(base + "/static/%2e%2e/online/server.py", timeout=5)
+        except HTTPError as error:
+            assert error.code == 404
+        else:
+            raise AssertionError("静态文件路由允许路径穿越")
     finally:
         server.shutdown()
         server.server_close()
@@ -372,6 +415,41 @@ def test_typed_backend_failure_falls_back_only_for_adaptive():
     vectors.search = unavailable
     assert engine.search(SearchRequest("soaked", mode="adaptive")).routing.fallback
     _raises(RetrievalUnavailable, lambda: engine.search(SearchRequest("soaked", mode="hybrid")))
+
+
+def test_server_cli_bind_address_is_configurable_and_local_by_default():
+    root = Path(__file__).resolve().parent.parent
+    for host in (None, "0.0.0.0"):
+        command = [sys.executable, "-u", "-m", "online.server", "--port", "0",
+                   "--index", str(root / "fixtures" / "tiny_index")]
+        if host is not None:
+            command += ["--host", host]
+        with tempfile.TemporaryFile(mode="a+b") as log:
+            process = subprocess.Popen(command, cwd=root, stdin=subprocess.DEVNULL,
+                                       stdout=log, stderr=log)
+            try:
+                deadline = time.monotonic() + 10
+                while time.monotonic() < deadline:
+                    log.seek(0)
+                    output = log.read().decode("utf-8", errors="replace")
+                    address = re.search(r"(127\.0\.0\.1|0\.0\.0\.0):(\d+)", output)
+                    if address is not None:
+                        break
+                    if process.poll() is not None:
+                        raise AssertionError(f"服务启动失败: {output}")
+                    time.sleep(0.05)
+                else:
+                    raise AssertionError(f"服务启动超时: {output}")
+                assert address.group(1) == (host or "127.0.0.1")
+                with urlopen(f"http://127.0.0.1:{address.group(2)}/health", timeout=5) as response:
+                    assert json.load(response)["status"] == "ok"
+            finally:
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=5)
 
 
 ALL_TESTS = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

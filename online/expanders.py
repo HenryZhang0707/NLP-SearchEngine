@@ -1,10 +1,13 @@
-"""查询扩展注册点（在线组）。
+"""Query expansion implementations.
 
-扩展只影响打分排序，绝不能破坏用户显式写的 AND / NOT / 引号约束；
-扩展词必须出现在语料词表内（防 query drift）。
-RM3 / SLM 的实现是 E1 之后的工作，先留桩。
+Expansion only changes lexical ranking and never relaxes explicit AND/NOT or
+phrase constraints. RM3 is deterministic pseudo-relevance feedback; SLM
+remains an optional external-model integration and returns 501.
 """
 
+from collections import Counter, defaultdict
+
+from contracts import analyzer
 from contracts.reader import IndexReader
 
 
@@ -18,14 +21,37 @@ def expand_none(reader: IndexReader, query: str, terms: list) -> list:
 
 
 def expand_rm3(reader: IndexReader, query: str, terms: list) -> list:
-    """TODO(在线组)：首轮 BM25 取前 M 篇 -> 词项概率模型 -> (1-α)q + α·R 再检索。
-    要求：固定输入固定输出；扩展词 ∈ vocab()；扩展词权重总和 ≤ 原始词权重。"""
-    raise ExpanderNotReady("RM3 未实现，见 DESIGN.md §四行表第 3 行")
+    """Return deterministic RM3-style feedback terms from the first 8 hits."""
+    if not terms:
+        return []
+    from .scorers import bm25
+    initial = bm25(reader, terms)
+    ranked = sorted(initial.items(), key=lambda row: (-row[1], row[0]))[:8]
+    if not ranked:
+        return []
+    original = set(terms)
+    estimates: defaultdict[str, float] = defaultdict(float)
+    for rank, (docid, _) in enumerate(ranked, 1):
+        tokens = analyzer.analyze(reader.doc(docid).text)
+        counts = Counter(token.term for token in tokens)
+        if not counts:
+            continue
+        rank_weight = 1.0 / rank
+        denominator = float(len(tokens))
+        for term, count in counts.items():
+            if term not in original:
+                estimates[term] += rank_weight * count / denominator
+    if not estimates:
+        return []
+    top = sorted(estimates.items(), key=lambda row: (-row[1], row[0]))[:5]
+    maximum = top[0][1]
+    return [{"term": term, "w": round(min(0.75, value / maximum * 0.75), 6), "src": "rm3"}
+            for term, value in top if value > 0]
 
 
 def expand_slm(reader: IndexReader, query: str, terms: list) -> list:
-    """TODO(在线组)：Qwen3-0.6B 生成同义改写 -> 词表校验 -> 落盘缓存（评测时禁实时调模型）。"""
-    raise ExpanderNotReady("SLM 未实现，见 DESIGN.md §四行表第 4 行")
+    """SLM expansion requires a pinned model and an offline cache."""
+    raise ExpanderNotReady("SLM 需要外部固定模型与离线缓存，当前未启用")
 
 
 EXPANDERS = {"none": expand_none, "rm3": expand_rm3, "slm": expand_slm}

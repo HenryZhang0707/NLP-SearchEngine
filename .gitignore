@@ -1,0 +1,50 @@
+# Python bytecode, environments, packaging, and tool caches
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+/build/
+/dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Local datasets, model downloads, generated indexes, and experiment outputs.
+# Anchor directories at the root so small, versioned fixtures remain visible.
+/data/
+/models/
+/index/
+/indexes/
+/runs/
+/results/
+/artifacts/
+/qdrant_storage/
+/storage/
+/snapshots/
+*.snapshot
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.onnx
+
+# Local configuration and credentials; templates may be versioned.
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+
+# Runtime files and local editor/OS state
+*.log
+*.tmp
+node_modules/
+.idea/
+.DS_Store
+Thumbs.db

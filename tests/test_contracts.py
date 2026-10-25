@@ -60,6 +60,27 @@ def test_disk_index_rejects_stale_manifest():
         raise AssertionError("分词器哈希不一致却没有拒绝加载")
 
 
+def test_disk_index_rejects_malformed_rows_even_without_checksum_check():
+    """结构校验不能把重复/越界 JSONL 行留到在线查询阶段才暴露。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        build(CORPUS_PATH, root, "tiny")
+        rows = [
+            json.loads(line)
+            for line in (root / "docs.jsonl").read_text(encoding="utf-8").splitlines()
+        ]
+        rows[1]["docid"] = rows[0]["docid"]
+        (root / "docs.jsonl").write_text(
+            "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
+            encoding="utf-8",
+        )
+        try:
+            DiskIndex(root, verify_checksums=False)
+        except ValueError:
+            return
+        raise AssertionError("重复 docid 的索引未被启动校验拒绝")
+
+
 def test_search_end_to_end():
     engine = SearchEngine(MemoryIndex.from_corpus(_corpus()))
     resp = engine.search(SearchRequest(query="心肌梗死 症状", k=5))
@@ -101,13 +122,55 @@ def test_request_validation():
         raise AssertionError("非法 scorer 未被拒绝")
 
 
-def test_parser_rejects_unsupported_syntax():
-    try:
-        parse('"心肌梗死"')
-    except QuerySyntaxError:
-        pass
-    else:
-        raise AssertionError("引号短语应抛 QuerySyntaxError（骨架版未实现）")
+def test_parser_supports_phrase_and_rejects_malformed_syntax():
+    parsed = parse('"心肌梗死"')
+    assert parsed["type"] == "boolean" and parsed["explicit_constraints"]
+    assert parsed["ast"]["op"] == "phrase"
+    assert parse("心肌 OR 症状")["explicit_constraints"] is True
+    for query in ('"未闭合', '心肌 AND', '(症状', '心肌 OR )'):
+        try:
+            parse(query)
+        except QuerySyntaxError:
+            continue
+        raise AssertionError(f"非法查询未被拒绝: {query!r}")
+    assert parse("爱国诗人是( )")["terms"] == ["爱国诗人是"]
+
+
+def test_boolean_filter_honors_and_not_and_phrase_positions():
+    corpus = [
+        {"doc_id": "one", "title": "", "text": "red apple fruit"},
+        {"doc_id": "two", "title": "", "text": "red green apple"},
+        {"doc_id": "three", "title": "", "text": "apple fruit"},
+    ]
+    engine = SearchEngine(MemoryIndex.from_corpus(corpus))
+    assert [item.doc_id for item in engine.search(SearchRequest('"red apple"')).results] == ["one"]
+    assert [item.doc_id for item in engine.search(SearchRequest("apple NOT green")).results] == ["three", "one"]
+    assert [item.doc_id for item in engine.search(SearchRequest("red AND apple")).results] == ["one", "two"]
+    assert [item.doc_id for item in engine.search(SearchRequest("red OR NOT apple")).results] == ["one", "two"]
+
+
+def test_negated_terms_filter_without_boosting_scores_or_highlights():
+    corpus = [
+        {"doc_id": "blue", "title": "", "text": "red blue blue blue"},
+        {"doc_id": "red", "title": "", "text": "red red"},
+        {"doc_id": "other", "title": "", "text": "green"},
+    ]
+    engine = SearchEngine(MemoryIndex.from_corpus(corpus))
+    for scorer in ("bm25", "tfidf"):
+        positive = engine.search(SearchRequest("red", scorer=scorer))
+        mixed = engine.search(SearchRequest("red OR NOT blue", scorer=scorer))
+        assert [(r.doc_id, r.score) for r in mixed.results[:2]] == [
+            (r.doc_id, r.score) for r in positive.results]
+        blue = next(r for r in mixed.results if r.doc_id == "blue")
+        assert [(h.start, h.end) for h in blue.highlights] == [(0, 3)]
+        negative = engine.search(SearchRequest("NOT (red AND blue)", scorer=scorer))
+        assert [(r.doc_id, r.score) for r in negative.results] == [("red", 0.0), ("other", 0.0)]
+        assert all(not r.highlights for r in negative.results)
+        double_negative = engine.search(SearchRequest("NOT NOT red", scorer=scorer))
+        assert [(r.doc_id, r.score) for r in double_negative.results] == [
+            (r.doc_id, r.score) for r in positive.results]
+    assert parse("NOT (red OR NOT blue)")["terms"] == ["blue"]
+    assert parse("NOT (red AND blue)")["terms"] == []
 
 
 def test_analyzer_offsets_roundtrip():

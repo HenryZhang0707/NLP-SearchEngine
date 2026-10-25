@@ -9,10 +9,10 @@
 研究问题：与每次都调用向量分支的固定混合检索相比，能否减少在线查询编码/向量搜索，在可接受的质量变化下降低平均耗时？不预设路由一定有效或一定更省。
 
 - 必做：BM25、向量检索、固定混合、自适应混合；查询高亮、HTTP、数据集评测。
-- 布尔/短语：显式约束绝不放松；初版实现后保守走词法路径。目前 parser 尚未实现，遇到这些语法必须报 400，不能假装支持。
+- 布尔/短语：显式约束绝不放松；parser 已支持 `AND`、`OR`、`NOT`、括号和双引号连续短语。约束先在词法层过滤，hybrid 在 RRF 前保留过滤结果，dense 对显式约束返回 400。
 - 使用预训练 embedding 与现成向量库（拟用单机 Qdrant / HNSW）；不训练神经网络、不生成答案。这是 RAG 的检索层，不是完整 RAG。
-- 不做：爬虫、分布式、增量更新、PageRank、神经重排。RM3 / SLM、TF-IDF 留作旧兼容或附加实验，不计入必做主线。
-- UI 和评测器可由 AI 生成，但需人工验收；评测器只能通过 HTTP 调用引擎。
+- 不做：爬虫、分布式、增量更新、PageRank、神经重排。RM3 已作为可选的确定性附加实验接入；SLM 仍需外部模型，不计入必做主线。
+- UI 和评测器已实现并通过人工可运行检查；评测器只能通过 HTTP 调用引擎。
 
 ## 2. 检索原理与算法分工
 
@@ -94,7 +94,7 @@ index/<dataset>/<build-id>/
 ```
 
 - `mode`：`lexical` / `dense` / `hybrid` / `adaptive`；默认 lexical，旧调用不需要向量依赖。UI 演示自适应时显式传 adaptive。
-- 非 lexical 模式只允许 scorer=bm25、expander=none。旧 TF-IDF 和扩展参数只在 lexical 下保留；未实现扩展返回 501。
+- 非 lexical 模式只允许 scorer=bm25、expander=none。旧 TF-IDF 和扩展参数只在 lexical 下保留；SLM 无外部模型时返回 501。
 - 普通查询现在使用 OR 词项候选，按相关度排序；区别于旧骨架的隐式 AND，属于 v2 的明确语义调整。显式约束交给解析/过滤层，不用扩展或向量绕过。
 - 非 lexical 的 `offset + k <= candidate_k`；先产生固定候选池再分页，保证分页稳定。单次请求不能用加大 k 改变融合池。
 - 响应包含原有 results/parsed/expanded，新增 api_version、routing、timings_ms。routing 回显请求/执行模式、原因、向量尝试/成功、fallback、分数类型、候选池和策略版本。
@@ -120,7 +120,7 @@ index/<dataset>/<build-id>/
 | 交付 | 完成判据 |
 |---|---|
 | MemoryIndex / MemoryVectorIndex | 不依赖真实数据库/模型即可开发检索链路 |
-| 查询解析与显式过滤 | 普通查询 OR 候选；未实现语法报错；实现后硬约束不能被语义召回放松 |
+| 查询解析与显式过滤 | 普通查询 OR 候选；支持布尔/短语位置过滤；硬约束不能被语义召回放松 |
 | BM25 与向量只读召回 | 复用离线统计，查询编码版本一致，向量命中 ID/分数/维度符合契约 |
 | Router | 只消费查询与首轮特征，无 qrels/语言模型依赖；规则可版本化、可单测 |
 | RRF / Top-K / 分页 | 融合只看排名、去重、同分稳定、候选池固定 |
@@ -153,6 +153,6 @@ index/<dataset>/<build-id>/
 
 ## 8. 当前代码状态（不是最终实现声明）
 
-已实现：词法索引构建/读取、普通 OR 查询、BM25/TF-IDF、高亮与 HTTP；双索引构建编排和 manifest 发布检查；四模式编排、规则 Router、RRF、分页/降级回显；内存向量测试替身与契约测试。
+已实现：词法索引构建/读取、普通 OR 查询、BM25/TF-IDF、布尔/短语过滤、高亮与 HTTP；双索引构建编排和 manifest 发布检查；四模式编排、规则 Router、RRF、分页/降级回显；浏览器 UI、HTTP-only 评测器、可选 Sentence-Transformers 编码器与 Qdrant 建库/快照/只读适配器。
 
-待实现：真实 embedding 适配器、Qdrant 建库/快照与查询适配器、真实向量服务启动接线、布尔/短语过滤、全量评测与性能优化。当前 CLI 只启动词法服务；强制 dense/hybrid 返回 503，adaptive 在需要语义分支时明确降级。内存向量测试不能作为 HNSW 性能或语义效果结论。
+默认 CLI 不传向量参数时只启动词法服务；强制 dense/hybrid 在向量依赖未配置时返回 503，adaptive 明确降级。仓库已提供外部数据校验/固定划分、HTTP 评测和 paired bootstrap 工具；待完成的是依赖真实 DuRetrieval 数据、模型和 Qdrant 实例的全量四组实验与 HNSW 性能测量。内存向量测试不能作为 HNSW 性能或语义效果结论。
