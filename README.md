@@ -112,8 +112,9 @@ python3 -m evaluation.evaluate \
   --output-run runs/bm25.trec --include-per-query
 ```
 
-它输出 nDCG@10、Recall@10、MRR@10、MAP@100，以及平均、p50、p95 延迟；已有 TREC run
-也可以离线评分。`evaluation.prepare_dataset` 可校验外部 DuRetrieval 文件并生成固定划分，
+它默认召回 100 条结果，分别计算 nDCG@10、Recall@10、MRR@10、MAP@100，以及完整请求的平均、p50、p95 延迟。
+输出包含向量尝试、成功和 fallback 计数／比例；正式实验可加 `--fail-on-fallback` 拒绝降级结果。已有 TREC run
+也可以离线评分，但不推断其中不存在的路由或延迟信息。`evaluation.prepare_dataset` 可校验外部 DuRetrieval 文件并生成固定划分，
 `evaluation.compare` 可对两组 TREC run 做可复现的 query-level paired bootstrap。详见
 [evaluation/README.md](evaluation/README.md)。
 

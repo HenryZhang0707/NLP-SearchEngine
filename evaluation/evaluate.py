@@ -47,6 +47,55 @@ class QueryRecord:
 
 
 @dataclass(frozen=True)
+class QueryRouting:
+    requested_mode: str
+    executed_mode: str
+    reason: str
+    vector_attempted: bool
+    vector_used: bool
+    fallback: bool
+
+    @classmethod
+    def from_response(cls, value: object, mode: str) -> "QueryRouting":
+        if not isinstance(value, dict):
+            raise EvaluationError("搜索服务响应缺少 routing 对象")
+        for key in ("requested_mode", "executed_mode", "reason"):
+            if not isinstance(value.get(key), str):
+                raise EvaluationError(f"搜索服务 routing.{key} 必须是字符串")
+        for key in ("vector_attempted", "vector_used", "fallback"):
+            if type(value.get(key)) is not bool:
+                raise EvaluationError(f"搜索服务 routing.{key} 必须是布尔值")
+        routing = cls(**{key: value[key] for key in cls.__dataclass_fields__})
+        if routing.requested_mode != mode:
+            raise EvaluationError("搜索服务 routing.requested_mode 与请求模式不一致")
+        if routing.vector_used and not routing.vector_attempted:
+            raise EvaluationError("搜索服务 routing 向量成功但未尝试")
+        if routing.fallback and (mode != "adaptive" or not routing.vector_attempted
+                                 or routing.vector_used or routing.executed_mode != "lexical"):
+            raise EvaluationError("搜索服务 routing 降级标记不一致")
+        expected_mode = "lexical"
+        if routing.vector_used:
+            expected_mode = "dense" if mode == "dense" else "hybrid"
+        if (routing.executed_mode != expected_mode
+                or (mode in ("dense", "hybrid") and not routing.vector_used)
+                or (mode == "lexical" and routing.vector_attempted)
+                or (routing.vector_attempted and not routing.vector_used and not routing.fallback)):
+            raise EvaluationError("搜索服务 routing 执行模式或向量标记不一致")
+        return routing
+
+
+@dataclass(frozen=True)
+class RoutingSummary:
+    n_queries: int
+    vector_attempts: int
+    vector_successes: int
+    fallbacks: int
+    vector_attempt_rate: float
+    vector_success_rate: float | None  # successes / attempts; null when never attempted
+    fallback_rate: float             # fallbacks / all observed queries
+
+
+@dataclass(frozen=True)
 class QueryMetrics:
     qid: str
     ndcg: float
@@ -56,6 +105,7 @@ class QueryMetrics:
     latency_ms: float | None = None
     retrieved: int = 0
     relevant: int = 0
+    routing: QueryRouting | None = None
 
 
 @dataclass(frozen=True)
@@ -72,6 +122,7 @@ class EvaluationSummary:
     p50_latency_ms: float | None
     p95_latency_ms: float | None
     per_query: tuple[QueryMetrics, ...] = ()
+    routing: RoutingSummary | None = None
 
     def to_dict(self, include_per_query: bool = False) -> dict:
         value = asdict(self)
@@ -277,12 +328,14 @@ def _percentile(values: Sequence[float], percentile: float) -> float | None:
     return ordered[lower] + (ordered[upper] - ordered[lower]) * fraction
 
 
-def evaluate_run(qrels: Mapping[str, Mapping[str, float]], run: Mapping[str, Sequence[tuple[str, float] | str]], k: int = 10, latencies: Mapping[str, float] | None = None, map_k: int = 100) -> EvaluationSummary:
+def evaluate_run(qrels: Mapping[str, Mapping[str, float]], run: Mapping[str, Sequence[tuple[str, float] | str]], k: int = 10, latencies: Mapping[str, float] | None = None, map_k: int = 100, routing: Mapping[str, QueryRouting] | None = None) -> EvaluationSummary:
     """Compute ranking metrics for a TREC run.
 
     ``run`` values may be ``(doc_id, score)`` pairs or plain doc IDs.  Queries
     are taken from the union of qrels and run IDs, so missing results receive
-    zero scores.  Latency values are milliseconds keyed by qid.
+    zero scores. Latency values are milliseconds keyed by qid. Optional HTTP
+    routing observations are retained per query and summarized separately;
+    standalone TREC runs have no routing telemetry (null, not zero failures).
     """
 
     if type(k) is not int or k <= 0 or type(map_k) is not int or map_k <= 0:
@@ -298,9 +351,21 @@ def evaluate_run(qrels: Mapping[str, Mapping[str, float]], run: Mapping[str, Seq
             qrels.get(qid, {}), docids, k, map_k)
         latency = None if latencies is None else latencies.get(qid)
         metrics.append(QueryMetrics(qid, ndcg, recall, mrr, average_precision,
-                                    latency, len(docids[:k]), relevant_count))
+                                    latency, len(docids), relevant_count,
+                                    None if routing is None else routing.get(qid)))
     latency_values = [m.latency_ms for m in metrics if m.latency_ms is not None]
     relevant_queries = sum(m.relevant > 0 for m in metrics)
+    observed_routing = [m.routing for m in metrics if m.routing is not None]
+    routing_summary = None
+    if observed_routing:
+        attempts = sum(item.vector_attempted for item in observed_routing)
+        successes = sum(item.vector_used for item in observed_routing)
+        fallbacks = sum(item.fallback for item in observed_routing)
+        count = len(observed_routing)
+        routing_summary = RoutingSummary(
+            count, attempts, successes, fallbacks, attempts / count,
+            successes / attempts if attempts else None, fallbacks / count,
+        )
     return EvaluationSummary(
         n_queries=len(metrics),
         queries_with_relevance=relevant_queries,
@@ -312,6 +377,7 @@ def evaluate_run(qrels: Mapping[str, Mapping[str, float]], run: Mapping[str, Seq
         p50_latency_ms=_percentile(latency_values, 0.50),
         p95_latency_ms=_percentile(latency_values, 0.95),
         per_query=tuple(metrics),
+        routing=routing_summary,
     )
 
 
@@ -322,7 +388,7 @@ def _endpoint_url(endpoint: str) -> str:
     return endpoint if endpoint.endswith("/search") else endpoint + "/search"
 
 
-def _request_search(endpoint: str, query: str, *, k: int, mode: str, scorer: str, expander: str, timeout: float) -> tuple[list[tuple[str, float]], float]:
+def _request_search(endpoint: str, query: str, *, k: int, mode: str, scorer: str, expander: str, timeout: float) -> tuple[list[tuple[str, float]], float, QueryRouting]:
     payload = json.dumps({
         "query": query,
         "k": k,
@@ -370,7 +436,8 @@ def _request_search(endpoint: str, query: str, *, k: int, mode: str, scorer: str
         if not math.isfinite(score):
             raise EvaluationError("搜索服务 results 含非有限 score")
         results.append((docid, score))
-    return results, latency_ms
+    routing = QueryRouting.from_response(value.get("routing"), mode)
+    return results, latency_ms, routing
 
 
 def _write_trec_run(path: str | Path, qid: str, rows: Sequence[tuple[str, float]], tag: str) -> None:
@@ -383,15 +450,20 @@ def _write_trec_run(path: str | Path, qid: str, rows: Sequence[tuple[str, float]
             handle.write(f"{qid} Q0 {docid} {rank} {score:.8f} {tag}\n")
 
 
-def evaluate_http(endpoint: str, queries: Iterable[QueryRecord], qrels: Mapping[str, Mapping[str, float]], *, k: int = 10, mode: str = "lexical", scorer: str = "bm25", expander: str = "none", timeout: float = 10.0, run_output: str | Path | None = None, tag: str = "http-search", map_k: int = 100) -> EvaluationSummary:
+def evaluate_http(endpoint: str, queries: Iterable[QueryRecord], qrels: Mapping[str, Mapping[str, float]], *, k: int = 10, mode: str = "lexical", scorer: str = "bm25", expander: str = "none", timeout: float = 10.0, run_output: str | Path | None = None, tag: str = "http-search", map_k: int = 100, fail_on_fallback: bool = False) -> EvaluationSummary:
     """Query a public HTTP endpoint and evaluate its responses.
 
+    Retrieve ``max(k, map_k)`` results, then apply each metric cutoff separately.
     When ``run_output`` is supplied, a TREC run is written while requests are
-    made.  The output is replaced at the beginning of each evaluation.
+    made. The output is replaced at the beginning of each evaluation. Routing
+    outcomes are always reported; ``fail_on_fallback`` rejects degraded runs.
     """
 
     if type(k) is not int or k <= 0 or type(map_k) is not int or map_k <= 0:
         raise EvaluationError("评测 cutoff 必须是正整数")
+    retrieval_depth = max(k, map_k)
+    if retrieval_depth > 200:
+        raise EvaluationError("HTTP 召回深度 max(k, map_k) 不能超过 API 上限 200")
     if timeout <= 0 or not math.isfinite(timeout):
         raise EvaluationError("timeout 必须是正数")
     records = list(queries)
@@ -405,17 +477,25 @@ def evaluate_http(endpoint: str, queries: Iterable[QueryRecord], qrels: Mapping[
         output_path.write_text("", encoding="utf-8")
     run: Run = {}
     latencies: dict[str, float] = {}
+    routing: dict[str, QueryRouting] = {}
     for record in records:
-        rows, latency = _request_search(endpoint, record.query, k=k, mode=mode, scorer=scorer, expander=expander, timeout=timeout)
+        rows, latency, observation = _request_search(
+            endpoint, record.query, k=retrieval_depth, mode=mode,
+            scorer=scorer, expander=expander, timeout=timeout,
+        )
+        if fail_on_fallback and observation.fallback:
+            raise EvaluationError(f"查询 {record.qid!r} 发生向量降级，拒绝该评测 run")
         run[record.qid] = rows
         latencies[record.qid] = latency
+        routing[record.qid] = observation
         if run_output is not None:
             _write_trec_run(run_output, record.qid, rows, tag)
     # A qrels file often contains more than one split.  HTTP evaluation must
     # score exactly the queries sent in this invocation, while ``evaluate_run``
     # intentionally uses the union for standalone run scoring.
     selected_qrels = {record.qid: qrels.get(record.qid, {}) for record in records}
-    return evaluate_run(selected_qrels, run, k=k, latencies=latencies, map_k=map_k)
+    return evaluate_run(selected_qrels, run, k=k, latencies=latencies, map_k=map_k,
+                        routing=routing)
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
@@ -427,13 +507,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-run", type=Path, help="HTTP 模式下写出的 TREC run")
     parser.add_argument("--output-json", type=Path, help="将汇总 JSON 写入文件")
     parser.add_argument("--include-per-query", action="store_true", help="在 JSON 输出中包含逐查询指标")
-    parser.add_argument("--k", type=int, default=10, help="评测 cutoff，默认 10")
+    parser.add_argument("--k", type=int, default=10, help="nDCG/Recall/MRR cutoff，默认 10")
     parser.add_argument("--map-k", type=int, default=100, help="MAP cutoff，默认 100")
     parser.add_argument("--mode", choices=("lexical", "dense", "hybrid", "adaptive"), default="lexical")
     parser.add_argument("--scorer", choices=("bm25", "tfidf"), default="bm25")
     parser.add_argument("--expander", choices=("none", "rm3", "slm"), default="none")
     parser.add_argument("--timeout", type=float, default=10.0, help="单次 HTTP 超时秒数")
     parser.add_argument("--tag", default="http-search", help="TREC run tag")
+    parser.add_argument("--fail-on-fallback", action="store_true",
+                        help="HTTP 评测遇到 adaptive 向量降级时返回非零状态")
     return parser
 
 
@@ -442,13 +524,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         qrels = load_qrels(args.qrels)
         if args.run is not None:
-            if args.endpoint or args.queries or args.output_run:
-                raise EvaluationError("--run 不能与 --endpoint/--queries/--output-run 同时使用")
+            if args.endpoint or args.queries or args.output_run or args.fail_on_fallback:
+                raise EvaluationError("--run 不能与 HTTP 选项同时使用")
             summary = evaluate_run(qrels, load_run(args.run), k=args.k, map_k=args.map_k)
         else:
             if not args.endpoint or not args.queries:
                 raise EvaluationError("HTTP 模式需要同时提供 --endpoint 和 --queries")
-            summary = evaluate_http(args.endpoint, load_queries(args.queries), qrels, k=args.k, mode=args.mode, scorer=args.scorer, expander=args.expander, timeout=args.timeout, run_output=args.output_run, tag=args.tag, map_k=args.map_k)
+            summary = evaluate_http(args.endpoint, load_queries(args.queries), qrels, k=args.k, mode=args.mode, scorer=args.scorer, expander=args.expander, timeout=args.timeout, run_output=args.output_run, tag=args.tag, map_k=args.map_k, fail_on_fallback=args.fail_on_fallback)
         output = json.dumps(summary.to_dict(args.include_per_query), ensure_ascii=False, indent=2)
         if args.output_json:
             args.output_json.parent.mkdir(parents=True, exist_ok=True)
