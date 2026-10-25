@@ -65,7 +65,10 @@ def test_disk_index_rejects_malformed_rows_even_without_checksum_check():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         build(CORPUS_PATH, root, "tiny")
-        rows = [json.loads(line) for line in (root / "docs.jsonl").read_text().splitlines()]
+        rows = [
+            json.loads(line)
+            for line in (root / "docs.jsonl").read_text(encoding="utf-8").splitlines()
+        ]
         rows[1]["docid"] = rows[0]["docid"]
         (root / "docs.jsonl").write_text(
             "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
