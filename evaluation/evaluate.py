@@ -25,7 +25,7 @@ import math
 import statistics
 import sys
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 from urllib.error import HTTPError, URLError
@@ -59,6 +59,21 @@ class QueryMetrics:
 
 
 @dataclass(frozen=True)
+class RoutingSummary:
+    """Aggregate routing telemetry returned by the HTTP search API."""
+
+    queries: int
+    attempted: int
+    used: int
+    fallback: int
+    unavailable: int
+    attempted_rate: float
+    used_rate: float
+    fallback_rate: float
+    unavailable_rate: float
+
+
+@dataclass(frozen=True)
 class EvaluationSummary:
     """Aggregate metrics and per-query records returned by ``evaluate_run``."""
 
@@ -72,9 +87,12 @@ class EvaluationSummary:
     p50_latency_ms: float | None
     p95_latency_ms: float | None
     per_query: tuple[QueryMetrics, ...] = ()
+    routing: RoutingSummary | None = None
 
     def to_dict(self, include_per_query: bool = False) -> dict:
         value = asdict(self)
+        if value.get("routing") is None:
+            value.pop("routing", None)
         if not include_per_query:
             value.pop("per_query", None)
         else:
@@ -322,7 +340,61 @@ def _endpoint_url(endpoint: str) -> str:
     return endpoint if endpoint.endswith("/search") else endpoint + "/search"
 
 
-def _request_search(endpoint: str, query: str, *, k: int, mode: str, scorer: str, expander: str, timeout: float) -> tuple[list[tuple[str, float]], float]:
+@dataclass(frozen=True)
+class _RoutingEvent:
+    attempted: bool
+    used: bool
+    fallback: bool
+    unavailable: bool
+
+
+def _parse_routing(value: object) -> _RoutingEvent | None:
+    """Validate optional API routing telemetry without requiring old servers."""
+
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise EvaluationError("搜索服务响应 routing 必须是对象")
+    fields = ("vector_attempted", "vector_used", "fallback")
+    flags: dict[str, bool] = {}
+    for field in fields:
+        if field not in value:
+            raise EvaluationError(f"搜索服务响应缺少 routing.{field}")
+        raw = value.get(field, False)
+        if type(raw) is not bool:
+            raise EvaluationError(f"搜索服务响应 routing.{field} 必须是布尔值")
+        flags[field] = raw
+    reason = value.get("reason", "")
+    if not isinstance(reason, str):
+        raise EvaluationError("搜索服务响应 routing.reason 必须是字符串")
+    if flags["vector_used"] and not flags["vector_attempted"]:
+        raise EvaluationError("搜索服务响应 routing.vector_used 不能脱离 vector_attempted")
+    if flags["fallback"] and not flags["vector_attempted"]:
+        raise EvaluationError("搜索服务响应 routing.fallback 不能脱离 vector_attempted")
+    return _RoutingEvent(flags["vector_attempted"], flags["vector_used"], flags["fallback"],
+                         reason == "vector_unavailable")
+
+
+def _routing_summary(events: Sequence[_RoutingEvent | None], queries: int) -> RoutingSummary:
+    attempted = sum(bool(event and event.attempted) for event in events)
+    used = sum(bool(event and event.used) for event in events)
+    fallback = sum(bool(event and event.fallback) for event in events)
+    unavailable = sum(bool(event and event.unavailable) for event in events)
+    denominator = float(queries) if queries else 1.0
+    return RoutingSummary(
+        queries=queries,
+        attempted=attempted,
+        used=used,
+        fallback=fallback,
+        unavailable=unavailable,
+        attempted_rate=attempted / denominator,
+        used_rate=used / denominator,
+        fallback_rate=fallback / denominator,
+        unavailable_rate=unavailable / denominator,
+    )
+
+
+def _request_search(endpoint: str, query: str, *, k: int, mode: str, scorer: str, expander: str, timeout: float) -> tuple[list[tuple[str, float]], float, _RoutingEvent | None]:
     payload = json.dumps({
         "query": query,
         "k": k,
@@ -370,7 +442,7 @@ def _request_search(endpoint: str, query: str, *, k: int, mode: str, scorer: str
         if not math.isfinite(score):
             raise EvaluationError("搜索服务 results 含非有限 score")
         results.append((docid, score))
-    return results, latency_ms
+    return results, latency_ms, _parse_routing(value.get("routing"))
 
 
 def _write_trec_run(path: str | Path, qid: str, rows: Sequence[tuple[str, float]], tag: str) -> None:
@@ -405,17 +477,20 @@ def evaluate_http(endpoint: str, queries: Iterable[QueryRecord], qrels: Mapping[
         output_path.write_text("", encoding="utf-8")
     run: Run = {}
     latencies: dict[str, float] = {}
+    routing_events: list[_RoutingEvent | None] = []
     for record in records:
-        rows, latency = _request_search(endpoint, record.query, k=k, mode=mode, scorer=scorer, expander=expander, timeout=timeout)
+        rows, latency, routing = _request_search(endpoint, record.query, k=k, mode=mode, scorer=scorer, expander=expander, timeout=timeout)
         run[record.qid] = rows
         latencies[record.qid] = latency
+        routing_events.append(routing)
         if run_output is not None:
             _write_trec_run(run_output, record.qid, rows, tag)
     # A qrels file often contains more than one split.  HTTP evaluation must
     # score exactly the queries sent in this invocation, while ``evaluate_run``
     # intentionally uses the union for standalone run scoring.
     selected_qrels = {record.qid: qrels.get(record.qid, {}) for record in records}
-    return evaluate_run(selected_qrels, run, k=k, latencies=latencies, map_k=map_k)
+    summary = evaluate_run(selected_qrels, run, k=k, latencies=latencies, map_k=map_k)
+    return replace(summary, routing=_routing_summary(routing_events, len(records)))
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:

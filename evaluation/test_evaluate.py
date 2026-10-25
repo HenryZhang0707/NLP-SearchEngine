@@ -8,6 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from evaluation.evaluate import (
+    EvaluationError,
     QueryRecord,
     evaluate_http,
     evaluate_run,
@@ -22,11 +23,33 @@ class _Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers["Content-Length"])
         request = json.loads(self.rfile.read(length))
+        query = request["query"]
         payload = {"results": [
             {"doc_id": "d1", "score": 2.0},
             {"doc_id": "d2", "score": 1.0},
-        ] if request["query"] == "q1" else [{"doc_id": "d3", "score": 1.0}]}
+        ] if query == "q1" else [{"doc_id": "d3", "score": 1.0}],
+                   "routing": {
+                       "vector_attempted": True,
+                       "vector_used": query == "q1",
+                       "fallback": query != "q1",
+                       "reason": "forced_hybrid" if query == "q1" else "vector_unavailable",
+                   }}
         body = json.dumps(payload).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *_args):
+        pass
+
+
+class _MalformedRoutingHandler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        body = json.dumps({"results": [], "routing": {
+            "vector_attempted": "yes",
+        }}).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
@@ -52,6 +75,8 @@ class EvaluatorTests(unittest.TestCase):
             self.assertEqual(summary.n_queries, 2)
             self.assertGreater(summary.ndcg_at_10, 0.0)
             self.assertGreater(summary.map_at_100, 0.0)
+            self.assertIsNone(summary.routing)
+            self.assertNotIn("routing", summary.to_dict())
             self.assertEqual([q.qid for q in load_queries(query_path)], ["q1", "q2"])
 
     def test_http_mode_and_run_output(self):
@@ -69,7 +94,28 @@ class EvaluatorTests(unittest.TestCase):
                 )
                 self.assertEqual(summary.n_queries, 2)
                 self.assertIsNotNone(summary.p95_latency_ms)
+                self.assertIsNotNone(summary.routing)
+                self.assertEqual(summary.routing.attempted, 2)
+                self.assertEqual(summary.routing.used, 1)
+                self.assertEqual(summary.routing.fallback, 1)
+                self.assertEqual(summary.routing.unavailable, 1)
+                self.assertEqual(summary.routing.used_rate, 0.5)
                 self.assertEqual(len(path.read_text().splitlines()), 3)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+    def test_http_rejects_malformed_routing(self):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _MalformedRoutingHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with self.assertRaises(EvaluationError):
+                evaluate_http(
+                    f"http://127.0.0.1:{server.server_port}/search",
+                    [QueryRecord("q1", "q1")], {"q1": {"d1": 1.0}},
+                )
         finally:
             server.shutdown()
             server.server_close()

@@ -33,6 +33,21 @@ python3 -m evaluation.prepare_dataset \
   --expected-docs 100001 --expected-queries 2000 --expected-qrels 9839
 ```
 
+For the public RocketQA DuReader-Retrieval baseline archive, use the dedicated
+streaming adapter instead of treating the archive as generic JSONL. It writes
+`corpus.jsonl`, `queries.dev.tsv`, `qrels.dev.tsv`, and a SHA256/count manifest;
+the output remains an official `dev` split because the archive has no official
+test labels:
+
+```bash
+python3 -m evaluation.prepare_dureader \
+  --root /data/dureader-retrieval-baseline-dataset \
+  --out /data/prepared/duretrieval-official-dev \
+  --archive /data/dureader-retrieval-baseline-dataset.tar.gz \
+  --archive-sha256 <archive-sha256> \
+  --expected-queries 2000 --expected-qrels 9839
+```
+
 Compare two runs with a deterministic query-level paired bootstrap. The
 reported difference is `run-b - run-a`:
 
