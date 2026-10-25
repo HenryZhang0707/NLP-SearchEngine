@@ -45,6 +45,8 @@ python3 -m contracts.conformance /tmp/nlp-tiny-bm25 fixtures/tiny_corpus.jsonl
 
 # 3. 全部测试：包含离线双索引、假向量、路由与真实本地 HTTP 请求
 python3 tests/run.py
+# 可选：浏览器高亮逻辑的 Unicode/转义回归测试（Node.js 18+，无需 npm 依赖）
+node --test tests/test_web.cjs
 
 # 4. 启动词法服务
 python3 -m online.server --index /tmp/nlp-tiny-bm25 --port 8000

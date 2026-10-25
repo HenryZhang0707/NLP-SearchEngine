@@ -69,7 +69,8 @@ function renderTimings(timings) {
 }
 
 function highlightedSnippet(text, highlights = []) {
-  const source = String(text || "");
+  // API offsets count Unicode code points, not JavaScript UTF-16 code units.
+  const source = Array.from(String(text || ""));
   const spans = highlights.map((highlight) => ({
     start: Math.max(0, Math.min(source.length, Number(highlight.start) || 0)),
     end: Math.max(0, Math.min(source.length, Number(highlight.end) || 0)),
@@ -83,11 +84,11 @@ function highlightedSnippet(text, highlights = []) {
       if (span.end <= cursor) continue;
       span.start = cursor;
     }
-    if (span.start > cursor) pieces.push(escapeHtml(source.slice(cursor, span.start)));
-    pieces.push(`<mark class="${span.kind === "expanded" ? "expanded" : "original"}">${escapeHtml(source.slice(span.start, span.end))}</mark>`);
+    if (span.start > cursor) pieces.push(escapeHtml(source.slice(cursor, span.start).join("")));
+    pieces.push(`<mark class="${span.kind === "expanded" ? "expanded" : "original"}">${escapeHtml(source.slice(span.start, span.end).join(""))}</mark>`);
     cursor = span.end;
   }
-  pieces.push(escapeHtml(source.slice(cursor)));
+  pieces.push(escapeHtml(source.slice(cursor).join("")));
   return pieces.join("") || "<span class=\"muted\">无摘要</span>";
 }
 
