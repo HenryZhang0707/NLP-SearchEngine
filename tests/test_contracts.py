@@ -149,6 +149,30 @@ def test_boolean_filter_honors_and_not_and_phrase_positions():
     assert [item.doc_id for item in engine.search(SearchRequest("red OR NOT apple")).results] == ["one", "two"]
 
 
+def test_negated_terms_filter_without_boosting_scores_or_highlights():
+    corpus = [
+        {"doc_id": "blue", "title": "", "text": "red blue blue blue"},
+        {"doc_id": "red", "title": "", "text": "red red"},
+        {"doc_id": "other", "title": "", "text": "green"},
+    ]
+    engine = SearchEngine(MemoryIndex.from_corpus(corpus))
+    for scorer in ("bm25", "tfidf"):
+        positive = engine.search(SearchRequest("red", scorer=scorer))
+        mixed = engine.search(SearchRequest("red OR NOT blue", scorer=scorer))
+        assert [(r.doc_id, r.score) for r in mixed.results[:2]] == [
+            (r.doc_id, r.score) for r in positive.results]
+        blue = next(r for r in mixed.results if r.doc_id == "blue")
+        assert [(h.start, h.end) for h in blue.highlights] == [(0, 3)]
+        negative = engine.search(SearchRequest("NOT (red AND blue)", scorer=scorer))
+        assert [(r.doc_id, r.score) for r in negative.results] == [("red", 0.0), ("other", 0.0)]
+        assert all(not r.highlights for r in negative.results)
+        double_negative = engine.search(SearchRequest("NOT NOT red", scorer=scorer))
+        assert [(r.doc_id, r.score) for r in double_negative.results] == [
+            (r.doc_id, r.score) for r in positive.results]
+    assert parse("NOT (red OR NOT blue)")["terms"] == ["blue"]
+    assert parse("NOT (red AND blue)")["terms"] == []
+
+
 def test_analyzer_offsets_roundtrip():
     text = "心肌梗死发作前常有 chest pain 等症状"
     for t in analyzer.analyze(text):

@@ -23,7 +23,7 @@
 - `contracts/retrieval.py` 固定模型 revision、维度、归一化、前缀、截断和 cosine 约束。
 - `online/embeddings.py` 提供懒加载的 Sentence-Transformers 编码器，缺少可选依赖时返回清晰的可用性错误。
 - `offline/vector_build.py` 的 Qdrant writer 会创建新 collection、批量 upsert、核对点数并下载带 SHA256 的快照。
-- `online/vector_index.py` 的 Qdrant reader 校验 collection 维度、payload 中的外部 doc_id 和 cosine 分数。
+- `online/vector_index.py` 的 Qdrant reader 校验 collection 中持久化的完整构建身份、真实维度／距离和精确点数，并在命中时核对外部 doc_id 和 cosine 分数。Qdrant 与客户端均要求 1.16+；旧的无元数据 collection 必须重建。
 - CLI 可通过 `--vector-url` 与 `--vector-manifest` 启用同版本向量后端；不提供这两个参数时保持零依赖词法服务。
 
 ### HTTP 与界面
@@ -43,14 +43,15 @@
 ```bash
 python3 tests/run.py
 python3 -m unittest discover -s evaluation -p 'test_*.py'
+node --test tests/test_web.cjs  # 可选，Node.js 18+
 python3 -m offline.build --corpus fixtures/tiny_corpus.jsonl \
   --out /tmp/nlp-tiny-bm25 --dataset tiny --k1 1.2 --b 0.75
 python3 -m contracts.conformance /tmp/nlp-tiny-bm25 fixtures/tiny_corpus.jsonl
 ```
 
-结果为 37 项仓库契约测试、10 项评测器和数据准备测试全部通过，tiny 索引 conformance 通过。启动服务后，lexical 搜索、`/health`、`/index/info`、浏览器静态资源和 dense 未配置时的 503 行为均已验证。对 tiny 磁盘索引重复执行 1,000 次 BM25 查询，当前容器测得 p50 约 0.10 ms、p95 约 0.14 ms；这只是小样本工程冒烟，不能替代 DuRetrieval 全量结果。
+审阅修复后，45 项仓库契约／适配器测试、17 项评测器和数据准备测试、5 项浏览器高亮测试全部通过，tiny 索引 conformance 通过。Qdrant 测试使用 SDK double 验证发布／拒绝路径；另用 `qdrant-client==1.16.0` 的本地内存后端验证了真实 SDK 元数据读写和模型版本错配拒绝，但没有据此宣称验证了真实服务的 HNSW、快照恢复或语义质量。启动服务后，lexical 搜索、`/health`、`/index/info`、浏览器静态资源和 dense 未配置时的 503 行为均已验证。历史上对 tiny 磁盘索引重复执行 1,000 次 BM25 查询测得 p50 约 0.10 ms、p95 约 0.14 ms；这只是小样本工程冒烟，不能替代 DuRetrieval 全量结果。
 
-另用公开 C-MTEB DuRetrieval 快照（5000 篇文档、100 条查询、425 条 qrels）做了外部闭环冒烟。按固定划分取 80 条测试查询，BM25 得到 nDCG@10=0.8065、Recall@10=0.8194、MRR@10=0.8872、MAP@100=0.7350，HTTP 平均延迟 4.33 ms、p50 3.83 ms、p95 6.65 ms。该快照不是课程要求的 100001/2000/9839 版本，这些数字只验证管线，不代表最终成绩。
+历史上另用公开 C-MTEB DuRetrieval 快照（5000 篇文档、100 条查询、425 条 qrels）做了外部闭环冒烟。按固定划分取 80 条测试查询，旧版 Top-10 HTTP 请求下 BM25 得到 nDCG@10=0.8065、Recall@10=0.8194、MRR@10=0.8872，平均延迟 4.33 ms、p50 3.83 ms、p95 6.65 ms。修复审阅问题时发现旧评测器默认只召回 10 条，却标记 MAP@100，因此撤下该 MAP 数值；新的默认评测会召回 100 条，并需要重新测量 MAP 和完整请求延迟。该快照不是课程要求的 100001/2000/9839 版本，这些历史数字只验证管线，不代表最终成绩。
 
 ## 4. 全量实验流程
 

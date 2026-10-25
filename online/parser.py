@@ -172,17 +172,18 @@ class _Parser:
         raise QuerySyntaxError(f"运算符 {token.value!r} 缺少操作数（位置 {token.pos}）")
 
 
-def _atoms(node: dict) -> list[str]:
+def _atoms(node: dict, negated: bool = False) -> list[str]:
+    """Collect positive scoring atoms; negative atoms remain in the filter AST."""
     op = node["op"]
     if op in {"term", "phrase"}:
-        return [node["value"]]
+        return [] if negated else [node["value"]]
     if op == "not":
-        return _atoms(node["child"])
-    return [value for child in node["children"] for value in _atoms(child)]
+        return _atoms(node["child"], not negated)
+    return [value for child in node["children"] for value in _atoms(child, negated)]
 
 
 def parse(query: str) -> dict:
-    """Return a JSON-safe query AST and its atomic query strings."""
+    """Return a JSON-safe query AST and its positive scoring strings."""
     if not isinstance(query, str) or not query.strip():
         raise QuerySyntaxError("空查询")
     tokens = _lex(query)

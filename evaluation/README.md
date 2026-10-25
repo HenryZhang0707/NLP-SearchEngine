@@ -17,6 +17,28 @@ python3 -m evaluation.evaluate \
   --include-per-query
 ```
 
+### Retrieval depth and routing telemetry
+
+HTTP requests fetch `max(--k, --map-k)` results (100 by default), while
+nDCG/Recall/MRR and MAP apply their own cutoffs (10 and 100 by default).
+The TREC run retains the full retrieved list, and per-query `retrieved` counts
+that list rather than only the top-10 metric window. The public API permits
+at most 200 results per request; non-lexical modes also require the server's
+`candidate_k` to cover the requested depth. Latency measures this full-depth
+HTTP request, including serialization and transfer, not a separate top-10 call.
+
+API v2 routing fields are validated and retained with `--include-per-query`.
+The aggregate `routing` object always reports query count, `vector_attempts`,
+`vector_successes`, `fallbacks`, and their rates. Attempt and fallback rates use
+all observed queries as the denominator; vector success rate uses attempts and
+is `null` if no vector call was attempted. An adaptive run with missing vector
+dependencies is therefore visibly degraded rather than silently labeled as a
+successful hybrid experiment. Add `--fail-on-fallback` to reject any such query
+with a nonzero exit status.
+
+Standalone TREC runs contain no routing or latency evidence: those fields are
+`null`, not zero failures or zero latency.
+
 An existing run can be scored without a server:
 
 ```bash

@@ -33,6 +33,10 @@ tests/        标准库 runner；安装 pytest 后也可直接运行 pytest
 
 纪律：跨组只依赖 contracts/；在线不 import offline.*（除 DiskIndex），离线不 import online.*。BM25 离线“构建”指索引/统计，查询打分仍在在线侧。
 
+本地数据、下载权重、生成索引和评测输出分别建议放在 `data/`、`models/`、`index/`、`runs/`。
+这些目录、Qdrant 存储／快照、模型权重和 `.env` 凭据均由 `.gitignore` 排除；小型 JSON/JSONL 测试语料仍保留在受版本控制的 `fixtures/` 中。
+可提交 `.env.example` 等不含真实凭据的配置模板。
+
 ## 快速开始：词法闭环与契约测试（无额外依赖）
 
 ```bash
@@ -45,6 +49,8 @@ python3 -m contracts.conformance /tmp/nlp-tiny-bm25 fixtures/tiny_corpus.jsonl
 
 # 3. 全部测试：包含离线双索引、假向量、路由与真实本地 HTTP 请求
 python3 tests/run.py
+# 可选：浏览器高亮逻辑的 Unicode/转义回归测试（Node.js 18+，无需 npm 依赖）
+node --test tests/test_web.cjs
 
 # 4. 启动词法服务
 python3 -m online.server --index /tmp/nlp-tiny-bm25 --port 8000
@@ -60,7 +66,7 @@ curl -s localhost:8000/index/info
 ## 扩充后的构建/在线接线
 
 真实 embedding 和 Qdrant 适配器是可选依赖，默认安装不下载模型。安装
-`sentence-transformers` 与 `qdrant-client` 后，可以用固定 manifest 启动完整向量服务：
+`sentence-transformers` 与 `qdrant-client>=1.16`，并运行 Qdrant 1.16+ 后，可以用固定 manifest 启动完整向量服务：
 
 ```python
 # 离线：writer 配置相同 out_dir 下的快照导出目录
@@ -83,7 +89,8 @@ python3 -m online.server --index /path/to/bm25 \
 ```
 
 服务会从 manifest 读取模型 ID、固定 revision、维度、前缀和截断配置，并校验
-Qdrant collection 与倒排索引的语料指纹。
+Qdrant collection 中持久化的完整构建元数据、真实维度／距离和精确文档数，随后校验与倒排索引的语料指纹。
+缺少构建元数据的旧 collection 必须用新 writer 重建；不会只凭同维度或外部 manifest 放行。
 
 四种请求模式：
 
@@ -110,8 +117,9 @@ python3 -m evaluation.evaluate \
   --output-run runs/bm25.trec --include-per-query
 ```
 
-它输出 nDCG@10、Recall@10、MRR@10、MAP@100，以及平均、p50、p95 延迟；已有 TREC run
-也可以离线评分。`evaluation.prepare_dataset` 可校验外部 DuRetrieval 文件并生成固定划分，
+它默认召回 100 条结果，分别计算 nDCG@10、Recall@10、MRR@10、MAP@100，以及完整请求的平均、p50、p95 延迟。
+输出包含向量尝试、成功和 fallback 计数／比例；正式实验可加 `--fail-on-fallback` 拒绝降级结果。已有 TREC run
+也可以离线评分，但不推断其中不存在的路由或延迟信息。`evaluation.prepare_dataset` 可校验外部 DuRetrieval 文件并生成固定划分，
 `evaluation.compare` 可对两组 TREC run 做可复现的 query-level paired bootstrap。详见
 [evaluation/README.md](evaluation/README.md)。
 

@@ -9,6 +9,7 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
+from unittest.mock import patch
 
 from contracts.api import (
     ApiError, MODES, REQUEST_JSON_SCHEMA, RESPONSE_JSON_SCHEMA, SearchRequest,
@@ -348,9 +349,13 @@ def test_http_ui_static_routes_are_safe_and_present():
         with urlopen(base + "/", timeout=5) as response:
             assert response.status == 200
             assert "中文搜索引擎" in response.read().decode("utf-8")
-        with urlopen(base + "/static/app.js", timeout=5) as response:
-            assert response.status == 200
-            assert response.headers["Content-Type"].startswith("text/javascript")
+        # Both registered JavaScript MIME types occur in system MIME databases.
+        for mime_type in ("text/javascript", "application/javascript"):
+            with patch("online.server.mimetypes.guess_type", return_value=(mime_type, None)):
+                with urlopen(base + "/static/app.js", timeout=5) as response:
+                    assert response.status == 200
+                    assert response.headers.get_content_type() == mime_type
+                    assert response.headers.get_content_charset() == "utf-8"
         try:
             urlopen(base + "/static/%2e%2e/online/server.py", timeout=5)
         except HTTPError as error:
