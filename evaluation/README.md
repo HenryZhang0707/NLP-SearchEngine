@@ -30,7 +30,7 @@ DuRetrieval release without committing the data:
 python3 -m evaluation.prepare_dataset \
   --corpus data/raw/corpus.jsonl --queries data/raw/queries.jsonl \
   --qrels data/raw/qrels.tsv --out data/duretrieval \
-  --expected-docs 100001 --expected-queries 2000
+  --expected-docs 100001 --expected-queries 2000 --expected-qrels 9839
 ```
 
 Compare two runs with a deterministic query-level paired bootstrap. The

@@ -29,7 +29,8 @@ class PrepareDatasetTests(unittest.TestCase):
             root = Path(directory)
             inputs = self._inputs(root)
             first = prepare_dataset(*inputs, root / "one", seed=9,
-                                    dev_fraction=0.25, test_fraction=0.5)
+                                    dev_fraction=0.25, test_fraction=0.5,
+                                    expected_qrels=2)
             second = prepare_dataset(*inputs, root / "two", seed=9,
                                      dev_fraction=0.25, test_fraction=0.5)
             self.assertEqual(first["splits"], second["splits"])
@@ -46,6 +47,13 @@ class PrepareDatasetTests(unittest.TestCase):
             qrels.write_text("q1 0 missing 1\n", encoding="utf-8")
             with self.assertRaises(EvaluationError):
                 prepare_dataset(corpus, queries, qrels, root / "out")
+
+    def test_rejects_unexpected_qrel_count(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            corpus, queries, qrels = self._inputs(root)
+            with self.assertRaises(EvaluationError):
+                prepare_dataset(corpus, queries, qrels, root / "out", expected_qrels=9839)
 
     def test_rejects_nonempty_output_directory(self):
         with tempfile.TemporaryDirectory() as directory:

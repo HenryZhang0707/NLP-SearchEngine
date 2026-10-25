@@ -12,7 +12,7 @@ Example::
     python3 -m evaluation.prepare_dataset \
       --corpus data/raw/corpus.jsonl --queries data/raw/queries.jsonl \
       --qrels data/raw/qrels.tsv --out data/duretrieval \
-      --expected-docs 100001 --expected-queries 2000
+      --expected-docs 100001 --expected-queries 2000 --expected-qrels 9839
 """
 
 from __future__ import annotations
@@ -166,7 +166,8 @@ def prepare_dataset(corpus_path: str | Path, queries_path: str | Path,
                     qrels_path: str | Path, out_dir: str | Path, *, seed: int = 2026,
                     dev_fraction: float = 0.1, test_fraction: float = 0.8,
                     expected_docs: int | None = None,
-                    expected_queries: int | None = None) -> dict:
+                    expected_queries: int | None = None,
+                    expected_qrels: int | None = None) -> dict:
     """Normalize inputs, write stable split files, and return the manifest."""
 
     if type(seed) is not int:
@@ -180,6 +181,8 @@ def prepare_dataset(corpus_path: str | Path, queries_path: str | Path,
         raise EvaluationError(f"文档数不符: {len(corpus)} != {expected_docs}")
     if expected_queries is not None and len(queries) != expected_queries:
         raise EvaluationError(f"查询数不符: {len(queries)} != {expected_queries}")
+    if expected_qrels is not None and len(qrel_rows) != expected_qrels:
+        raise EvaluationError(f"qrels 数不符: {len(qrel_rows)} != {expected_qrels}")
     doc_ids = {record["doc_id"] for record in corpus}
     query_ids = {qid for qid, _ in queries}
     unknown_qids = sorted({qid for qid, _, _ in qrel_rows} - query_ids)
@@ -240,6 +243,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--test-fraction", type=float, default=0.8)
     parser.add_argument("--expected-docs", type=int)
     parser.add_argument("--expected-queries", type=int)
+    parser.add_argument("--expected-qrels", type=int)
     return parser
 
 
@@ -249,7 +253,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         manifest = prepare_dataset(
             args.corpus, args.queries, args.qrels, args.out, seed=args.seed,
             dev_fraction=args.dev_fraction, test_fraction=args.test_fraction,
-            expected_docs=args.expected_docs, expected_queries=args.expected_queries)
+            expected_docs=args.expected_docs, expected_queries=args.expected_queries,
+            expected_qrels=args.expected_qrels)
         print(json.dumps(manifest, ensure_ascii=False, indent=2))
     except (EvaluationError, OSError) as error:
         print(f"dataset preparation error: {error}", file=sys.stderr)
