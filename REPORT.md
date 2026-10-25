@@ -32,7 +32,7 @@
 
 ### 评测器
 
-`evaluation/evaluate.py` 只通过公开 HTTP API 发送查询，不导入检索内部模块。它读取 TREC qrels 和 TSV/JSONL queries，输出 TREC run，并计算 nDCG@10、Recall@10、MRR@10、平均延迟、p50 和 p95。已有 run 可以脱离服务离线评分。
+`evaluation/evaluate.py` 只通过公开 HTTP API 发送查询，不导入检索内部模块。它读取 TREC qrels 和 TSV/JSONL queries，输出 TREC run，并计算 nDCG@10、Recall@10、MRR@10、MAP@100、平均延迟、p50 和 p95。已有 run 可以脱离服务离线评分。`evaluation/prepare_dataset.py` 负责外部数据校验、哈希和固定划分，`evaluation/compare.py` 提供可复现的逐查询 paired bootstrap。
 
 ## 3. 验证结果
 
@@ -46,14 +46,14 @@ python3 -m offline.build --corpus fixtures/tiny_corpus.jsonl \
 python3 -m contracts.conformance /tmp/nlp-tiny-bm25 fixtures/tiny_corpus.jsonl
 ```
 
-结果为 36 项仓库契约测试全部通过、2 项评测器测试通过，tiny 索引 conformance 通过。启动服务后，lexical 搜索、`/health`、`/index/info`、浏览器静态资源和 dense 未配置时的 503 行为均已验证。对 tiny 磁盘索引重复执行 1,000 次 BM25 查询，当前容器测得 p50 约 0.10 ms、p95 约 0.14 ms；这只是小样本工程冒烟，不能替代 DuRetrieval 全量结果。
+结果为 37 项仓库契约测试、3 项评测器测试全部通过，tiny 索引 conformance 通过。启动服务后，lexical 搜索、`/health`、`/index/info`、浏览器静态资源和 dense 未配置时的 503 行为均已验证。对 tiny 磁盘索引重复执行 1,000 次 BM25 查询，当前容器测得 p50 约 0.10 ms、p95 约 0.14 ms；这只是小样本工程冒烟，不能替代 DuRetrieval 全量结果。
 
 ## 4. 全量实验流程
 
 1. 固定 DuRetrieval 数据版本、查询划分和 qrels；先在开发集冻结 Router 阈值。
 2. 用同一 BM25 参数和语料分别运行 BM25、纯向量、固定 hybrid、自适应 hybrid。
-3. 对每组保存 TREC run 和每查询延迟，使用评测器报告 nDCG@10、Recall@10、MRR@10、p50/p95。
-4. 对自适应与固定 hybrid 的逐查询差值做 paired bootstrap，并单独报告向量触发、成功和 fallback 比例。
+3. 对每组保存 TREC run 和每查询延迟，使用评测器报告 nDCG@10、Recall@10、MRR@10、MAP@100、p50/p95。
+4. 使用 `evaluation.compare` 对自适应与固定 hybrid 的逐查询差值做 paired bootstrap，并单独报告向量触发、成功和 fallback 比例。
 
 示例：
 

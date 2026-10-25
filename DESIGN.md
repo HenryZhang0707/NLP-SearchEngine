@@ -155,4 +155,4 @@ index/<dataset>/<build-id>/
 
 已实现：词法索引构建/读取、普通 OR 查询、BM25/TF-IDF、布尔/短语过滤、高亮与 HTTP；双索引构建编排和 manifest 发布检查；四模式编排、规则 Router、RRF、分页/降级回显；浏览器 UI、HTTP-only 评测器、可选 Sentence-Transformers 编码器与 Qdrant 建库/快照/只读适配器。
 
-默认 CLI 不传向量参数时只启动词法服务；强制 dense/hybrid 在向量依赖未配置时返回 503，adaptive 明确降级。待完成的是依赖真实 DuRetrieval 数据、模型和 Qdrant 实例的全量四组实验、paired bootstrap 和 HNSW 性能测量；内存向量测试不能作为 HNSW 性能或语义效果结论。
+默认 CLI 不传向量参数时只启动词法服务；强制 dense/hybrid 在向量依赖未配置时返回 503，adaptive 明确降级。仓库已提供外部数据校验/固定划分、HTTP 评测和 paired bootstrap 工具；待完成的是依赖真实 DuRetrieval 数据、模型和 Qdrant 实例的全量四组实验与 HNSW 性能测量。内存向量测试不能作为 HNSW 性能或语义效果结论。

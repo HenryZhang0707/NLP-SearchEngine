@@ -110,13 +110,17 @@ python3 -m evaluation.evaluate \
   --output-run runs/bm25.trec --include-per-query
 ```
 
-它输出 nDCG@10、Recall@10、MRR@10，以及平均、p50、p95 延迟；已有 TREC run
-也可以离线评分。详见 [evaluation/README.md](evaluation/README.md)。
+它输出 nDCG@10、Recall@10、MRR@10、MAP@100，以及平均、p50、p95 延迟；已有 TREC run
+也可以离线评分。`evaluation.prepare_dataset` 可校验外部 DuRetrieval 文件并生成固定划分，
+`evaluation.compare` 可对两组 TREC run 做可复现的 query-level paired bootstrap。详见
+[evaluation/README.md](evaluation/README.md)。
 
 ## 当前状态与后续工作
 
 **已可用**：bigram 占位分词、词法构建/读取、BM25/TF-IDF、普通 OR 查询、布尔/短语过滤、Top-K/高亮/HTTP；双索引构建编排、Qdrant upsert/快照发布检查；规则 Router、RRF、四模式编排、降级和阶段耗时；可选 Sentence-Transformers/Qdrant 适配器；浏览器 UI、HTTP-only 评测器与标准库测试。
 
-**待完成的实验工作**：下载并固定 DuRetrieval 语料、queries、qrels，按开发/测试划分运行四组实验，记录 nDCG/Recall/延迟和 paired bootstrap 区间；这些数据与模型下载不随仓库提交。
+**待完成的实验工作**：下载并固定 DuRetrieval 语料、queries、qrels，按开发/测试划分运行四组实验，
+记录 nDCG/Recall/MAP/延迟和 paired bootstrap 区间；数据与模型下载不随仓库提交，仓库已提供
+校验、固定划分和区间计算入口。
 
 RM3 已实现为确定性的本地伪相关反馈扩展；SLM 仍需要外部固定模型与离线缓存，返回 501。扩展不改变显式布尔/短语约束。内存测试通过不代表真实语义质量或 HNSW 性能已经验收。
