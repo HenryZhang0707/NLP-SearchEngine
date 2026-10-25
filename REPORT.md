@@ -40,13 +40,13 @@
 
 ```bash
 python3 tests/run.py
-python3 -m unittest evaluation.test_evaluate
+python3 -m unittest discover -s evaluation -p 'test_*.py'
 python3 -m offline.build --corpus fixtures/tiny_corpus.jsonl \
   --out /tmp/nlp-tiny-bm25 --dataset tiny --k1 1.2 --b 0.75
 python3 -m contracts.conformance /tmp/nlp-tiny-bm25 fixtures/tiny_corpus.jsonl
 ```
 
-结果为 37 项仓库契约测试、3 项评测器测试全部通过，tiny 索引 conformance 通过。启动服务后，lexical 搜索、`/health`、`/index/info`、浏览器静态资源和 dense 未配置时的 503 行为均已验证。对 tiny 磁盘索引重复执行 1,000 次 BM25 查询，当前容器测得 p50 约 0.10 ms、p95 约 0.14 ms；这只是小样本工程冒烟，不能替代 DuRetrieval 全量结果。
+结果为 37 项仓库契约测试、5 项评测器测试全部通过，tiny 索引 conformance 通过。启动服务后，lexical 搜索、`/health`、`/index/info`、浏览器静态资源和 dense 未配置时的 503 行为均已验证。对 tiny 磁盘索引重复执行 1,000 次 BM25 查询，当前容器测得 p50 约 0.10 ms、p95 约 0.14 ms；这只是小样本工程冒烟，不能替代 DuRetrieval 全量结果。
 
 ## 4. 全量实验流程
 

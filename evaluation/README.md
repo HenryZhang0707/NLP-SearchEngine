@@ -45,5 +45,5 @@ python3 -m evaluation.compare --qrels data/duretrieval/qrels.test.tsv \
 Run the evaluator tests with:
 
 ```bash
-python3 -m unittest evaluation.test_evaluate
+python3 -m unittest discover -s evaluation -p 'test_*.py'
 ```
