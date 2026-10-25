@@ -47,6 +47,16 @@ class PrepareDatasetTests(unittest.TestCase):
             with self.assertRaises(EvaluationError):
                 prepare_dataset(corpus, queries, qrels, root / "out")
 
+    def test_rejects_nonempty_output_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            corpus, queries, qrels = self._inputs(root)
+            out = root / "out"
+            out.mkdir()
+            (out / "old-manifest.json").write_text("{}", encoding="utf-8")
+            with self.assertRaises(EvaluationError):
+                prepare_dataset(corpus, queries, qrels, out)
+
 
 if __name__ == "__main__":
     unittest.main()

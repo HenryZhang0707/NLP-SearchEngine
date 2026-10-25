@@ -189,6 +189,10 @@ def prepare_dataset(corpus_path: str | Path, queries_path: str | Path,
     if unknown_docs:
         raise EvaluationError(f"qrels 含未知 doc_id: {unknown_docs[:3]}")
     out = Path(out_dir)
+    if out.exists() and not out.is_dir():
+        raise EvaluationError(f"输出路径不是目录: {out}")
+    if out.exists() and any(out.iterdir()):
+        raise EvaluationError(f"输出目录必须为空，以免混入旧数据: {out}")
     out.mkdir(parents=True, exist_ok=True)
     corpus_out = out / "corpus.jsonl"
     with corpus_out.open("w", encoding="utf-8") as handle:
