@@ -39,16 +39,64 @@ class MemoryVectorIndex:
 
 
 class QdrantVectorIndex:
-    """在线组待实现：加载离线快照并只读查询，暴露 VectorReader。
-
-    接入时必须校验 collection 元数据与 manifest；不得接受任意同维度库。
-    """
+    """Read-only Qdrant adapter with manifest/collection compatibility checks."""
 
     def __init__(self, manifest: VectorManifest, url: str):
-        raise RetrievalUnavailable("TODO: 接入 Qdrant 只读查询适配器")
+        if manifest.backend != "qdrant-hnsw":
+            raise ValueError("Qdrant 适配器需要 qdrant-hnsw manifest")
+        try:
+            from qdrant_client import QdrantClient
+        except ImportError as error:
+            raise RetrievalUnavailable("QdrantVectorIndex 需要安装 qdrant-client") from error
+        self._manifest = manifest
+        self._client = QdrantClient(url=url, timeout=30.0)
+        self._collection = manifest.collection
+        try:
+            info = self._client.get_collection(self._collection)
+            config = getattr(info, "config", None)
+            params = getattr(config, "params", None)
+            vectors = getattr(params, "vectors", None)
+            size = getattr(vectors, "size", None)
+            if size is not None and size != manifest.embedding.dimension:
+                raise ValueError("Qdrant collection 维度与 manifest 不一致")
+        except ValueError:
+            raise
+        except Exception as error:
+            raise RetrievalUnavailable(f"无法读取 Qdrant collection: {error}") from error
 
     def manifest(self) -> VectorManifest:
-        raise RetrievalUnavailable("Qdrant 适配器尚未实现")
+        return self._manifest
 
     def search(self, query_vector: Sequence[float], limit: int) -> list[VectorHit]:
-        raise RetrievalUnavailable("Qdrant 适配器尚未实现")
+        validate_vector(query_vector, self._manifest.embedding)
+        if type(limit) is not int or limit <= 0:
+            raise ValueError("limit 必须是正整数")
+        try:
+            if hasattr(self._client, "query_points"):
+                response = self._client.query_points(
+                    collection_name=self._collection, query=list(query_vector), limit=limit,
+                    with_payload=True,
+                )
+                points = getattr(response, "points", response)
+            else:
+                points = self._client.search(
+                    collection_name=self._collection, query_vector=list(query_vector),
+                    limit=limit, with_payload=True,
+                )
+        except Exception as error:
+            raise RetrievalUnavailable(f"Qdrant 查询失败: {error}") from error
+        hits = []
+        try:
+            for point in points:
+                docid = int(point.id)
+                score = float(point.score)
+                payload = point.payload or {}
+                doc_id = payload.get("doc_id")
+                if type(point.id) is not int or not isinstance(doc_id, str):
+                    raise ValueError("Qdrant payload 缺少有效 docid")
+                if not math.isfinite(score) or not -1.0001 <= score <= 1.0001:
+                    raise ValueError("Qdrant 返回非法 cosine 分数")
+                hits.append(VectorHit(docid, doc_id, score))
+        except (TypeError, ValueError, AttributeError) as error:
+            raise RetrievalUnavailable(f"Qdrant 返回违反向量契约: {error}") from error
+        return sorted(hits, key=lambda hit: (-hit.score, hit.docid))[:limit]

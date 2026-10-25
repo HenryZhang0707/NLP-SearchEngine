@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="BM25 与向量检索中文搜索引擎演示">
+    <title>中文搜索引擎</title>
+    <link rel="stylesheet" href="/static/style.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">NLP 课程大作业</p>
+          <h1>中文搜索引擎</h1>
+          <p class="subtitle">BM25 词法检索 · 自适应混合检索 · 可观测查询链路</p>
+        </div>
+        <p id="index-summary" class="index-summary" aria-live="polite">正在读取索引信息…</p>
+      </header>
+
+      <section class="search-panel" aria-label="搜索">
+        <form id="search-form">
+          <label class="sr-only" for="query">搜索内容</label>
+          <div class="query-row">
+            <input id="query" name="query" type="search" autocomplete="off"
+                   placeholder="例如：心肌梗死 症状" required>
+            <button id="submit" type="submit">搜索</button>
+          </div>
+          <div class="controls">
+            <label for="mode">检索模式
+              <select id="mode" name="mode">
+                <option value="lexical">lexical · 词法</option>
+                <option value="adaptive">adaptive · 自适应</option>
+                <option value="hybrid">hybrid · 混合</option>
+                <option value="dense">dense · 语义</option>
+              </select>
+            </label>
+            <label for="k">返回数量
+              <input id="k" name="k" type="number" min="1" max="200" value="10">
+            </label>
+            <span class="hint">按 Enter 搜索，结果由 HTTP /search 提供</span>
+          </div>
+        </form>
+      </section>
+
+      <div id="status" class="status" role="status" aria-live="polite"></div>
+      <section id="error" class="error" role="alert" hidden></section>
+
+      <section id="observability" class="observability" hidden>
+        <div>
+          <h2>本次查询</h2>
+          <p id="summary" class="summary"></p>
+        </div>
+        <div>
+          <h3>路由</h3>
+          <dl id="routing" class="facts"></dl>
+        </div>
+        <div>
+          <h3>阶段耗时</h3>
+          <div id="timings" class="timings"></div>
+        </div>
+      </section>
+
+      <section id="results" class="results" aria-live="polite">
+        <div class="empty-state">
+          <span class="empty-icon" aria-hidden="true">⌕</span>
+          <h2>输入查询开始检索</h2>
+          <p>结果会显示标题、摘要、高亮、排序分数和路由信息。</p>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="/static/app.js"></script>
+  </body>
+</html>

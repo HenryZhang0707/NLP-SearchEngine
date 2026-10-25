@@ -101,13 +101,30 @@ def test_request_validation():
         raise AssertionError("非法 scorer 未被拒绝")
 
 
-def test_parser_rejects_unsupported_syntax():
-    try:
-        parse('"心肌梗死"')
-    except QuerySyntaxError:
-        pass
-    else:
-        raise AssertionError("引号短语应抛 QuerySyntaxError（骨架版未实现）")
+def test_parser_supports_phrase_and_rejects_malformed_syntax():
+    parsed = parse('"心肌梗死"')
+    assert parsed["type"] == "boolean" and parsed["explicit_constraints"]
+    assert parsed["ast"]["op"] == "phrase"
+    assert parse("心肌 OR 症状")["explicit_constraints"] is True
+    for query in ('"未闭合', '心肌 AND', '(症状', '心肌 OR )'):
+        try:
+            parse(query)
+        except QuerySyntaxError:
+            continue
+        raise AssertionError(f"非法查询未被拒绝: {query!r}")
+
+
+def test_boolean_filter_honors_and_not_and_phrase_positions():
+    corpus = [
+        {"doc_id": "one", "title": "", "text": "red apple fruit"},
+        {"doc_id": "two", "title": "", "text": "red green apple"},
+        {"doc_id": "three", "title": "", "text": "apple fruit"},
+    ]
+    engine = SearchEngine(MemoryIndex.from_corpus(corpus))
+    assert [item.doc_id for item in engine.search(SearchRequest('"red apple"')).results] == ["one"]
+    assert [item.doc_id for item in engine.search(SearchRequest("apple NOT green")).results] == ["three", "one"]
+    assert [item.doc_id for item in engine.search(SearchRequest("red AND apple")).results] == ["one", "two"]
+    assert [item.doc_id for item in engine.search(SearchRequest("red OR NOT apple")).results] == ["one", "two"]
 
 
 def test_analyzer_offsets_roundtrip():

@@ -73,14 +73,78 @@ def build_vectors(reader: IndexReader, encoder: TextEncoder, writer: VectorWrite
 
 
 class QdrantSnapshotWriter:
-    """离线组待实现：建新 collection、upsert、校验点数/ID、导出只读快照。
+    """Build a Qdrant collection and publish a verified local snapshot.
 
-    SDK 依赖只允许留在适配器内部。不得在此偷偷调用在线检索模块。
+    ``qdrant-client`` is imported lazily so the stdlib lexical workflow keeps
+    working without the optional vector stack. Each build uses a fresh
+    collection; callers should pass a versioned collection name.
     """
 
-    def __init__(self, url: str, snapshot_dir: Path):
+    def __init__(self, url: str, snapshot_dir: Path, batch_size: int = 128,
+                 timeout: float = 30.0):
         self.url = url
         self.snapshot_dir = Path(snapshot_dir)
+        self.batch_size = batch_size
+        self.timeout = timeout
 
     def replace(self, manifest: VectorManifest, records) -> VectorManifest:
-        raise NotImplementedError("TODO: 实现 Qdrant 构建与快照发布，遵守 VectorWriter")
+        if self.batch_size <= 0:
+            raise ValueError("batch_size 必须为正数")
+        try:
+            from qdrant_client import QdrantClient, models
+        except ImportError as error:
+            raise RuntimeError("QdrantSnapshotWriter 需要安装 qdrant-client") from error
+        records = list(records)
+        for record in records:
+            validate_vector(record.vector, manifest.embedding)
+        if len(records) != manifest.n_docs:
+            raise ValueError("向量记录数与 manifest 不符")
+        if sorted(record.docid for record in records) != list(range(manifest.n_docs)):
+            raise ValueError("Qdrant point id 必须与内部 docid 一致")
+        if len({record.doc_id for record in records}) != len(records):
+            raise ValueError("外部 doc_id 必须唯一")
+        client = QdrantClient(url=self.url, timeout=self.timeout)
+        try:
+            client.get_collection(manifest.collection)
+        except Exception:
+            pass
+        else:
+            raise ValueError(f"Qdrant collection 已存在: {manifest.collection}")
+        client.create_collection(
+            collection_name=manifest.collection,
+            vectors_config=models.VectorParams(
+                size=manifest.embedding.dimension, distance=models.Distance.COSINE,
+            ),
+        )
+        for start in range(0, len(records), self.batch_size):
+            batch = records[start:start + self.batch_size]
+            client.upsert(
+                collection_name=manifest.collection,
+                points=[models.PointStruct(
+                    id=record.docid, vector=list(record.vector),
+                    payload={"doc_id": record.doc_id},
+                ) for record in batch],
+                wait=True,
+            )
+        info = client.get_collection(manifest.collection)
+        count = getattr(info, "points_count", None)
+        if count is not None and count != len(records):
+            raise ValueError(f"Qdrant 点数不符: {count} != {len(records)}")
+        try:
+            snapshot = client.create_snapshot(collection_name=manifest.collection)
+            snapshot_name = getattr(snapshot, "name", None) or getattr(snapshot, "result", None)
+            if not isinstance(snapshot_name, str):
+                raise ValueError("Qdrant 未返回快照文件名")
+            self.snapshot_dir.mkdir(parents=True, exist_ok=True)
+            target = self.snapshot_dir / Path(snapshot_name).name
+            from urllib.request import urlopen
+            import urllib.parse
+            endpoint = (self.url.rstrip("/") + "/collections/" +
+                        urllib.parse.quote(manifest.collection, safe="") + "/snapshots/" +
+                        urllib.parse.quote(Path(snapshot_name).name, safe=""))
+            with urlopen(endpoint, timeout=self.timeout) as response, target.open("wb") as output:
+                while chunk := response.read(1024 * 1024):
+                    output.write(chunk)
+        except Exception as error:
+            raise RuntimeError(f"Qdrant 快照发布失败: {error}") from error
+        return replace(manifest, snapshot_files={target.name: sha256_of(target)})

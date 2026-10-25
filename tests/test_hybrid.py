@@ -25,6 +25,7 @@ from offline.vector_build import build_vectors
 from online.engine import SearchEngine
 from online.fusion import rrf
 from online.memory_index import MemoryIndex
+from online.parser import QuerySyntaxError
 from online.router import QueryFeatures, RuleRouter
 from online.scorers import bm25
 from online.server import make_handler
@@ -207,12 +208,16 @@ def test_router_hard_constraints_always_stay_lexical():
     assert router.decide(QueryFeatures(False, 2, 1, 2, 0.01)).reason == "small_relative_gap"
 
 
-def test_unimplemented_explicit_syntax_still_rejected():
-    from online.parser import QuerySyntaxError
+def test_explicit_syntax_is_filtered_before_optional_vector_search():
     engine, encoder, _ = _setup()
-    for mode in MODES:
-        _raises(QuerySyntaxError, lambda: engine.search(SearchRequest('"phone"', mode=mode)))
-    assert encoder.query_calls == 0
+    lexical = engine.search(SearchRequest('"phone water"', mode="lexical"))
+    assert [r.doc_id for r in lexical.results] == ["z"]
+    adaptive = engine.search(SearchRequest('"phone water"', mode="adaptive"))
+    assert [r.doc_id for r in adaptive.results] == ["z"]
+    hybrid = engine.search(SearchRequest('"phone water"', mode="hybrid"))
+    assert [r.doc_id for r in hybrid.results] == ["z"]
+    _raises(ApiError, lambda: engine.search(SearchRequest('"phone water"', mode="dense")))
+    _raises(QuerySyntaxError, lambda: engine.search(SearchRequest('"phone water', mode="lexical")))
 
 
 def test_missing_vector_backend_is_visible_not_silent():
@@ -317,12 +322,38 @@ def test_http_contract_success_errors_and_capabilities():
         _check_schema(body, RESPONSE_JSON_SCHEMA)
         assert post([])[0] == 400
         assert post({"query": "phone", "k": True})[0] == 400
-        assert post({"query": '"phone"'})[0] == 400
+        assert post({"query": '"phone"'})[0] == 200
+        assert post({"query": '"phone'})[0] == 400
         assert post({"query": "phone", "mode": "dense"})[0] == 503
         assert post({"query": "phone", "mode": "hybrid", "offset": 200})[0] == 400
         assert post({"query": "phone", "expander": "rm3"})[0] == 501
         with urlopen(base + "/index/info", timeout=5) as response:
             assert json.load(response)["retrieval"]["vector_ready"] is False
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_http_ui_static_routes_are_safe_and_present():
+    engine = SearchEngine(MemoryIndex.from_corpus(CORPUS))
+    server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(engine))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_port}"
+    try:
+        with urlopen(base + "/", timeout=5) as response:
+            assert response.status == 200
+            assert "中文搜索引擎" in response.read().decode("utf-8")
+        with urlopen(base + "/static/app.js", timeout=5) as response:
+            assert response.status == 200
+            assert response.headers["Content-Type"].startswith("text/javascript")
+        try:
+            urlopen(base + "/static/%2e%2e/online/server.py", timeout=5)
+        except HTTPError as error:
+            assert error.code == 404
+        else:
+            raise AssertionError("静态文件路由允许路径穿越")
     finally:
         server.shutdown()
         server.server_close()

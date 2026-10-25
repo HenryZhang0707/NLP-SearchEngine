@@ -79,11 +79,14 @@ class SearchEngine:
         timings = {name: 0.0 for name in ("lexical", "router", "encode", "vector", "fusion")}
         if req.mode != "lexical" and req.offset + req.k > self.config.candidate_k:
             raise ApiError("非 lexical 模式 offset + k 不得超过服务 candidate_k")
-        parsed = parser.parse(req.query)  # 未实现的显式语法必须继续报 400，不能静默放松
+        parsed = parser.parse(req.query)  # 语法错误必须报 400，不能静默放松约束
         explicit = parsed.get("explicit_constraints", False)
-        if explicit and req.mode in ("dense", "hybrid"):
-            raise ApiError("初版显式约束仅支持 lexical / adaptive 的词法路径")
+        if explicit and req.mode == "dense":
+            raise ApiError("dense 模式无法保证显式词法约束，请使用 lexical、hybrid 或 adaptive")
         terms = [token.term for raw in parsed["terms"] for token in analyzer.analyze(raw)]
+        candidate_docs = None
+        if explicit:
+            candidate_docs = scorers.boolean_docs(self.reader, parsed["ast"], analyzer.analyze)
         expanded = EXPANDERS[req.expander](self.reader, req.query, terms)
         if expanded:
             raise ExpanderNotReady("旧查询扩展权重尚未接入打分，不返回伪扩展成绩")
@@ -91,7 +94,13 @@ class SearchEngine:
         ranked = []
         if req.mode != "dense":
             start = time.perf_counter()
-            scores = scorers.SCORERS[req.scorer](self.reader, terms)
+            scores = scorers.SCORERS[req.scorer](self.reader, terms,
+                                                 candidate_docs=candidate_docs)
+            if candidate_docs:
+                # A NOT-only query, or the negative branch of an OR, has no
+                # positive BM25 contribution. Keep those hard-filtered docs
+                # with deterministic zero scores instead of dropping them.
+                scores = {docid: scores.get(docid, 0.0) for docid in candidate_docs}
             ranked = sorted(scores.items(), key=lambda row: (-row[1], row[0]))
             timings["lexical"] = (time.perf_counter() - start) * 1000
         if req.mode != "lexical":
@@ -116,6 +125,9 @@ class SearchEngine:
         if use_vector:
             try:
                 dense_ranked = self._vector_search(req.query, timings)
+                if candidate_docs is not None:
+                    dense_ranked = [(docid, score) for docid, score in dense_ranked
+                                    if docid in candidate_docs]
             except RetrievalUnavailable:
                 if req.mode != "adaptive":
                     raise

@@ -17,13 +17,16 @@ contracts/    双方共有：analyzer、IndexReader、向量/编码 Protocol、H
 offline/      离线侧：BM25 与向量数据库都在这里构建
   build.py              倒排表、tf/df、长度/位置与 BM25 参数
   build_hybrid.py       统一双索引构建编排（依赖注入）
-  vector_build.py       文档批量编码、写库协议、快照校验与 manifest 发布；Qdrant writer 桩
+  vector_build.py       文档批量编码、Qdrant upsert/快照校验与 manifest 发布
   disk_index.py         IndexReader 的真实磁盘实现
 online/       在线侧：查询编码、BM25、Router、向量召回、RRF、高亮、HTTP
+  embeddings.py         可选 Sentence-Transformers 编码器（固定 revision）
   router.py             规则选择器，不读 qrels、不调用大模型
   fusion.py             RRF 排名融合
-  vector_index.py       内存精确向量测试替身；Qdrant reader 桩
+  vector_index.py       内存精确向量替身与 Qdrant 只读适配器
   engine.py             lexical / dense / hybrid / adaptive 四模式编排
+web/          原生浏览器演示界面
+evaluation/   只通过 HTTP /search 的 TREC 评测器
 fixtures/     tiny_corpus.jsonl 与既有 tiny_index（仅词法产物）
 tests/        标准库 runner；安装 pytest 后也可直接运行 pytest
 ```
@@ -43,19 +46,21 @@ python3 -m contracts.conformance /tmp/nlp-tiny-bm25 fixtures/tiny_corpus.jsonl
 # 3. 全部测试：包含离线双索引、假向量、路由与真实本地 HTTP 请求
 python3 tests/run.py
 
-# 4. 启动词法服务；真实向量适配器尚未接入 CLI
+# 4. 启动词法服务
 python3 -m online.server --index /tmp/nlp-tiny-bm25 --port 8000
 
 curl -s -X POST localhost:8000/search -H 'Content-Type: application/json' \
     -d '{"query": "心肌梗死 症状", "mode": "lexical", "k": 5}'
 curl -s localhost:8000/index/info
+# 浏览器打开 http://127.0.0.1:8000/ 查看演示界面
 ```
 
 当前 CLI 的 vector_ready=false。dense/hybrid 请求返回 503；adaptive 如需语义分支会明确标记 fallback，不能把降级结果当成成功的混合评测。
 
 ## 扩充后的构建/在线接线
 
-真实 embedding 和 Qdrant 适配器由两组分别补齐；以下是已冻结的调用结构，**不是已可用的生产示例**：
+真实 embedding 和 Qdrant 适配器是可选依赖，默认安装不下载模型。安装
+`sentence-transformers` 与 `qdrant-client` 后，可以用固定 manifest 启动完整向量服务：
 
 ```python
 # 离线：writer 配置相同 out_dir 下的快照导出目录
@@ -69,6 +74,17 @@ engine = SearchEngine(lexical_reader, encoder=query_encoder, vectors=vector_read
 response = engine.search(SearchRequest(query="手机掉水里怎么办", mode="adaptive"))
 ```
 
+在线启动时传入同一版本的向量 manifest：
+
+```bash
+python3 -m online.server --index /path/to/bm25 \
+  --vector-url http://127.0.0.1:6333 \
+  --vector-manifest /path/to/vector_manifest.json
+```
+
+服务会从 manifest 读取模型 ID、固定 revision、维度、前缀和截断配置，并校验
+Qdrant collection 与倒排索引的语料指纹。
+
 四种请求模式：
 
 | mode | 行为 |
@@ -78,12 +94,29 @@ response = engine.search(SearchRequest(query="手机掉水里怎么办", mode="a
 | hybrid | 每次 BM25 + 向量，RRF 融合 |
 | adaptive | 先 BM25，规则 Router 决定是否语义补充与融合 |
 
-HTTP 响应 v2.0 新增 routing / timings_ms；普通自然语言查询改为 OR 词项候选。显式布尔/短语当前仍报 400，未实现前不会被 Router 静默绕过。详细参数、分页和兼容规则见契约文档。
+HTTP 响应 v2.0 新增 routing / timings_ms；普通自然语言查询使用 OR 词项候选。
+显式 `AND`、`OR`、`NOT`、括号和双引号短语在词法层过滤，hybrid 会在融合前保留硬约束，
+dense 对显式约束返回 400。详细参数、分页和兼容规则见契约文档。
+
+## HTTP 评测
+
+评测器只调用公开 HTTP API，不导入检索实现。查询文件支持 `qid<TAB>query` 或 JSONL，
+qrels 使用 TREC 四列格式：
+
+```bash
+python3 -m evaluation.evaluate \
+  --endpoint http://127.0.0.1:8000/search \
+  --queries queries.tsv --qrels qrels.tsv \
+  --output-run runs/bm25.trec --include-per-query
+```
+
+它输出 nDCG@10、Recall@10、MRR@10，以及平均、p50、p95 延迟；已有 TREC run
+也可以离线评分。详见 [evaluation/README.md](evaluation/README.md)。
 
 ## 当前状态与后续工作
 
-**已可用**：bigram 占位分词、词法构建/读取、BM25/TF-IDF、普通 OR 查询、Top-K/高亮/HTTP；双索引构建编排、指纹/配置/快照发布检查；规则 Router、RRF、四模式编排、降级和阶段耗时；假编码器 + 内存精确向量的契约测试。
+**已可用**：bigram 占位分词、词法构建/读取、BM25/TF-IDF、普通 OR 查询、布尔/短语过滤、Top-K/高亮/HTTP；双索引构建编排、Qdrant upsert/快照发布检查；规则 Router、RRF、四模式编排、降级和阶段耗时；可选 Sentence-Transformers/Qdrant 适配器；浏览器 UI、HTTP-only 评测器与标准库测试。
 
-**待实现**：真实 embedding 模型适配器；Qdrant/HNSW 建库、快照与只读查询适配器；真实服务启动接线；布尔/短语过滤；独立评测器、UI、全量性能优化。
+**待完成的实验工作**：下载并固定 DuRetrieval 语料、queries、qrels，按开发/测试划分运行四组实验，记录 nDCG/Recall/延迟和 paired bootstrap 区间；这些数据与模型下载不随仓库提交。
 
 RM3/SLM 查询扩展仍是旧桩，不是当前必做主线。内存测试通过不代表真实语义质量或 HNSW 性能已经验收。
