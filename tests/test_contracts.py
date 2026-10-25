@@ -60,6 +60,24 @@ def test_disk_index_rejects_stale_manifest():
         raise AssertionError("分词器哈希不一致却没有拒绝加载")
 
 
+def test_disk_index_rejects_malformed_rows_even_without_checksum_check():
+    """结构校验不能把重复/越界 JSONL 行留到在线查询阶段才暴露。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        build(CORPUS_PATH, root, "tiny")
+        rows = [json.loads(line) for line in (root / "docs.jsonl").read_text().splitlines()]
+        rows[1]["docid"] = rows[0]["docid"]
+        (root / "docs.jsonl").write_text(
+            "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
+            encoding="utf-8",
+        )
+        try:
+            DiskIndex(root, verify_checksums=False)
+        except ValueError:
+            return
+        raise AssertionError("重复 docid 的索引未被启动校验拒绝")
+
+
 def test_search_end_to_end():
     engine = SearchEngine(MemoryIndex.from_corpus(_corpus()))
     resp = engine.search(SearchRequest(query="心肌梗死 症状", k=5))
