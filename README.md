@@ -33,6 +33,10 @@ tests/        标准库 runner；安装 pytest 后也可直接运行 pytest
 
 纪律：跨组只依赖 contracts/；在线不 import offline.*（除 DiskIndex），离线不 import online.*。BM25 离线“构建”指索引/统计，查询打分仍在在线侧。
 
+本地数据、下载权重、生成索引和评测输出分别建议放在 `data/`、`models/`、`index/`、`runs/`。
+这些目录、Qdrant 存储／快照、模型权重和 `.env` 凭据均由 `.gitignore` 排除；小型 JSON/JSONL 测试语料仍保留在受版本控制的 `fixtures/` 中。
+可提交 `.env.example` 等不含真实凭据的配置模板。
+
 ## 快速开始：词法闭环与契约测试（无额外依赖）
 
 ```bash
