@@ -15,6 +15,7 @@ from evaluation.evaluate import (
     load_queries,
     load_run,
 )
+from evaluation.compare import paired_bootstrap
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -50,6 +51,7 @@ class EvaluatorTests(unittest.TestCase):
             summary = evaluate_run(qrels, load_run(run_path), k=2)
             self.assertEqual(summary.n_queries, 2)
             self.assertGreater(summary.ndcg_at_10, 0.0)
+            self.assertGreater(summary.map_at_100, 0.0)
             self.assertEqual([q.qid for q in load_queries(query_path)], ["q1", "q2"])
 
     def test_http_mode_and_run_output(self):
@@ -72,6 +74,17 @@ class EvaluatorTests(unittest.TestCase):
             server.shutdown()
             server.server_close()
             thread.join(timeout=5)
+
+    def test_map_and_paired_bootstrap_are_reproducible(self):
+        qrels = {"q1": {"d1": 1.0}, "q2": {"d2": 1.0}}
+        baseline = {"q1": [("d9", 2.0), ("d1", 1.0)], "q2": [("d2", 1.0)]}
+        improved = {"q1": [("d1", 2.0)], "q2": [("d2", 1.0)]}
+        first = paired_bootstrap(qrels, baseline, improved, samples=200, seed=7)
+        second = paired_bootstrap(qrels, baseline, improved, samples=200, seed=7)
+        self.assertEqual(first, second)
+        self.assertGreater(first.observed_difference, 0.0)
+        self.assertLessEqual(first.ci_lower, first.observed_difference)
+        self.assertGreaterEqual(first.ci_upper, first.observed_difference)
 
 
 if __name__ == "__main__":

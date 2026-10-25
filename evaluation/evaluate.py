@@ -52,6 +52,7 @@ class QueryMetrics:
     ndcg: float
     recall: float
     mrr: float
+    map_at_100: float
     latency_ms: float | None = None
     retrieved: int = 0
     relevant: int = 0
@@ -66,6 +67,7 @@ class EvaluationSummary:
     ndcg_at_10: float
     recall_at_10: float
     mrr_at_10: float
+    map_at_100: float
     mean_latency_ms: float | None
     p50_latency_ms: float | None
     p95_latency_ms: float | None
@@ -235,7 +237,10 @@ def load_run(path: str | Path) -> Run:
     return result
 
 
-def _metric_for_query(qrels: Mapping[str, float], retrieved: Sequence[str], k: int) -> tuple[float, float, float, int]:
+def _metric_for_query(qrels: Mapping[str, float], retrieved: Sequence[str], k: int,
+                      map_k: int = 100) -> tuple[float, float, float, float, int]:
+    if type(k) is not int or k <= 0 or type(map_k) is not int or map_k <= 0:
+        raise EvaluationError("评测 cutoff 必须是正整数")
     top = list(retrieved[:k])
     relevant = {docid for docid, rel in qrels.items() if rel > 0}
     dcg = 0.0
@@ -248,7 +253,15 @@ def _metric_for_query(qrels: Mapping[str, float], retrieved: Sequence[str], k: i
     ndcg = dcg / idcg if idcg else 0.0
     recall = len(relevant.intersection(top)) / len(relevant) if relevant else 0.0
     mrr = next((1.0 / rank for rank, docid in enumerate(top, 1) if docid in relevant), 0.0)
-    return ndcg, recall, mrr, len(relevant)
+    ap_top = list(retrieved[:map_k])
+    hits = 0
+    precision_sum = 0.0
+    for rank, docid in enumerate(ap_top, 1):
+        if docid in relevant:
+            hits += 1
+            precision_sum += hits / rank
+    average_precision = precision_sum / len(relevant) if relevant else 0.0
+    return ndcg, recall, mrr, average_precision, len(relevant)
 
 
 def _percentile(values: Sequence[float], percentile: float) -> float | None:
@@ -264,7 +277,7 @@ def _percentile(values: Sequence[float], percentile: float) -> float | None:
     return ordered[lower] + (ordered[upper] - ordered[lower]) * fraction
 
 
-def evaluate_run(qrels: Mapping[str, Mapping[str, float]], run: Mapping[str, Sequence[tuple[str, float] | str]], k: int = 10, latencies: Mapping[str, float] | None = None) -> EvaluationSummary:
+def evaluate_run(qrels: Mapping[str, Mapping[str, float]], run: Mapping[str, Sequence[tuple[str, float] | str]], k: int = 10, latencies: Mapping[str, float] | None = None, map_k: int = 100) -> EvaluationSummary:
     """Compute ranking metrics for a TREC run.
 
     ``run`` values may be ``(doc_id, score)`` pairs or plain doc IDs.  Queries
@@ -272,8 +285,8 @@ def evaluate_run(qrels: Mapping[str, Mapping[str, float]], run: Mapping[str, Seq
     zero scores.  Latency values are milliseconds keyed by qid.
     """
 
-    if type(k) is not int or k <= 0:
-        raise EvaluationError("k 必须是正整数")
+    if type(k) is not int or k <= 0 or type(map_k) is not int or map_k <= 0:
+        raise EvaluationError("评测 cutoff 必须是正整数")
     qids = list(dict.fromkeys([*qrels.keys(), *run.keys()]))
     if not qids:
         raise EvaluationError("qrels 和 run 均为空")
@@ -281,9 +294,11 @@ def evaluate_run(qrels: Mapping[str, Mapping[str, float]], run: Mapping[str, Seq
     for qid in qids:
         rows = run.get(qid, ())
         docids = [row[0] if isinstance(row, (tuple, list)) else row for row in rows]
-        ndcg, recall, mrr, relevant_count = _metric_for_query(qrels.get(qid, {}), docids, k)
+        ndcg, recall, mrr, average_precision, relevant_count = _metric_for_query(
+            qrels.get(qid, {}), docids, k, map_k)
         latency = None if latencies is None else latencies.get(qid)
-        metrics.append(QueryMetrics(qid, ndcg, recall, mrr, latency, len(docids[:k]), relevant_count))
+        metrics.append(QueryMetrics(qid, ndcg, recall, mrr, average_precision,
+                                    latency, len(docids[:k]), relevant_count))
     latency_values = [m.latency_ms for m in metrics if m.latency_ms is not None]
     relevant_queries = sum(m.relevant > 0 for m in metrics)
     return EvaluationSummary(
@@ -292,6 +307,7 @@ def evaluate_run(qrels: Mapping[str, Mapping[str, float]], run: Mapping[str, Seq
         ndcg_at_10=sum(m.ndcg for m in metrics) / len(metrics),
         recall_at_10=sum(m.recall for m in metrics) / len(metrics),
         mrr_at_10=sum(m.mrr for m in metrics) / len(metrics),
+        map_at_100=sum(m.map_at_100 for m in metrics) / len(metrics),
         mean_latency_ms=statistics.fmean(latency_values) if latency_values else None,
         p50_latency_ms=_percentile(latency_values, 0.50),
         p95_latency_ms=_percentile(latency_values, 0.95),
@@ -367,15 +383,15 @@ def _write_trec_run(path: str | Path, qid: str, rows: Sequence[tuple[str, float]
             handle.write(f"{qid} Q0 {docid} {rank} {score:.8f} {tag}\n")
 
 
-def evaluate_http(endpoint: str, queries: Iterable[QueryRecord], qrels: Mapping[str, Mapping[str, float]], *, k: int = 10, mode: str = "lexical", scorer: str = "bm25", expander: str = "none", timeout: float = 10.0, run_output: str | Path | None = None, tag: str = "http-search") -> EvaluationSummary:
+def evaluate_http(endpoint: str, queries: Iterable[QueryRecord], qrels: Mapping[str, Mapping[str, float]], *, k: int = 10, mode: str = "lexical", scorer: str = "bm25", expander: str = "none", timeout: float = 10.0, run_output: str | Path | None = None, tag: str = "http-search", map_k: int = 100) -> EvaluationSummary:
     """Query a public HTTP endpoint and evaluate its responses.
 
     When ``run_output`` is supplied, a TREC run is written while requests are
     made.  The output is replaced at the beginning of each evaluation.
     """
 
-    if type(k) is not int or k <= 0:
-        raise EvaluationError("k 必须是正整数")
+    if type(k) is not int or k <= 0 or type(map_k) is not int or map_k <= 0:
+        raise EvaluationError("评测 cutoff 必须是正整数")
     if timeout <= 0 or not math.isfinite(timeout):
         raise EvaluationError("timeout 必须是正数")
     records = list(queries)
@@ -399,7 +415,7 @@ def evaluate_http(endpoint: str, queries: Iterable[QueryRecord], qrels: Mapping[
     # score exactly the queries sent in this invocation, while ``evaluate_run``
     # intentionally uses the union for standalone run scoring.
     selected_qrels = {record.qid: qrels.get(record.qid, {}) for record in records}
-    return evaluate_run(selected_qrels, run, k=k, latencies=latencies)
+    return evaluate_run(selected_qrels, run, k=k, latencies=latencies, map_k=map_k)
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
@@ -412,6 +428,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-json", type=Path, help="将汇总 JSON 写入文件")
     parser.add_argument("--include-per-query", action="store_true", help="在 JSON 输出中包含逐查询指标")
     parser.add_argument("--k", type=int, default=10, help="评测 cutoff，默认 10")
+    parser.add_argument("--map-k", type=int, default=100, help="MAP cutoff，默认 100")
     parser.add_argument("--mode", choices=("lexical", "dense", "hybrid", "adaptive"), default="lexical")
     parser.add_argument("--scorer", choices=("bm25", "tfidf"), default="bm25")
     parser.add_argument("--expander", choices=("none", "rm3", "slm"), default="none")
@@ -427,11 +444,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.run is not None:
             if args.endpoint or args.queries or args.output_run:
                 raise EvaluationError("--run 不能与 --endpoint/--queries/--output-run 同时使用")
-            summary = evaluate_run(qrels, load_run(args.run), k=args.k)
+            summary = evaluate_run(qrels, load_run(args.run), k=args.k, map_k=args.map_k)
         else:
             if not args.endpoint or not args.queries:
                 raise EvaluationError("HTTP 模式需要同时提供 --endpoint 和 --queries")
-            summary = evaluate_http(args.endpoint, load_queries(args.queries), qrels, k=args.k, mode=args.mode, scorer=args.scorer, expander=args.expander, timeout=args.timeout, run_output=args.output_run, tag=args.tag)
+            summary = evaluate_http(args.endpoint, load_queries(args.queries), qrels, k=args.k, mode=args.mode, scorer=args.scorer, expander=args.expander, timeout=args.timeout, run_output=args.output_run, tag=args.tag, map_k=args.map_k)
         output = json.dumps(summary.to_dict(args.include_per_query), ensure_ascii=False, indent=2)
         if args.output_json:
             args.output_json.parent.mkdir(parents=True, exist_ok=True)
