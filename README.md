@@ -138,7 +138,8 @@ python3 -m evaluation.evaluate \
 清单和 dev-only 边界。另已在集群上用固定的 20,000 文档前缀、19 条有标注查询、真实 384 维
 Sentence-Transformers 模型和 qdrant-client local embedded collection 完成 lexical、dense、hybrid、
 adaptive 四模式及 20,000 次 paired bootstrap。该公开 archive 没有官方 test labels，prefix smoke
-不能代表课程全量，也没有宣称 HTTP Qdrant/HNSW 或 8M 规模语义实验。数据、模型和索引产物不随
+不能代表课程全量；该次真实模型运行使用 qdrant-client 1.16.0 local embedded 的精确／全扫描配置，
+没有宣称 HTTP Qdrant/HNSW 或 8M 规模语义实验。数据、模型和索引产物不随
 仓库提交，仓库已提供校验、固定划分和区间计算入口。
 
 RM3 已实现为确定性的本地伪相关反馈扩展；SLM 仍需要外部固定模型与离线缓存，返回 501。扩展不改变显式布尔/短语约束。内存测试通过不代表真实语义质量或 HNSW 性能已经验收。

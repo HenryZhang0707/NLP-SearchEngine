@@ -36,18 +36,18 @@ python -m evaluation.prepare_dureader \
   --expected-queries 2000 --expected-qrels 9839
 ```
 
-为先验证完整评测闭环，已从官方 dev corpus 固定取前 20,000 篇文档，并只保留其中有 qrel 命中的 19 条查询／19 条 qrel。该前缀索引不代表全量结果：BM25 的 nDCG@10、Recall@10、MRR@10、MAP@100 分别为 0.5032、0.5789、0.4781、0.4920，平均延迟 57.85 ms、p50 52.59 ms、p95 79.15 ms。无向量后端时 adaptive 的 10/19 次查询明确记录为 fallback；这组结果仅是官方数据前缀上的工程冒烟。
+为先验证完整评测闭环，已从官方 dev corpus 固定取前 20,000 篇文档，并只保留其中有 qrel 命中的 19 条查询／19 条 qrel。该前缀索引不代表全量结果：BM25 的 nDCG@10、Recall@10、MRR@10、MAP@100 分别为 0.5032、0.5789、0.4781、0.4920；这组结果仅是官方数据前缀上的工程冒烟。此前记录的 HTTP 延迟来自不同的服务配置，不能与下面的集群直接调用延迟混用。
 
-在集群上又完成了同一 prefix20k 的真实 embedding 四模式冒烟。模型固定为 `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`，revision `ef8c211226b894fcb81acc59f3b34ba3efd5f42`，384 维、`max_tokens=256`、cosine、CUDA 编码；19/19 条查询的 dense 和 hybrid 向量请求成功，adaptive 触发向量 10/10 次且没有 fallback。结果如下（均为该 19 条查询的 prefix smoke；延迟由集群脚本直接调用检索引擎测量，不与上一段 HTTP 延迟直接比较）：
+在集群上又完成了同一 prefix20k 的真实 embedding 四模式冒烟。模型固定为 `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`，revision `ef8c211226b894fcb81acc59f3b34ba3efd5f42`，384 维、`max_tokens=256`、cosine、CUDA 编码；模型 `model.safetensors` SHA256 为 `eaa086f0ffee582aeb45b36e34cdd1fe2d6debe61f8a559a1bbc9bd9d955917b`。Qdrant 使用 `qdrant-client==1.16.0` 的 local embedded collection，并将 HNSW `m=0`、indexing threshold 设为 0，作为可复现的精确／全扫描工程配置；这不是 HTTP Qdrant 或 HNSW 性能验收。19/19 条查询的 dense 和 hybrid 向量请求成功，adaptive 触发向量 10/10 次且没有 fallback。结果如下（均为该 19 条查询的 prefix smoke；延迟由集群脚本直接调用检索引擎测量）：
 
 | 模式 | nDCG@10 | Recall@10 | MRR@10 | MAP@100 | 平均延迟 ms | p50 ms | p95 ms |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| lexical | 0.503242 | 0.578947 | 0.478070 | 0.491982 | 29.502598 | 26.190424 | 48.132269 |
-| dense | 0.758460 | 0.526316 | 0.329887 | 0.335469 | 290.049944 | 297.190129 | 392.328207 |
-| hybrid | 0.518339 | 0.789474 | 0.433396 | 0.435729 | 289.817258 | 301.648263 | 394.925098 |
-| adaptive | 0.484645 | 0.578947 | 0.453947 | 0.465855 | 179.945337 | 203.351781 | 308.034930 |
+| lexical | 0.503242 | 0.578947 | 0.478070 | 0.491982 | 24.726959 | 24.324300 | 35.187026 |
+| dense | 0.383132 | 0.578947 | 0.326462 | 0.326462 | 182.851627 | 189.567106 | 212.146423 |
+| hybrid | 0.533961 | 0.789474 | 0.455556 | 0.457929 | 183.931793 | 193.680419 | 208.295847 |
+| adaptive | 0.483885 | 0.578947 | 0.453216 | 0.465164 | 124.681510 | 106.596140 | 229.564881 |
 
-对 nDCG@10 做 20,000 次逐查询 paired bootstrap，差值和 95% 区间为 lexical−dense `-0.127396 [-0.376659, 0.111861]`、lexical−hybrid `0.015096 [-0.139046, 0.159925]`、lexical−adaptive `-0.018597 [-0.119791, 0.073711]`、hybrid−adaptive `-0.033694 [-0.144463, 0.083967]`。向量库使用 `qdrant-client==1.16.0` 的 local embedded collection；这验证了真实 SDK 的持久化向量检索，但没有声称已验收 HTTP Qdrant 服务、HNSW 性能或 8M 全量语义实验。运行目录、模型和向量产物均保留在集群，不提交到仓库。
+对 nDCG@10 做 20,000 次逐查询 paired bootstrap（主比较 seed=2026，hybrid−adaptive seed=2027），差值和 95% 区间为 lexical−dense `-0.120108 [-0.370730, 0.118329]`、lexical−hybrid `0.030711 [-0.110777, 0.158990]`、lexical−adaptive `-0.019357 [-0.103473, 0.038510]`、hybrid−adaptive `-0.050076 [-0.159552, 0.063509]`。这验证了真实模型、真实 SDK 和持久化向量检索在小前缀上的闭环，但没有声称已验收 HTTP Qdrant 服务、HNSW 性能或 8M 全量语义实验。运行目录、模型和向量产物均保留在集群，不提交到仓库。
 
 为了验证工程闭环，公开的 [C-MTEB 快照镜像](https://github.com/Lsogod/everything-ent-hybrid-rag/tree/main/data/knowledge/datasets) 可在当前网络中取得，但它只有 5000 篇文档、100 条查询和 425 条 qrels。它适合冒烟评测，不能替代课程全量数据；本地实验结果也不能写成提案的最终成绩。
 
