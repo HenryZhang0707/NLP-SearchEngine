@@ -49,7 +49,7 @@ python3 -m offline.build --corpus fixtures/tiny_corpus.jsonl \
 python3 -m contracts.conformance /tmp/nlp-tiny-bm25 fixtures/tiny_corpus.jsonl
 ```
 
-审阅修复后，46 项仓库契约／适配器测试、22 项评测器和数据准备测试、5 项浏览器高亮测试全部通过，tiny 索引 conformance 通过。Qdrant 测试使用 SDK double 验证发布／拒绝路径；另用 `qdrant-client==1.16.0` 的本地内存后端验证了真实 SDK 元数据读写和模型版本错配拒绝，但没有据此宣称验证了真实服务的 HNSW、快照恢复或语义质量。启动服务后，lexical 搜索、`/health`、`/index/info`、浏览器静态资源和 dense 未配置时的 503 行为均已验证。历史上对 tiny 磁盘索引重复执行 1,000 次 BM25 查询测得 p50 约 0.10 ms、p95 约 0.14 ms；这只是小样本工程冒烟，不能替代 DuRetrieval 全量结果。
+审阅修复后，46 项仓库契约／适配器测试、26 项评测器、数据准备和网络测试集构造测试、6 项浏览器逻辑测试全部通过，tiny 索引 conformance 通过。Qdrant 测试使用 SDK double 验证发布／拒绝路径；另用 `qdrant-client==1.16.0` 的本地内存后端验证了真实 SDK 元数据读写和模型版本错配拒绝，但没有据此宣称验证了真实服务的 HNSW、快照恢复或语义质量。启动服务后，lexical 搜索、`/health`、`/index/info`、浏览器静态资源和 dense 未配置时的 503 行为均已验证。历史上对 tiny 磁盘索引重复执行 1,000 次 BM25 查询测得 p50 约 0.10 ms、p95 约 0.14 ms；这只是小样本工程冒烟，不能替代 DuRetrieval 全量结果。
 
 历史上另用公开 C-MTEB DuRetrieval 快照（5000 篇文档、100 条查询、425 条 qrels）做了外部闭环冒烟。按固定划分取 80 条测试查询，旧版 Top-10 HTTP 请求下 BM25 得到 nDCG@10=0.8065、Recall@10=0.8194、MRR@10=0.8872，平均延迟 4.33 ms、p50 3.83 ms、p95 6.65 ms。修复审阅问题时发现旧评测器默认只召回 10 条，却标记 MAP@100，因此撤下该 MAP 数值；新的默认评测会召回 100 条，并需要重新测量 MAP 和完整请求延迟。该快照不是课程要求的 100001/2000/9839 版本，这些历史数字只验证管线，不代表最终成绩。
 
@@ -63,6 +63,8 @@ python3 -m contracts.conformance /tmp/nlp-tiny-bm25 fixtures/tiny_corpus.jsonl
 2. 用同一 BM25 参数和语料分别运行 BM25、纯向量、固定 hybrid、自适应 hybrid。
 3. 对每组保存 TREC run 和每查询延迟，使用评测器报告 nDCG@10、Recall@10、MRR@10、MAP@100、p50/p95。
 4. 使用 `evaluation.compare` 对自适应与固定 hybrid 的逐查询差值做 paired bootstrap，并单独报告向量触发、成功和 fallback 比例。
+
+教师建议的第二条路线使用独立的 `evaluation.crawl_web`：先在允许抓取的公开站点上用固定深度、文档数、响应大小和请求间隔构造 corpus，再由组员人工填写 query 与 0/1/2 相关性。只有经过 `finalize` 校验并且每个 query 至少有一个正相关判断后，才生成评测器使用的 qrels；模板和未标注网页不能冒充测试集。该 corpus 与 DuReader 官方 dev 版本分开记录，不能混用文档 ID 或 qrels。
 
 示例：
 

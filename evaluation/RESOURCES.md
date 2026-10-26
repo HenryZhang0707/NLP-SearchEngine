@@ -54,3 +54,21 @@ python -m evaluation.prepare_dureader \
 RocketQA 脚本中的数据和 ERNIE 权重来自 `dataset-bj.cdn.bcebos.com`。数据包已完成哈希和结构核验；上述 prefix20k 的 GPU 编码和四模式结果已经在集群完成，但 8M 规模索引、课程目标快照、HTTP Qdrant/HNSW 以及 test labels 仍未验收。按 [评测说明](README.md) 构建 BM25、向量索引和四组实验时，模型 revision、维度、前缀、截断规则和 Qdrant 后端参数必须随实验结果一并记录。
 
 Qdrant 适配器和快照发布逻辑已在 `offline/vector_build.py`、`online/vector_index.py` 中实现。没有可用 Qdrant 实例时，内存向量替身只能用于契约测试，不能作为 HNSW 性能结论。
+
+## 自建网络测试集冒烟（待组员复核）
+
+为响应课程教师关于自行构造测试集的建议，2026-10-26 使用 `evaluation.crawl_web`
+从公开的 [中国政府网](https://www.gov.cn/) 入口做了一次受限抓取：同域、深度 1、最多
+10 篇页面、单页最多 500 KB、请求间隔 0.2 秒，并通过 robots 检查。临时 corpus 有 10 篇
+文档；随后根据页面标题和主题写了 3 条**暂定**查询及 0/1/2 判断，仍需组员人工复核，不能
+视为教师认可的正式 qrels。临时产物不在仓库中，便于复核的 SHA256 为：corpus
+`e2bad4f46d3108af54b8a9432fb393dd203b00d3acf3e07f1f42ad1ee672ba73`、queries
+`ff5c5e949870796c62b3445917eebc67edb80869b780a8114779aae9d1db1d5d`、qrels
+`71723fb7d275d34014dd4fe7083fbc4b4849099ca852f1fbc03290042f8689ff`（显示时折行仅为排版，
+实际摘要为连续 64 个十六进制字符）。
+
+在这组 10 文档/3 查询的临时语料上，仅用本项目 lexical HTTP 服务做了管线冒烟：
+nDCG@10=0.767010、Recall@10=1.000000、MRR@10=0.703704、MAP@100=0.703704，平均延迟
+77.36 ms、p50=39.17 ms、p95=146.06 ms。该数值受页面内容、暂定标注和 tiny 规模影响，
+不是网络数据集的正式结论，也不能与 DuReader 结果混合。后续应由组员复核标注、扩充查询，
+再用同一划分运行四种模式和 paired bootstrap。

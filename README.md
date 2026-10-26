@@ -6,6 +6,7 @@
 - [跨组 API 契约](contracts/RETRIEVAL.md)
 - [开题汇报 PDF](slides/proposal.pdf) / [Typst 源文件](slides/proposal.typ)
 - [实施计划与历史讨论](PLAN.md)
+- [当前 TODO、证据边界与下一步](TODO.md)
 
 ## 目录结构
 
@@ -126,6 +127,31 @@ python3 -m evaluation.evaluate \
 也可以离线评分，但不推断其中不存在的路由或延迟信息。`evaluation.prepare_dataset` 可校验外部 DuRetrieval 文件并生成固定划分，
 `evaluation.compare` 可对两组 TREC run 做可复现的 query-level paired bootstrap。详见
 [evaluation/README.md](evaluation/README.md)。
+
+### 教师建议：路由对比与自建测试集
+
+Router 是本项目的核心实验变量：固定 hybrid 每次访问两路，adaptive 只改变是否触发向量分支，模型、候选池、RRF 参数和数据划分必须保持一致。先在 dev 冻结规则阈值，再在独立 test 上保存四种模式的 TREC run、逐查询路由原因和向量触发/成功/fallback 统计；用 `evaluation.compare` 对 fixed-hybrid 与 adaptive 做 paired bootstrap。当前 prefix20k 的真实结果和区间只属于工程冒烟，详见 [evaluation/RESOURCES.md](evaluation/RESOURCES.md)。
+
+为响应“自行构造网络测试集”的要求，仓库提供了有边界的 crawler，但不会伪造 qrels。它默认只抓 HTTP(S)、尊重 robots、限制同域、深度、文档数、响应大小和请求间隔，先生成未标注 corpus 与人工标注模板：
+
+```bash
+python -m evaluation.crawl_web crawl \
+  --seed https://example.org/ \
+  --out-corpus data/crawl/corpus.jsonl \
+  --annotation-template data/crawl/annotations.template.jsonl
+```
+
+组员人工填写 `query` 和 `relevance`（0/1/2）后，再生成评测器可读的 queries/qrels：
+
+```bash
+python -m evaluation.crawl_web finalize \
+  --corpus data/crawl/corpus.jsonl \
+  --annotations data/crawl/annotations.jsonl \
+  --queries-out data/crawl/queries.jsonl \
+  --qrels-out data/crawl/qrels.tsv
+```
+
+模板本身不是评测集；没有人工正相关标注时命令会拒绝输出 qrels。数据和生成结果位于被 `.gitignore` 排除的目录，不应提交到仓库。
 
 外部数据版本、下载限制和课程规模校验见 [evaluation/RESOURCES.md](evaluation/RESOURCES.md)。
 
