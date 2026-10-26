@@ -6,7 +6,7 @@
 
 提案中的 DuRetrieval 全量实验需要单独下载语料、queries 和 qrels。仓库只保留 tiny fixture 和可复现代码，不把约 100,001 篇文档或模型文件提交进版本库。
 
-资源核验见 [evaluation/RESOURCES.md](evaluation/RESOURCES.md)。已从 RocketQA 官方下载脚本指向的公开 CDN 获取并核验 baseline archive：8,096,668 个 passage、2,000 个 dev 查询和 9,839 条去重 qrels（原始答案段落链接 9,863 条）。该公开 archive 没有官方 test labels，与提案中要求的课程快照和官方 DuReader 版本不能混用；真实 embedding、GPU 编码、Qdrant 和全量语义实验必须在集群任务中逐项验收，报告不伪造这些结果。
+资源核验见 [evaluation/RESOURCES.md](evaluation/RESOURCES.md)。已从 RocketQA 官方下载脚本指向的公开 CDN 获取并核验 baseline archive：8,096,668 个 passage、2,000 个 dev 查询和 9,839 条去重 qrels（原始答案段落链接 9,863 条）。该公开 archive 没有官方 test labels，与提案中要求的课程快照和官方 DuReader 版本不能混用。集群上已完成官方 dev 前 20,000 篇文档、19 条有标注查询的真实 embedding 四模式冒烟；结果仍只代表该固定前缀，不能写成课程全量成绩。
 
 ## 2. 已完成实现
 
@@ -55,6 +55,8 @@ python3 -m contracts.conformance /tmp/nlp-tiny-bm25 fixtures/tiny_corpus.jsonl
 
 为验证官方资源上的闭环，另对官方 dev corpus 的固定 20,000 篇前缀运行了 19 条命中查询。BM25 冒烟结果为 nDCG@10=0.5032、Recall@10=0.5789、MRR@10=0.4781、MAP@100=0.4920，平均延迟 57.85 ms、p50 52.59 ms、p95 79.15 ms；TF-IDF 和 RM3 也分别生成了独立 TREC run。该结果只覆盖官方全量的一个文档前缀和 19 条查询，不能写成全量成绩；向量未就绪时 adaptive 的 fallback 比例为 10/19。
 
+同一 prefix20k 在集群上使用固定 revision 的 `paraphrase-multilingual-MiniLM-L12-v2`（384 维、`max_tokens=256`、CUDA）完成了四种模式。lexical、dense、hybrid、adaptive 的 nDCG@10 分别为 0.503242、0.758460、0.518339、0.484645；Recall@10 分别为 0.578947、0.526316、0.789474、0.578947；MAP@100 分别为 0.491982、0.335469、0.435729、0.465855。平均延迟分别为 29.502598、290.049944、289.817258、179.945337 ms，p50 分别为 26.190424、297.190129、301.648263、203.351781 ms，p95 分别为 48.132269、392.328207、394.925098、308.034930 ms；这些延迟来自直接调用检索引擎的集群脚本，不与上一段 HTTP 延迟直接比较。dense/hybrid 的向量成功率为 19/19，adaptive 的向量触发为 10/10 且 fallback 为 0。使用 20,000 次 query-level paired bootstrap 得到 nDCG 差值区间：lexical−dense `-0.127396 [-0.376659, 0.111861]`、lexical−hybrid `0.015096 [-0.139046, 0.159925]`、lexical−adaptive `-0.018597 [-0.119791, 0.073711]`、hybrid−adaptive `-0.033694 [-0.144463, 0.083967]`。这次运行使用 `qdrant-client==1.16.0` 的 local embedded collection；它没有验证 HTTP Qdrant 服务或 HNSW 性能。
+
 ## 4. 全量实验流程
 
 1. 固定 DuRetrieval 数据版本、查询划分和 qrels；先在开发集冻结 Router 阈值。
@@ -75,4 +77,4 @@ python3 -m evaluation.evaluate \
 
 ## 5. 当前限制
 
-默认分词器仍是可解释的 bigram 占位实现；公开 baseline 只有 dev 标注，真实分词对齐、预训练模型选择、Qdrant HNSW 参数和全量性能数字需要团队根据课程数据与算力完成冻结。四组真实语义实验、Qdrant 运行和 paired bootstrap 结果仍未声称完成；GPU 集群任务已提交，待容器就绪后继续执行并保留完整运行证据。RM3 已作为确定性的本地伪相关反馈扩展接入；SLM 仍需要外部固定模型与离线缓存，返回 501。
+默认分词器仍是可解释的 bigram 占位实现；公开 baseline 只有 dev 标注，课程目标快照、真实分词对齐、8M 规模索引、HTTP Qdrant/HNSW 参数和全量性能数字仍需要团队根据课程数据与算力冻结。已完成的四模式结果只覆盖 prefix20k 和 19 条查询，不能外推到课程全量。RM3 已作为确定性的本地伪相关反馈扩展接入；SLM 仍需要外部固定模型与离线缓存，返回 501。

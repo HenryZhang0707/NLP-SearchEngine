@@ -135,8 +135,10 @@ python3 -m evaluation.evaluate \
 
 **已完成的资源准备**：已核验 RocketQA 官方 DuReader-Retrieval baseline archive，确认其包含
 8,096,668 个 passage、2,000 个 dev 查询和 9,839 条去重 qrels，并提供专用流式适配器、SHA256
-清单和 dev-only 边界。**待完成的实验工作**：该公开 archive 没有官方 test labels；真实 embedding、
-GPU 编码、Qdrant 和四组完整实验仍需在可用的 GPU/存储配额上运行，记录 nDCG/Recall/MAP/延迟
-和 paired bootstrap 区间。数据、模型和索引产物不随仓库提交，仓库已提供校验、固定划分和区间计算入口。
+清单和 dev-only 边界。另已在集群上用固定的 20,000 文档前缀、19 条有标注查询、真实 384 维
+Sentence-Transformers 模型和 qdrant-client local embedded collection 完成 lexical、dense、hybrid、
+adaptive 四模式及 20,000 次 paired bootstrap。该公开 archive 没有官方 test labels，prefix smoke
+不能代表课程全量，也没有宣称 HTTP Qdrant/HNSW 或 8M 规模语义实验。数据、模型和索引产物不随
+仓库提交，仓库已提供校验、固定划分和区间计算入口。
 
 RM3 已实现为确定性的本地伪相关反馈扩展；SLM 仍需要外部固定模型与离线缓存，返回 501。扩展不改变显式布尔/短语约束。内存测试通过不代表真实语义质量或 HNSW 性能已经验收。
