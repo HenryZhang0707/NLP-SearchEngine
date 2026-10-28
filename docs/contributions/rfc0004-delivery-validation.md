@@ -21,7 +21,9 @@
 6. 快照下载写入 `.part` 文件，完整下载后才改名；失败不会把半截文件当作快照。
 7. `python -m offline.validate --build-dir <dir>` 要求 A1 四个文件都有 SHA256，核对
    BM25/vector 的文档数和 corpus fingerprint，验证快照哈希、provenance 和 report
-   中的产物哈希。它只依赖 offline/contracts，不导入 online。
+   中的完整必需产物集合、身份字段和产物哈希。它只依赖 offline/contracts，不导入 online。
+8. writer 返回成功后若本地 manifest 发布失败，Qdrant writer 通过 `rollback(manifest)`
+   尝试删除本次 collection；原始发布异常优先保留。
 
 ## 尚未宣称的能力
 

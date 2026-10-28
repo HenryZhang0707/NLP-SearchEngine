@@ -79,6 +79,10 @@ class VectorReader(Protocol):
 - encode_documents 输出顺序与输入一致，数量相等。离线可分批调用；模板由构建器应用，前缀/模型 tokenizer/截断/归一化由编码器应用。
 - writer 必须消费全部 records，创建新 collection，校验点数/ID/向量、完成快照，再返回仅补齐 snapshot_files 的 manifest。快照写入与 build_vectors 相同的产物目录，文件名不允许路径穿越。
 - `build_vectors` 核验快照文件 SHA256，最后原子重命名发布 vector_manifest.json。构建失败不发布 manifest；调用方清理失败的新 collection/临时目录，不能污染旧线上版本。构建目录只能有一个 writer，不支持并发发布。
+- 若 writer 已返回成功而本地 manifest/provenance/report 发布随后失败，具有远端资源的 writer
+  应提供同名 `rollback(manifest)` 钩子，由 `build_vectors` 尝试删除本次版本 collection；
+  清理错误不能覆盖原始发布错误。没有该钩子的旧 writer 只能证明本地契约，不能宣称远端
+  失败清理完整。
 - 发布顺序是“新版本 collection 完整写入并核对 exact count → 快照下载到 `.part` → 快照
   SHA256 校验 → 原子写入 vector_manifest → 写 provenance/report”。任何一步失败都不得
   把半成品当作可发布版本；已存在的非空目标目录与已有 collection 不覆盖。默认重试语义是

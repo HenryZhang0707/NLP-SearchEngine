@@ -2,6 +2,7 @@
 
 import json
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 
 from contracts.index_format import verify_files, load_manifest
@@ -28,6 +29,18 @@ class Writer:
     def replace(self, manifest, records):
         self.records = list(records)
         return manifest
+
+
+class PostPublishFailureWriter(Writer):
+    def __init__(self):
+        self.rolled_back = False
+
+    def replace(self, manifest, records):
+        self.records = list(records)
+        return replace(manifest, snapshot_files={"missing.snapshot": "0" * 64})
+
+    def rollback(self, manifest):
+        self.rolled_back = True
 
 
 class FailingEncoder(Encoder):
@@ -141,6 +154,46 @@ def test_validator_rejects_report_path_traversal():
             assert "路径" in str(error)
             return
         raise AssertionError("validator 接受了越界产物路径")
+
+
+def test_vector_build_rolls_back_after_writer_returns_before_manifest_publish():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        corpus = root / "corpus.jsonl"
+        _corpus(corpus)
+        index = root / "index"
+        build(corpus, index, "delivery")
+        writer = PostPublishFailureWriter()
+        try:
+            from offline.disk_index import DiskIndex
+            from offline.vector_build import build_vectors
+            build_vectors(DiskIndex(index), Encoder(), writer, root / "vectors",
+                          "delivery-v1", backend="memory-exact")
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("损坏的 writer 结果未被拒绝")
+        assert writer.rolled_back
+
+
+def test_validator_rejects_incomplete_report_artifacts():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        corpus = root / "corpus.jsonl"
+        _corpus(corpus)
+        build_dir = root / "build"
+        build_hybrid(corpus, build_dir, "delivery", Encoder(), Writer(),
+                     "delivery-v1", backend="memory-exact")
+        report_path = build_dir / "build_report.json"
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        report["artifacts"] = {}
+        report_path.write_text(json.dumps(report), encoding="utf-8")
+        try:
+            validate_build(build_dir)
+        except ValueError as error:
+            assert "必需产物" in str(error)
+            return
+        raise AssertionError("validator 接受了不完整的产物报告")
 
 
 ALL_TESTS = [value for name, value in sorted(globals().items()) if name.startswith("test_")]

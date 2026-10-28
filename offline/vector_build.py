@@ -60,23 +60,39 @@ def build_vectors(reader: IndexReader, encoder: TextEncoder, writer: VectorWrite
                 yield VectorRecord(doc.docid, doc.doc_id, tuple(vector))
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    published = writer.replace(manifest, records())
-    if consumed != reader.n_docs:
-        raise ValueError("writer 未消费全部文档，不能发布 manifest")
-    if not isinstance(published, VectorManifest) or replace(published, snapshot_files={}) != manifest:
-        raise ValueError("writer 必须返回仅补齐 snapshot_files 的 VectorManifest")
-    if backend == "qdrant-hnsw" and not published.snapshot_files:
-        raise ValueError("Qdrant 构建必须交付带校验和的快照")
-    for name, digest in published.snapshot_files.items():
-        snapshot = out_dir / name
-        if not snapshot.is_file() or sha256_of(snapshot) != digest:
-            raise ValueError("快照不存在或 SHA256 校验失败")
-    manifest = published
-    pending = target.with_name(target.name + ".tmp")
-    pending.write_text(json.dumps(manifest.to_dict(), ensure_ascii=False, indent=2),
-                       encoding="utf-8")
-    pending.replace(target)
-    return manifest
+    replace_returned = False
+    published = None
+    try:
+        published = writer.replace(manifest, records())
+        replace_returned = True
+        if consumed != reader.n_docs:
+            raise ValueError("writer 未消费全部文档，不能发布 manifest")
+        if (not isinstance(published, VectorManifest)
+                or replace(published, snapshot_files={}) != manifest):
+            raise ValueError("writer 必须返回仅补齐 snapshot_files 的 VectorManifest")
+        if backend == "qdrant-hnsw" and not published.snapshot_files:
+            raise ValueError("Qdrant 构建必须交付带校验和的快照")
+        for name, digest in published.snapshot_files.items():
+            snapshot = out_dir / name
+            if not snapshot.is_file() or sha256_of(snapshot) != digest:
+                raise ValueError("快照不存在或 SHA256 校验失败")
+        manifest = published
+        pending = target.with_name(target.name + ".tmp")
+        pending.write_text(json.dumps(manifest.to_dict(), ensure_ascii=False, indent=2),
+                           encoding="utf-8")
+        pending.replace(target)
+        return manifest
+    except Exception:
+        # A writer may complete a remote build before local manifest
+        # publication fails. Adapters that own a remote collection can expose
+        # rollback(manifest); legacy writers remain unaffected.
+        rollback = getattr(writer, "rollback", None)
+        if replace_returned and callable(rollback):
+            try:
+                rollback(published if isinstance(published, VectorManifest) else manifest)
+            except Exception:
+                pass
+        raise
 
 
 class QdrantSnapshotWriter:
@@ -129,6 +145,10 @@ class QdrantSnapshotWriter:
                     raise RuntimeError(f"无法检查 Qdrant collection: {error}") from error
             else:
                 raise ValueError(f"Qdrant collection 已存在: {manifest.collection}")
+            # Claim ownership before the request. If the SDK loses the
+            # response after the server creates the collection, cleanup still
+            # attempts to remove this versioned build name.
+            created = True
             client.create_collection(
                 collection_name=manifest.collection,
                 vectors_config=models.VectorParams(
@@ -136,7 +156,6 @@ class QdrantSnapshotWriter:
                 ),
                 metadata={VECTOR_BUILD_METADATA_KEY: manifest.build_metadata()},
             )
-            created = True
             for record in records:
                 validate_vector(record.vector, manifest.embedding)
                 if type(record.docid) is not int or record.docid != count:
@@ -169,6 +188,18 @@ class QdrantSnapshotWriter:
                 except Exception:
                     pass
             raise
+
+    def rollback(self, manifest: VectorManifest) -> None:
+        """Best-effort deletion after local publication fails post-build."""
+
+        try:
+            from qdrant_client import QdrantClient
+            client = QdrantClient(url=self.url, timeout=self.timeout)
+            client.delete_collection(collection_name=manifest.collection)
+        except Exception:
+            # Preserve the original publication error; the next run uses a
+            # fresh collection name.
+            pass
 
     def _download_snapshot(self, client, manifest: VectorManifest) -> VectorManifest:
         """Download through a .part file; only the complete file is published."""

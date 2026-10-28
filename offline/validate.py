@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Sequence
 
-from contracts.index_format import load_manifest, sha256_of, verify_files
+from contracts.index_format import MANIFEST, REQUIRED_FILES, load_manifest, sha256_of, verify_files
 from contracts.retrieval import VECTOR_MANIFEST, VectorManifest, corpus_fingerprint
 from .disk_index import DiskIndex
 from .provenance import PROVENANCE_FILE, PROVENANCE_SCHEMA_VERSION, REPORT_FILE
@@ -28,6 +28,11 @@ def _safe_artifact_path(root: Path, relative: str) -> Path:
     except ValueError as error:
         raise ValueError(f"交付产物路径越界: {relative}") from error
     return resolved
+
+
+def _is_sha256(value: object) -> bool:
+    return (isinstance(value, str) and len(value) == 64
+            and all(char in "0123456789abcdef" for char in value))
 
 
 def validate_build(build_dir: str | Path) -> dict:
@@ -64,11 +69,30 @@ def validate_build(build_dir: str | Path) -> dict:
             raise ValueError(f"交付缺少 {required}")
     provenance = json.loads((root / PROVENANCE_FILE).read_text(encoding="utf-8"))
     corpus = provenance.get("corpus") if isinstance(provenance, dict) else None
+    source = provenance.get("source") if isinstance(provenance, dict) else None
+    embedding = provenance.get("embedding") if isinstance(provenance, dict) else None
+    vector = provenance.get("vector") if isinstance(provenance, dict) else None
+    expected_embedding = dict(vector_manifest.embedding.__dict__)
+    expected_vector = {
+        "collection": vector_manifest.collection,
+        "backend": vector_manifest.backend,
+        "index_params": dict(vector_manifest.index_params),
+        "snapshot_files": dict(vector_manifest.snapshot_files),
+    }
+    source_filename = source.get("filename") if isinstance(source, dict) else None
     if (not isinstance(corpus, dict)
             or provenance.get("schema_version") != PROVENANCE_SCHEMA_VERSION
             or provenance.get("dataset") != lexical_manifest.dataset
             or corpus.get("ordered_fingerprint") != vector_manifest.corpus_sha256
-            or corpus.get("n_docs") != reader.n_docs):
+            or corpus.get("n_docs") != reader.n_docs
+            or not isinstance(source, dict)
+            or not isinstance(source_filename, str)
+            or Path(source_filename).name != source_filename
+            or not isinstance(source.get("bytes"), int) or source.get("bytes") < 0
+            or not _is_sha256(source.get("sha256"))
+            or embedding != expected_embedding
+            or vector != expected_vector
+            or provenance.get("bm25") != lexical_manifest.bm25.to_dict()):
         raise ValueError("provenance 与向量 corpus 指纹不一致")
     report = json.loads((root / REPORT_FILE).read_text(encoding="utf-8"))
     artifacts = report.get("artifacts") if isinstance(report, dict) else None
@@ -78,6 +102,15 @@ def validate_build(build_dir: str | Path) -> dict:
             or report.get("n_docs") != reader.n_docs
             or not isinstance(artifacts, dict)):
         raise ValueError("成本报告缺少 artifacts 对象")
+    required_artifacts = {
+        *(f"bm25/{name}" for name in [MANIFEST, *REQUIRED_FILES]),
+        VECTOR_MANIFEST,
+        PROVENANCE_FILE,
+        *vector_manifest.snapshot_files,
+    }
+    missing = sorted(required_artifacts - set(artifacts))
+    if missing:
+        raise ValueError(f"成本报告缺少必需产物: {', '.join(missing)}")
     for relative, entry in artifacts.items():
         if not isinstance(entry, dict) or not isinstance(entry.get("sha256"), str):
             raise ValueError(f"成本报告缺少产物摘要: {relative}")
