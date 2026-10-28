@@ -11,7 +11,17 @@
 
 工作边界：**离线负责 BM25 构建和向量数据库构建；在线负责查询编码、Router、向量召回与 RRF 融合**。不训练模型、不生成答案。两侧只共享 contracts/；在线只读离线产物。
 
-当前真实模型和 Qdrant 适配器已作为可选依赖接入，但本环境没有模型权重、DuRetrieval 全量数据或 Qdrant 实例，因此不宣称已完成真实语义质量和 HNSW 性能验收。默认运行 `python3 tests/run.py` 与 `python3 -m unittest evaluation.test_evaluate` 验证框架；有真实数据后再运行 HTTP evaluator 和四组实验。运行 `typst compile slides/proposal.typ slides/proposal.pdf` 可更新汇报。
+## 当前 TODO / 状态（2026-10-28）
+
+- [x] **代码与契约闸门**：A1 staging/原子发布、严格文件 SHA256、双索引指纹对齐、Qdrant 批量消费/精确计数/失败清理、快照 `.part` 发布、provenance/report 和 `offline.validate` 已在 PR #8 提交；本地 `python tests/run.py` 52/52、evaluation 22/22、Web 5/5。
+- [x] **分工澄清**：PR #8 与 PR #7 互补；PR #7 的 streaming/compact/packed/BGE 成果不在本分支重复实现。RFC-0002 负责爬虫/清洗/qrels，RFC-0003 负责在线接线，RFC-0001 负责 Router 研究。
+- [ ] **真实小批闭环（集群）**：使用冻结的真实 embedding revision 和 Qdrant 版本，完成 tiny/小批编码、建库、快照下载、干净实例恢复、在线只读启动；保存 job、版本、exact count、ID 覆盖、指纹和成本收据。memory-exact/SDK double 不能替代这一项。
+- [ ] **数据冻结（RFC-0002 协作）**：分别登记批准的 DuReader 版本与团队自爬 20k 语料、来源、统计、ID 清单和 SHA256；不把公开归档或前缀冒充课程目标规模。
+- [ ] **规模构建**：先做资源/峰值内存/磁盘预估，再决定采用 PR #7 streaming/SQLite/compact 路线；旧 v1 内存 builder 不得直接宣称支持 8M。
+- [ ] **四组正式实验**：在 dev 上冻结 Router、candidate pool、RRF、模型和截断规则，在独立 test 上运行 lexical/dense/hybrid/adaptive，保存 nDCG@10、Recall@10、MRR@10、MAP@100、延迟分位数、vector success/fallback 和 TREC runs。
+- [ ] **不确定性与交付**：用 `evaluation.compare` 做配对 bootstrap；保留失败/降级记录，补齐资源成本表、恢复/回滚日志，并在 PR #7/PR #8 合并前完成跨组读取验收。
+
+本地 Windows 使用 `python`，Linux/集群可使用 `python3`；两者运行同一测试入口。当前仓库没有提交数据集、权重、Qdrant collection、快照或生成索引；在真实资源任务产生收据前，不报告语义质量、HNSW 性能或全规模结果。运行 `typst compile slides/proposal.typ slides/proposal.pdf` 可更新汇报。
 
 ---
 
