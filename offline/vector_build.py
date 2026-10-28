@@ -31,6 +31,12 @@ def build_vectors(reader: IndexReader, encoder: TextEncoder, writer: VectorWrite
         raise ValueError("向量产物已存在；请使用新的输出目录与 collection")
     if type(batch_size) is not int or batch_size <= 0:
         raise ValueError("batch_size 必须是正整数")
+    if index_params is not None and not isinstance(index_params, dict):
+        raise ValueError("index_params 必须是 JSON 对象")
+    try:
+        json.dumps(dict(index_params or {}), sort_keys=True)
+    except (TypeError, ValueError) as error:
+        raise ValueError("index_params 必须可 JSON 序列化") from error
     ids = [reader.doc(i).doc_id for i in range(reader.n_docs)]
     if len(ids) != len(set(ids)):
         raise ValueError("doc_id 不唯一")
@@ -66,7 +72,7 @@ def build_vectors(reader: IndexReader, encoder: TextEncoder, writer: VectorWrite
         if not snapshot.is_file() or sha256_of(snapshot) != digest:
             raise ValueError("快照不存在或 SHA256 校验失败")
     manifest = published
-    pending = target.with_suffix(".json.tmp")
+    pending = target.with_name(target.name + ".tmp")
     pending.write_text(json.dumps(manifest.to_dict(), ensure_ascii=False, indent=2),
                        encoding="utf-8")
     pending.replace(target)
@@ -95,35 +101,16 @@ class QdrantSnapshotWriter:
             from qdrant_client import QdrantClient, models
         except ImportError as error:
             raise RuntimeError("QdrantSnapshotWriter 需要安装 qdrant-client") from error
-        records = list(records)
-        for record in records:
-            validate_vector(record.vector, manifest.embedding)
-        if len(records) != manifest.n_docs:
-            raise ValueError("向量记录数与 manifest 不符")
-        if sorted(record.docid for record in records) != list(range(manifest.n_docs)):
-            raise ValueError("Qdrant point id 必须与内部 docid 一致")
-        if len({record.doc_id for record in records}) != len(records):
-            raise ValueError("外部 doc_id 必须唯一")
         client = QdrantClient(url=self.url, timeout=self.timeout)
-        try:
-            client.get_collection(manifest.collection)
-        except Exception as error:
-            # Only a confirmed 404 means the versioned collection is new.
-            # Network, TLS, and authentication failures must stop the build
-            # instead of being misread as an empty destination.
-            if getattr(error, "status_code", None) != 404:
-                raise RuntimeError(f"无法检查 Qdrant collection: {error}") from error
-        else:
-            raise ValueError(f"Qdrant collection 已存在: {manifest.collection}")
-        client.create_collection(
-            collection_name=manifest.collection,
-            vectors_config=models.VectorParams(
-                size=manifest.embedding.dimension, distance=models.Distance.COSINE,
-            ),
-            metadata={VECTOR_BUILD_METADATA_KEY: manifest.build_metadata()},
-        )
-        for start in range(0, len(records), self.batch_size):
-            batch = records[start:start + self.batch_size]
+        created = False
+        seen_doc_ids = set()
+        count = 0
+        batch = []
+
+        def flush() -> None:
+            nonlocal batch
+            if not batch:
+                return
             client.upsert(
                 collection_name=manifest.collection,
                 points=[models.PointStruct(
@@ -132,31 +119,80 @@ class QdrantSnapshotWriter:
                 ) for record in batch],
                 wait=True,
             )
-        info = client.get_collection(manifest.collection)
-        metadata = getattr(getattr(info, "config", None), "metadata", None)
-        if (not isinstance(metadata, dict)
-                or metadata.get(VECTOR_BUILD_METADATA_KEY) != manifest.build_metadata()):
-            raise ValueError("Qdrant 未保存构建元数据；需要 Qdrant / qdrant-client 1.16+")
-        # CollectionInfo.points_count is approximate; startup/publication needs
-        # the exact count, even while Qdrant is optimizing segments.
-        count = client.count(collection_name=manifest.collection, exact=True).count
-        if type(count) is not int or count != len(records):
-            raise ValueError(f"Qdrant 点数不符: {count} != {len(records)}")
+            batch = []
+
+        try:
+            try:
+                client.get_collection(manifest.collection)
+            except Exception as error:
+                if getattr(error, "status_code", None) != 404:
+                    raise RuntimeError(f"无法检查 Qdrant collection: {error}") from error
+            else:
+                raise ValueError(f"Qdrant collection 已存在: {manifest.collection}")
+            client.create_collection(
+                collection_name=manifest.collection,
+                vectors_config=models.VectorParams(
+                    size=manifest.embedding.dimension, distance=models.Distance.COSINE,
+                ),
+                metadata={VECTOR_BUILD_METADATA_KEY: manifest.build_metadata()},
+            )
+            created = True
+            for record in records:
+                validate_vector(record.vector, manifest.embedding)
+                if type(record.docid) is not int or record.docid != count:
+                    raise ValueError("Qdrant point id 必须按 0..n_docs-1 顺序提供")
+                if (not isinstance(record.doc_id, str) or not record.doc_id
+                        or record.doc_id in seen_doc_ids):
+                    raise ValueError("外部 doc_id 必须非空且唯一")
+                seen_doc_ids.add(record.doc_id)
+                batch.append(record)
+                count += 1
+                if len(batch) >= self.batch_size:
+                    flush()
+            flush()
+            if count != manifest.n_docs:
+                raise ValueError("向量记录数与 manifest 不符")
+            info = client.get_collection(manifest.collection)
+            metadata = getattr(getattr(info, "config", None), "metadata", None)
+            if (not isinstance(metadata, dict)
+                    or metadata.get(VECTOR_BUILD_METADATA_KEY) != manifest.build_metadata()):
+                raise ValueError("Qdrant 未保存构建元数据；需要 Qdrant / qdrant-client 1.16+")
+            exact_count = client.count(collection_name=manifest.collection, exact=True).count
+            if type(exact_count) is not int or exact_count != manifest.n_docs:
+                raise ValueError(f"Qdrant 点数不符: {exact_count} != {manifest.n_docs}")
+            return self._download_snapshot(client, manifest)
+        except Exception:
+            delete = getattr(client, "delete_collection", None)
+            if created and callable(delete):
+                try:
+                    delete(collection_name=manifest.collection)
+                except Exception:
+                    pass
+            raise
+
+    def _download_snapshot(self, client, manifest: VectorManifest) -> VectorManifest:
+        """Download through a .part file; only the complete file is published."""
         try:
             snapshot = client.create_snapshot(collection_name=manifest.collection)
             snapshot_name = getattr(snapshot, "name", None) or getattr(snapshot, "result", None)
-            if not isinstance(snapshot_name, str):
-                raise ValueError("Qdrant 未返回快照文件名")
+            if not isinstance(snapshot_name, str) or not Path(snapshot_name).name:
+                raise ValueError("Qdrant 未返回有效快照文件名")
             self.snapshot_dir.mkdir(parents=True, exist_ok=True)
             target = self.snapshot_dir / Path(snapshot_name).name
+            pending = target.with_name(target.name + ".part")
             from urllib.request import urlopen
             import urllib.parse
             endpoint = (self.url.rstrip("/") + "/collections/" +
                         urllib.parse.quote(manifest.collection, safe="") + "/snapshots/" +
-                        urllib.parse.quote(Path(snapshot_name).name, safe=""))
-            with urlopen(endpoint, timeout=self.timeout) as response, target.open("wb") as output:
+                        urllib.parse.quote(target.name, safe=""))
+            with urlopen(endpoint, timeout=self.timeout) as response, pending.open("wb") as output:
                 while chunk := response.read(1024 * 1024):
                     output.write(chunk)
+            pending.replace(target)
         except Exception as error:
+            try:
+                pending.unlink()
+            except (UnboundLocalError, FileNotFoundError):
+                pass
             raise RuntimeError(f"Qdrant 快照发布失败: {error}") from error
         return replace(manifest, snapshot_files={target.name: sha256_of(target)})
