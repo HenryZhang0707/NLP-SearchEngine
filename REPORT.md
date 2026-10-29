@@ -75,7 +75,7 @@ python3 -m evaluation.evaluate \
 
 ## 5. 当前限制
 
-默认分词器仍是可解释的 bigram 占位实现；公开 baseline 只有 dev 标注，真实分词对齐、Qdrant HNSW 参数和全量性能数字仍不能从本次前缀烟雾推断。集群上已经完成固定 BGE revision 的 CUDA 编码、20k 前缀上的四模式 HTTP 冒烟和 paired bootstrap；这些四模式结果使用 `memory-exact` 向量读取器，不能解释为 Qdrant HNSW 性能。真实 Qdrant server 的小批 snapshot/clean-restore/read-only 闭环已单独验收，但尚未完成 8M 规模 HNSW 与课程全量成绩。RM3 已作为确定性的本地伪相关反馈扩展接入；SLM 仍需要外部固定模型与离线缓存，返回 501。
+默认分词器仍是可解释的 bigram 占位实现；公开 baseline 只有 dev 标注，真实分词对齐、Qdrant HNSW 参数和全量性能数字仍不能从本次前缀烟雾推断。集群上已经完成固定 BGE revision 的 CUDA 编码、20k 前缀上的四模式 HTTP 冒烟和 paired bootstrap；这些四模式结果使用 `memory-exact` 向量读取器，不能解释为 Qdrant HNSW 性能。真实 Qdrant server 的小批 snapshot/clean-restore/read-only 闭环已单独验收，但尚未完成 8M 规模 HNSW 与课程全量成绩。2026-10-29 已将有界 `evaluation.crawl_web` 工作流移入当前分支，并从公开中国政府网抓取 30 篇同域文档，生成 10 个查询的 97 条候选池记录；启发式 relevance 只是待复核建议，尚无独立人工确认，因此不能写成正式 qrels 或课程测试集。RM3 已作为确定性的本地伪相关反馈扩展接入；SLM 仍需要外部固定模型与离线缓存，返回 501。
 
 ## 6. 2026-10-29 集群验收：路由比较与证据边界
 

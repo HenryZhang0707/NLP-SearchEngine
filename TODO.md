@@ -11,13 +11,16 @@
 - [x] `evaluation.evaluate` 的完整 MAP@100 召回深度、路由 telemetry 与 `evaluation.compare` 的确定性 paired bootstrap。
 - [x] 公共演示站点 [search.shwstone.cn](https://search.shwstone.cn/) 的 lexical 搜索和 adaptive 缺向量时的明确 fallback；修复前端失败后清除旧路由/耗时观测的残留问题。
 - [x] 新增有边界的 `evaluation.crawl_web`：HTTP(S) only、robots-aware、同域、深度/文档数/响应大小/速率限制，以及人工标注后生成 queries/qrels 的校验入口。
+- [x] 执行一次可审计的公开站点抓取：gov.cn、30 篇文档、10 个查询候选池、97 条 provisional 建议；收据、文件哈希和审阅模板均保存在版本库外。
 
 ## NEXT（需要继续做，但不应伪造结果）
 
 - [ ] 用课程实际提供的、可追溯的 100001/2000/9839 版本执行 `prepare_dataset`，固定 dev/test ID 清单、哈希和数据分割；若仍拿不到，报告中保留阻塞证据。
 - [ ] 在 dev 上冻结 Router 阈值、candidate pool、RRF `c` 和模型配置，再在独立 test 上运行 lexical、dense、固定 hybrid、adaptive 四组；逐查询保存 TREC run、路由原因分布、向量触发/成功/fallback、平均/p50/p95 延迟。
 - [ ] 用 `evaluation.compare` 至少完成 fixed-hybrid vs adaptive 的 paired bootstrap，并在报告中给出 query-level 差值和区间；不要在 test 上挑阈值。
-- [ ] 选择允许抓取的公开站点，运行 `crawl_web crawl` 生成未标注 corpus；由组员人工填写 query/relevance，再运行 `crawl_web finalize` 生成 qrels。未完成人工标注前不得把模板当评测集。
+- [~] 选择允许抓取的公开站点并运行 `crawl_web crawl` 已完成一个 30 篇候选批次；当前启发式标签仍待组员人工复核，之后需扩展到 20k 有效文档并重新生成正式 qrels。未完成人工标注前不得把 provisional 文件当评测集。
+- [ ] 将经过人工确认的自爬 20k corpus、queries、qrels 和 manifest 接入统一双索引构建；保留来源、ID、计数和 SHA256。
+- [ ] 集成并修复 PR #7 的 streaming/compact 路线，先解决 O(N) lengths/ids/Qdrant identity 结构，再进行 8M 预检、全量构建、峰值 RSS/磁盘/吞吐和快照收据。
 - [ ] 若要声称 HNSW 或 Qdrant 服务性能，必须另行启动可复现的 HTTP Qdrant 服务并记录版本、索引参数、快照哈希和失败率；local exact smoke 不替代这项验收。
 - [ ] 公共站点当前展示的是 tiny lexical 部署；向量模式必须在后端真正提供固定模型和向量库后再宣称可用。部署变更后重新做 `/health`、`/index/info`、四模式和错误路径检查。
 

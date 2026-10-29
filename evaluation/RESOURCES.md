@@ -65,3 +65,11 @@ python -m evaluation.prepare_dureader \
 RocketQA 脚本中的数据和 ERNIE 权重来自 `dataset-bj.cdn.bcebos.com`。数据包已完成哈希和结构核验；本次集群已完成 BGE CUDA 编码和受限前缀四模式实验，但模型权重、8M 规模索引和 Qdrant server/HNSW 仍未形成可交付收据。按 [评测说明](README.md) 构建 BM25、向量索引和四组实验时，模型 revision、维度、前缀、截断规则和 Qdrant HNSW 参数必须随实验结果一并记录。
 
 Qdrant 适配器和快照发布逻辑已在 `offline/vector_build.py`、`online/vector_index.py` 中实现。没有可用 Qdrant 实例时，内存向量替身只能用于契约测试，不能作为 HNSW 性能结论。
+
+## 团队自爬测试集（进行中，未形成正式 qrels）
+
+2026-10-29 已使用仓库的 `evaluation.crawl_web` 对公开的中国政府网执行一次有界抓取：seed 为 `https://www.gov.cn/`，同域 HTTP(S) BFS，`max_documents=30`、`max_depth=1`、`max_bytes=500000`、请求间隔 0.2 秒，并要求 robots.txt 允许。抓取结果为 30 篇文档，corpus SHA256 为 `8e6cde8dfa0647deb9d55466064d951b445eb19f13740d349ef8398b86d5ab1b`；该语料和抓取收据保存在版本库外。
+
+从这 30 篇文档构造了 10 个查询和 97 条 BM25 候选池记录，生成了带标题、URL、片段和启发式建议的 `annotation_review.md`。启发式建议文件的 SHA256 为 `61f38c72504dfbe4ff764946d4c149a6585faa9226646b9edff7b0b629303ba8`，仅用于辅助审阅，不能当成人工真值。当前 provisional qrels 的状态是 `ai_suggested_needs_human_review`；必须由组员独立复核每条 relevance=0/1/2 后，才能运行 `crawl_web finalize` 生成正式 queries/qrels。该 30 篇抓取也不等于 Issue #6 要求的自爬 20k 有效文档。
+
+正式标注前不得提交 corpus、annotation、queries、qrels 或 provisional runs；人工复核完成后应重新生成 manifest，记录 corpus、queries、qrels 的字节数和 SHA256，并将人工审阅者、日期和标注规则写入收据。

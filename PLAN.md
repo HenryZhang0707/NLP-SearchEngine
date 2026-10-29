@@ -17,7 +17,8 @@
 - [x] **分工澄清**：PR #8 与 PR #7 互补；PR #7 的 streaming/compact/packed/BGE 成果不在本分支重复实现。RFC-0002 负责爬虫/清洗/qrels，RFC-0003 负责在线接线，RFC-0001 负责 Router 研究。
 - [x] **真实小批闭环（集群）**：已在 A800 上完成固定 BGE revision 的 CUDA 编码；仓库自身 Qdrant writer 使用 1.16.0 server/client 完成真实 collection、metadata、snapshot、独立干净实例恢复和 `QdrantVectorIndex` 只读验收。完整规模成本表和 8M 构建仍单独保留为后续项。
 - [ ] **数据冻结（RFC-0002 协作）**：分别登记批准的 DuReader 版本与团队自爬 20k 语料、来源、统计、ID 清单和 SHA256；不把公开归档或前缀冒充课程目标规模。
-- [ ] **规模构建**：先做资源/峰值内存/磁盘预估，再决定采用 PR #7 streaming/SQLite/compact 路线；旧 v1 内存 builder 不得直接宣称支持 8M。
+- [~] **自爬测试集**：已将有界 `evaluation.crawl_web` 工作流移入本分支，并完成 gov.cn 30 篇候选抓取、10 查询/97 候选池和 provisional 启发式建议；仍需组员独立人工复核，并扩展到确认后的 20k 有效文档。
+- [ ] **规模构建**：PR #7 的 streaming/SQLite/compact 路线已完成只读审计但尚未集成到本分支；其 O(N) lengths/ids/Qdrant identity 结构和 8M 峰值 RSS、磁盘、吞吐、快照都未实测，旧 v1 内存 builder 不得直接宣称支持 8M。
 - [~] **四组前缀烟雾实验**：已在官方 dev corpus 的 20k 固定前缀上冻结 Router、candidate pool、RRF、模型和截断规则，并在独立 9-query test split 上运行 lexical/dense/hybrid/adaptive，保存指标、延迟、vector success/fallback 和 TREC runs；这不是课程全量正式成绩。
 - [~] **不确定性与交付**：已用 `evaluation.compare` 对 lexical→hybrid 和 lexical→adaptive 做 10,000 次 paired bootstrap，并保留资源/模型/Qdrant 限制；真实 Qdrant server 小批恢复收据已补齐，团队自爬测试集、全量成本表和 8M/HNSW 正式验收仍待补齐。
 
