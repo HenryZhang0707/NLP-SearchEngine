@@ -78,6 +78,8 @@ Qdrant 适配器和快照发布逻辑已在 `offline/vector_build.py`、`online/
 
 对这 1,029 篇外部语料完成了不入库的规模路径冒烟：`offline.stream_build` 生成 1,029 文档、平均文档长度 2,945.7 的 v1 索引，耗时 66.69 秒；`offline.compact` 生成 178,504 词项的 compact-v1 产物，耗时 15.22 秒。stream manifest SHA256 为 `529b7c4576c50e59a20a031ad1e46b8d382e5455cc55a5be5f11782185574e10`，compact manifest SHA256 为 `06c71823b174f2b85ff5200eed96bfa8e0d90494ac5c7cee617bbe223fa00c07`。这些是 1,029 文档工程证据，不能外推为 8M 峰值 RSS、磁盘、吞吐或 Qdrant HNSW 性能。
 
+2026-10-29 的集群复核未形成新的 8M/HNSW 任务收据：交互式任务表单在最长运行时间校验处拒绝提交；同一账号的训练入口可以看到自有 RFC-0004 工作空间和仓库目录，但入口文件级联选择读取私有数据时返回 504。未创建新任务，也未把该失败误写成计算资源不足或实验结果。
+
 正式标注前不得提交 corpus、annotation、queries、qrels 或 provisional runs；人工复核完成后应重新生成 manifest，记录 corpus、queries、qrels 的字节数和 SHA256，并将人工审阅者、日期和标注规则写入收据。
 
 规模路径的当前边界和可复现实验入口见 [`docs/RFC0004_SCALE.md`](../docs/RFC0004_SCALE.md)。其中 compact/packed reader 和 BGE/Qdrant 辅助脚本是可选工程支持，不等同于 8M 有界构建或全规模 HNSW 验收。

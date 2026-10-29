@@ -24,7 +24,7 @@
 - [ ] 用 `evaluation.compare` 至少完成 fixed-hybrid vs adaptive 的 paired bootstrap，并在报告中给出 query-level 差值和区间；不要在 test 上挑阈值。
 - [~] 选择允许抓取的公开站点并运行 `crawl_web crawl` 已完成 30/393/799/1,029 篇候选批次；当前启发式标签仍待组员人工复核，且 gov.cn 当前边界只形成 1,029 篇，之后需找到来源扩展到 20k 有效文档并重新生成正式 qrels。未完成人工标注前不得把 provisional 文件当评测集。
 - [ ] 将经过人工确认的自爬 20k corpus、queries、qrels 和 manifest 接入统一双索引构建；保留来源、ID、计数和 SHA256。
-- [x] 纳入 SQLite 支持的 `offline.stream_build`、compact/packed reader、DiskDocuments 和临时 SQLite ID 校验，并以 tiny corpus conformance 验证；仍需进行 8M 预检、全量构建、峰值 RSS/磁盘/吞吐和快照收据。
+- [x] 纳入 SQLite 支持的 `offline.stream_build`、compact/packed reader、DiskDocuments 和临时 SQLite ID 校验，并以 tiny corpus conformance 验证；1,029 文档的 stream/compact 已完成，但全量 packed conformance 在本地超过 20 分钟无收据后停止，仍需进行有界验证、8M 预检、全量构建、峰值 RSS/磁盘/吞吐和快照收据。
 - [ ] 若要声称 HNSW 或 Qdrant 服务性能，必须另行启动可复现的 HTTP Qdrant 服务并记录版本、索引参数、快照哈希和失败率；local exact smoke 不替代这项验收。
 - [ ] 公共站点当前展示的是 tiny lexical 部署；向量模式必须在后端真正提供固定模型和向量库后再宣称可用。部署变更后重新做 `/health`、`/index/info`、四模式和错误路径检查。
 
@@ -33,7 +33,7 @@
 - 官方公开 baseline 只有 dev 标注，课程目标快照和 test labels 尚未被公开资源证明存在；不能把 dev 或 prefix smoke 改名为 test/full-scale。
 - 本地电脑没有 NVIDIA GPU；真实 embedding/Qdrant 的集群运行产物不提交仓库，且不代表全量语义质量。
 - 网络爬取只负责构造候选 corpus；相关性 qrels 必须有人审阅。脚本不会从网页标题自动制造“真值”。
-- 集群交互式任务表单已确认存在 A800 配额，但当前提交动作被“最长运行时间 <= 0日6时0分”的表单校验拦截，任务列表仍显示 0 个交互式运行应用；在平台校验修复或提供可用任务入口前，不记录 8M/HNSW 任务已启动。
+- 集群交互式任务表单已确认存在 A800 配额，但当前提交动作被“最长运行时间 <= 0日6时0分”的表单校验拦截，任务列表仍显示 0 个交互式运行应用。改查同一账号的训练任务入口时，自有 RFC-0004 工作空间和仓库目录可见，但程序入口文件级联选择在读取私有数据时返回 504，未创建任务；在平台校验或入口文件服务修复前，不记录 8M/HNSW 任务已启动。
 
 ## 固定验证入口
 

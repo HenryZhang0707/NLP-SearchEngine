@@ -34,6 +34,12 @@ recorded in `evaluation/RESOURCES.md`. This is evidence that the staged path is
 usable on a small external corpus; it is not an 8M peak-RSS, disk, throughput,
 or Qdrant HNSW receipt.
 
+A separate `contracts.conformance.check_reader` attempt against the 1,029-document
+packed artifact exceeded 20 minutes of local CPU time without producing a
+receipt and was stopped. The tiny packed-reader conformance remains green; the
+large conformance path is therefore unvalidated and must be bounded before it
+is used as a production gate.
+
 ## Remaining production gate
 
 The legacy `offline.build` path still materializes the conformance oracle in
