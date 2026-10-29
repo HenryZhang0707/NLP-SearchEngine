@@ -6,7 +6,7 @@
 
 提案中的 DuRetrieval 全量实验需要单独下载语料、queries 和 qrels。仓库只保留 tiny fixture 和可复现代码，不把约 100,001 篇文档或模型文件提交进版本库。
 
-资源核验见 [evaluation/RESOURCES.md](evaluation/RESOURCES.md)。已从 RocketQA 官方下载脚本指向的公开 CDN 获取并核验 baseline archive：8,096,668 个 passage、2,000 个 dev 查询和 9,839 条去重 qrels（原始答案段落链接 9,863 条）。该公开 archive 没有官方 test labels，与提案中要求的课程快照和官方 DuReader 版本不能混用；本次集群已完成固定 BGE revision 的 GPU 编码和受限前缀四模式验证，但 Qdrant server/HNSW 与全量语义实验仍未完成，报告不伪造这些结果。
+资源核验见 [evaluation/RESOURCES.md](evaluation/RESOURCES.md)。已从 RocketQA 官方下载脚本指向的公开 CDN 获取并核验 baseline archive：8,096,668 个 passage、2,000 个 dev 查询和 9,839 条去重 qrels（原始答案段落链接 9,863 条）。该公开 archive 没有官方 test labels，与提案中要求的课程快照和官方 DuReader 版本不能混用；本次集群已完成固定 BGE revision 的 GPU 编码、受限前缀四模式验证，以及真实 Qdrant 1.16.0 服务端的小批快照恢复。8M 规模 HNSW/全量语义实验仍未完成，报告不伪造这些结果。
 
 ## 2. 已完成实现
 
@@ -49,7 +49,7 @@ python3 -m offline.build --corpus fixtures/tiny_corpus.jsonl \
 python3 -m contracts.conformance /tmp/nlp-tiny-bm25 fixtures/tiny_corpus.jsonl
 ```
 
-审阅修复后，54 项仓库契约／适配器测试、22 项评测器和数据准备测试、5 项浏览器高亮测试全部通过，tiny 索引 conformance 通过。Qdrant 测试使用 SDK double 验证发布／拒绝路径；另用 `qdrant-client==1.16.0` 的本地内存后端验证了真实 SDK 元数据读写和模型版本错配拒绝，但没有据此宣称验证了真实服务的 HNSW、快照恢复或语义质量。启动服务后，lexical 搜索、`/health`、`/index/info`、浏览器静态资源和 dense 未配置时的 503 行为均已验证。历史上对 tiny 磁盘索引重复执行 1,000 次 BM25 查询测得 p50 约 0.10 ms、p95 约 0.14 ms；这只是小样本工程冒烟，不能替代 DuRetrieval 全量结果。
+审阅修复后，54 项仓库契约／适配器测试、22 项评测器和数据准备测试、5 项浏览器高亮测试全部通过，tiny 索引 conformance 通过。Qdrant 测试使用 SDK double 验证发布／拒绝路径；另用 `qdrant-client==1.16.0` 的本地内存后端验证了真实 SDK 元数据读写和模型版本错配拒绝。此前本地内存后端的 snapshot API 明确不支持，因此当时没有据此宣称真实服务恢复；随后已在独立 Qdrant 1.16.0 服务端完成小批快照恢复，详见第 6 节。启动服务后，lexical 搜索、`/health`、`/index/info`、浏览器静态资源和 dense 未配置时的 503 行为均已验证。历史上对 tiny 磁盘索引重复执行 1,000 次 BM25 查询测得 p50 约 0.10 ms、p95 约 0.14 ms；这只是小样本工程冒烟，不能替代 DuRetrieval 全量结果。
 
 历史上另用公开 C-MTEB DuRetrieval 快照（5000 篇文档、100 条查询、425 条 qrels）做了外部闭环冒烟。按固定划分取 80 条测试查询，旧版 Top-10 HTTP 请求下 BM25 得到 nDCG@10=0.8065、Recall@10=0.8194、MRR@10=0.8872，平均延迟 4.33 ms、p50 3.83 ms、p95 6.65 ms。修复审阅问题时发现旧评测器默认只召回 10 条，却标记 MAP@100，因此撤下该 MAP 数值；新的默认评测会召回 100 条，并需要重新测量 MAP 和完整请求延迟。该快照不是课程要求的 100001/2000/9839 版本，这些历史数字只验证管线，不代表最终成绩。
 
@@ -75,7 +75,7 @@ python3 -m evaluation.evaluate \
 
 ## 5. 当前限制
 
-默认分词器仍是可解释的 bigram 占位实现；公开 baseline 只有 dev 标注，真实分词对齐、Qdrant HNSW 参数和全量性能数字仍不能从本次前缀烟雾推断。集群上已经完成固定 BGE revision 的 CUDA 编码、20k 前缀上的四模式 HTTP 冒烟和 paired bootstrap，但向量读取器是 `memory-exact`，本地 Qdrant 的 snapshot API 也明确不支持，因此没有把这些结果写成 Qdrant server/HNSW 或课程全量成绩。RM3 已作为确定性的本地伪相关反馈扩展接入；SLM 仍需要外部固定模型与离线缓存，返回 501。
+默认分词器仍是可解释的 bigram 占位实现；公开 baseline 只有 dev 标注，真实分词对齐、Qdrant HNSW 参数和全量性能数字仍不能从本次前缀烟雾推断。集群上已经完成固定 BGE revision 的 CUDA 编码、20k 前缀上的四模式 HTTP 冒烟和 paired bootstrap；这些四模式结果使用 `memory-exact` 向量读取器，不能解释为 Qdrant HNSW 性能。真实 Qdrant server 的小批 snapshot/clean-restore/read-only 闭环已单独验收，但尚未完成 8M 规模 HNSW 与课程全量成绩。RM3 已作为确定性的本地伪相关反馈扩展接入；SLM 仍需要外部固定模型与离线缓存，返回 501。
 
 ## 6. 2026-10-29 集群验收：路由比较与证据边界
 
