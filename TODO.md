@@ -13,6 +13,7 @@
 - [x] 新增有边界的 `evaluation.crawl_web`：HTTP(S) only、robots-aware、同域、深度/文档数/响应大小/速率限制，以及人工标注后生成 queries/qrels 的校验入口。
 - [x] 执行一次可审计的公开站点抓取：gov.cn、30 篇文档、10 个查询候选池、97 条 provisional 建议；收据、文件哈希和审阅模板均保存在版本库外。
 - [x] 复跑同域 depth=2 的扩大抓取并记录实际结果：393 篇有效文档、corpus SHA256 `757e93bfc08f800827cff925864155032bbfe5d4be6cdcc5009b7b8996419531`、10 查询/100 条 provisional 候选；未把请求上限误报为实际文档数。
+- [x] 修复 HTTP 分块传输中断并完成 depth=3 重试：799 篇有效文档、corpus SHA256 `1f209cad5da40808b14f6249b886308e977f708dd222f2c9eaf984f3d5b9f258`；仍只有未标注模板，未形成正式 qrels。
 
 ## NEXT（需要继续做，但不应伪造结果）
 
