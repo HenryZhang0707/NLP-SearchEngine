@@ -21,7 +21,7 @@
 - [ ] 用 `evaluation.compare` 至少完成 fixed-hybrid vs adaptive 的 paired bootstrap，并在报告中给出 query-level 差值和区间；不要在 test 上挑阈值。
 - [~] 选择允许抓取的公开站点并运行 `crawl_web crawl` 已完成 30 篇和 393 篇候选批次；当前启发式标签仍待组员人工复核，且 gov.cn 当前边界只形成 393 篇，之后需找到来源扩展到 20k 有效文档并重新生成正式 qrels。未完成人工标注前不得把 provisional 文件当评测集。
 - [ ] 将经过人工确认的自爬 20k corpus、queries、qrels 和 manifest 接入统一双索引构建；保留来源、ID、计数和 SHA256。
-- [ ] 集成并修复 PR #7 的 streaming/compact 路线，先解决 O(N) lengths/ids/Qdrant identity 结构，再进行 8M 预检、全量构建、峰值 RSS/磁盘/吞吐和快照收据。
+- [x] 纳入 SQLite 支持的 `offline.stream_build`、compact/packed reader、DiskDocuments 和临时 SQLite ID 校验，并以 tiny corpus conformance 验证；仍需进行 8M 预检、全量构建、峰值 RSS/磁盘/吞吐和快照收据。
 - [ ] 若要声称 HNSW 或 Qdrant 服务性能，必须另行启动可复现的 HTTP Qdrant 服务并记录版本、索引参数、快照哈希和失败率；local exact smoke 不替代这项验收。
 - [ ] 公共站点当前展示的是 tiny lexical 部署；向量模式必须在后端真正提供固定模型和向量库后再宣称可用。部署变更后重新做 `/health`、`/index/info`、四模式和错误路径检查。
 

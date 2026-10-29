@@ -10,6 +10,7 @@ from offline.compact import CompactIndex, compile_index
 from offline.disk_documents import DiskDocuments
 from offline.packed_index import PackedIndex
 from offline.prepare import prepare
+from offline.stream_build import build as stream_build
 
 
 CORPUS = [
@@ -46,6 +47,23 @@ def test_prepare_compact_and_packed_readers_preserve_contract():
             assert reader.doc(1).doc_id == "d1"
         with DiskDocuments(lexical) as documents:
             assert documents.doc(0).doc_id == "d0"
+
+
+def test_stream_builder_is_deterministic_and_conformant():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        corpus = root / "corpus.jsonl"
+        _write_corpus(corpus)
+        first, second = root / "first", root / "second"
+        stream_build(corpus, first, "stream-test")
+        stream_build(corpus, second, "stream-test")
+        compact_first = root / "compact-first"
+        compile_index(first, compact_first)
+        with PackedIndex(compact_first, cache_bytes=1024) as reader:
+            check_reader(reader, CORPUS)
+        first_manifest = json.loads((first / "manifest.json").read_text(encoding="utf-8"))
+        second_manifest = json.loads((second / "manifest.json").read_text(encoding="utf-8"))
+        assert first_manifest["files"] == second_manifest["files"]
 
 
 ALL_TESTS = [value for name, value in sorted(globals().items()) if name.startswith("test_")]

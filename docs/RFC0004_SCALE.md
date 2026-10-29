@@ -8,6 +8,9 @@ corpus or the 8M-document build has completed.
 
 - `offline.prepare` validates a JSONL corpus, rejects duplicate external IDs,
   writes a normalized corpus and an ID map, and records source/analyzer hashes.
+- `offline.stream_build` uses SQLite-backed uniqueness, length, and posting
+  storage and streams the unchanged v1 JSONL output. It removes the legacy
+  builder's full Python conformance oracle from the lexical build path.
 - `offline.compact.compile_index` converts a checksum-verified v1 lexical
   index into a read-only compact artifact. `offline.packed_index.PackedIndex`
   provides bounded decoded-postings caching and a portable positional-read
@@ -26,12 +29,12 @@ conformance regression in `tests/test_scale_support.py` on Windows.
 ## Remaining production gate
 
 The legacy `offline.build` path still materializes the conformance oracle in
-memory. The optional compact conversion happens after that build and therefore
-does not remove the source peak. `offline.vector_build.QdrantSnapshotWriter`
-also retains a Python set of external IDs while a collection is built. These
-structures must be replaced by disk-backed uniqueness/length accounting, or
-measured with a complete resource receipt, before an 8M build is called
-bounded. A Qdrant HNSW result must additionally include server version,
+memory; use `offline.stream_build` when measuring a large lexical build. The
+optional compact conversion happens after a source build and therefore does
+not remove that source peak. `offline.vector_build.QdrantSnapshotWriter` now
+uses a temporary SQLite identity table; the 8M vector build still needs a
+complete resource receipt before it is called bounded. A Qdrant HNSW result
+must additionally include server version,
 collection metadata, exact point count, snapshot hash, clean-instance restore,
 peak RSS/disk, throughput and four-mode evaluator output.
 

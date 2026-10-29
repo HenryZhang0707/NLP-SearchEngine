@@ -4,6 +4,7 @@
 """
 
 import json
+import sqlite3
 from dataclasses import replace
 from pathlib import Path
 
@@ -14,6 +15,29 @@ from contracts.retrieval import (
     VectorRecord, VectorWriter,
     corpus_fingerprint, validate_vector,
 )
+
+
+def _validate_reader_ids(reader: IndexReader, out_dir: Path) -> None:
+    """Check external-ID uniqueness without retaining an O(N) Python set."""
+
+    path = out_dir / ".vector-ids.sqlite"
+    path.unlink(missing_ok=True)
+    database = sqlite3.connect(path)
+    try:
+        database.execute("CREATE TABLE ids(doc_id TEXT PRIMARY KEY) WITHOUT ROWID")
+        for docid in range(reader.n_docs):
+            doc_id = reader.doc(docid).doc_id
+            try:
+                database.execute("INSERT INTO ids(doc_id) VALUES (?)", (doc_id,))
+            except sqlite3.IntegrityError as error:
+                raise ValueError("doc_id 不唯一") from error
+        database.commit()
+    finally:
+        database.close()
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def build_vectors(reader: IndexReader, encoder: TextEncoder, writer: VectorWriter,
@@ -37,9 +61,8 @@ def build_vectors(reader: IndexReader, encoder: TextEncoder, writer: VectorWrite
         json.dumps(dict(index_params or {}), sort_keys=True)
     except (TypeError, ValueError) as error:
         raise ValueError("index_params 必须可 JSON 序列化") from error
-    ids = [reader.doc(i).doc_id for i in range(reader.n_docs)]
-    if len(ids) != len(set(ids)):
-        raise ValueError("doc_id 不唯一")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    _validate_reader_ids(reader, out_dir)
     manifest = VectorManifest(
         corpus_sha256=corpus_fingerprint(reader), n_docs=reader.n_docs,
         embedding=encoder.spec, collection=collection, backend=backend,
@@ -59,7 +82,6 @@ def build_vectors(reader: IndexReader, encoder: TextEncoder, writer: VectorWrite
                 consumed += 1
                 yield VectorRecord(doc.docid, doc.doc_id, tuple(vector))
 
-    out_dir.mkdir(parents=True, exist_ok=True)
     replace_returned = False
     published = None
     try:
@@ -119,7 +141,11 @@ class QdrantSnapshotWriter:
             raise RuntimeError("QdrantSnapshotWriter 需要安装 qdrant-client") from error
         client = QdrantClient(url=self.url, timeout=self.timeout)
         created = False
-        seen_doc_ids = set()
+        self.snapshot_dir.mkdir(parents=True, exist_ok=True)
+        identity_path = self.snapshot_dir / ".qdrant-doc-ids.sqlite"
+        identity_path.unlink(missing_ok=True)
+        identity_db = sqlite3.connect(identity_path)
+        identity_db.execute("CREATE TABLE ids(doc_id TEXT PRIMARY KEY) WITHOUT ROWID")
         count = 0
         batch = []
 
@@ -160,15 +186,20 @@ class QdrantSnapshotWriter:
                 validate_vector(record.vector, manifest.embedding)
                 if type(record.docid) is not int or record.docid != count:
                     raise ValueError("Qdrant point id 必须按 0..n_docs-1 顺序提供")
-                if (not isinstance(record.doc_id, str) or not record.doc_id
-                        or record.doc_id in seen_doc_ids):
+                if not isinstance(record.doc_id, str) or not record.doc_id:
                     raise ValueError("外部 doc_id 必须非空且唯一")
-                seen_doc_ids.add(record.doc_id)
+                try:
+                    identity_db.execute("INSERT INTO ids(doc_id) VALUES (?)", (record.doc_id,))
+                except sqlite3.IntegrityError as error:
+                    raise ValueError("外部 doc_id 必须非空且唯一") from error
                 batch.append(record)
                 count += 1
+                if count % 10000 == 0:
+                    identity_db.commit()
                 if len(batch) >= self.batch_size:
                     flush()
             flush()
+            identity_db.commit()
             if count != manifest.n_docs:
                 raise ValueError("向量记录数与 manifest 不符")
             info = client.get_collection(manifest.collection)
@@ -179,8 +210,13 @@ class QdrantSnapshotWriter:
             exact_count = client.count(collection_name=manifest.collection, exact=True).count
             if type(exact_count) is not int or exact_count != manifest.n_docs:
                 raise ValueError(f"Qdrant 点数不符: {exact_count} != {manifest.n_docs}")
-            return self._download_snapshot(client, manifest)
+            published = self._download_snapshot(client, manifest)
+            identity_db.close()
+            identity_path.unlink(missing_ok=True)
+            return published
         except Exception:
+            identity_db.close()
+            identity_path.unlink(missing_ok=True)
             delete = getattr(client, "delete_collection", None)
             if created and callable(delete):
                 try:

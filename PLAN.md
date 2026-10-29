@@ -13,12 +13,12 @@
 
 ## 当前 TODO / 状态（2026-10-29）
 
-- [x] **代码与契约闸门**：A1 staging/原子发布、严格文件 SHA256、双索引指纹对齐、Qdrant 批量消费/精确计数/失败清理、快照 `.part` 发布、provenance/report 和 `offline.validate` 已在 PR #8 提交；本地 `python tests/run.py` 54/54、evaluation 22/22、Web 5/5。
-- [x] **分工澄清**：PR #8 与 PR #7 互补；PR #7 的 streaming/compact/packed/BGE 成果不在本分支重复实现。RFC-0002 负责爬虫/清洗/qrels，RFC-0003 负责在线接线，RFC-0001 负责 Router 研究。
+- [x] **代码与契约闸门**：A1 staging/原子发布、严格文件 SHA256、双索引指纹对齐、Qdrant 批量消费/精确计数/失败清理、快照 `.part` 发布、provenance/report 和 `offline.validate` 已在 PR #8 提交；本地 `python tests/run.py` 56/56、evaluation 27/27、Web 5/5。
+- [x] **分工澄清**：RFC-0002 负责爬虫/清洗/qrels，RFC-0003 负责在线接线，RFC-0001 负责 Router 研究；本分支已审计并纳入独立的 stream/compact/packed/BGE 支持，但不把它们写成 8M 验收结果。
 - [x] **真实小批闭环（集群）**：已在 A800 上完成固定 BGE revision 的 CUDA 编码；仓库自身 Qdrant writer 使用 1.16.0 server/client 完成真实 collection、metadata、snapshot、独立干净实例恢复和 `QdrantVectorIndex` 只读验收。完整规模成本表和 8M 构建仍单独保留为后续项。
 - [ ] **数据冻结（RFC-0002 协作）**：分别登记批准的 DuReader 版本与团队自爬 20k 语料、来源、统计、ID 清单和 SHA256；不把公开归档或前缀冒充课程目标规模。
 - [~] **自爬测试集**：已将有界 `evaluation.crawl_web` 工作流移入本分支，并完成 gov.cn 30 篇候选抓取；随后在同域 depth=2 边界下实际得到 393 篇、10 查询/100 候选池和 provisional 启发式建议。仍需组员独立人工复核，并找到合法且可复现的来源扩展到确认后的 20k 有效文档。
-- [ ] **规模构建**：PR #7 的 streaming/SQLite/compact 路线已完成只读审计但尚未集成到本分支；其 O(N) lengths/ids/Qdrant identity 结构和 8M 峰值 RSS、磁盘、吞吐、快照都未实测，旧 v1 内存 builder 不得直接宣称支持 8M。
+- [ ] **规模构建**：已纳入 SQLite 支持的 `offline.stream_build`、compact/packed reader、DiskDocuments 和临时 SQLite ID 校验；旧 v1 内存 builder 仍保留兼容性，8M 峰值 RSS、磁盘、吞吐、快照和 HNSW 仍未实测，不能直接宣称支持 8M。
 - [~] **四组前缀烟雾实验**：已在官方 dev corpus 的 20k 固定前缀上冻结 Router、candidate pool、RRF、模型和截断规则，并在独立 9-query test split 上运行 lexical/dense/hybrid/adaptive，保存指标、延迟、vector success/fallback 和 TREC runs；这不是课程全量正式成绩。
 - [~] **不确定性与交付**：已用 `evaluation.compare` 对 lexical→hybrid 和 lexical→adaptive 做 10,000 次 paired bootstrap，并保留资源/模型/Qdrant 限制；真实 Qdrant server 小批恢复收据已补齐，团队自爬测试集、全量成本表和 8M/HNSW 正式验收仍待补齐。
 
