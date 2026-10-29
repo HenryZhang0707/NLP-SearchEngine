@@ -34,6 +34,13 @@ recorded in `evaluation/RESOURCES.md`. This is evidence that the staged path is
 usable on a small external corpus; it is not an 8M peak-RSS, disk, throughput,
 or Qdrant HNSW receipt.
 
+The depth-4 corpus was then merged by URL with 108 pages fetched from the
+site's public sitemap batch, producing 1,137 documents. The merged stream build
+completed in 74.19 seconds with average document length 2,797.2; compact
+conversion completed in 13.97 seconds with 186,263 terms. The merged manifest
+and compact hash are recorded in `evaluation/RESOURCES.md`. These measurements
+remain bounded engineering smoke evidence, not an 8M resource receipt.
+
 A separate `contracts.conformance.check_reader` attempt against the 1,029-document
 packed artifact exceeded 20 minutes of local CPU time without producing a
 receipt and was stopped. The tiny packed-reader conformance remains green; the

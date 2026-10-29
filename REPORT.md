@@ -75,7 +75,9 @@ python3 -m evaluation.evaluate \
 
 ## 5. 当前限制
 
-默认分词器仍是可解释的 bigram 占位实现；公开 baseline 只有 dev 标注，真实分词对齐、Qdrant HNSW 参数和全量性能数字仍不能从本次前缀烟雾推断。集群上已经完成固定 BGE revision 的 CUDA 编码、20k 前缀上的四模式 HTTP 冒烟和 paired bootstrap；这些四模式结果使用 `memory-exact` 向量读取器，不能解释为 Qdrant HNSW 性能。真实 Qdrant server 的小批 snapshot/clean-restore/read-only 闭环已单独验收，但尚未完成 8M 规模 HNSW 与课程全量成绩。2026-10-29 已将有界 `evaluation.crawl_web` 工作流移入当前分支，并从公开中国政府网抓取 30 篇、depth=2 的 393 篇、depth=3 的 799 篇和 depth=4 的 1,029 篇同域文档；depth=4 批次已生成 10 个查询的 100 条候选池记录和启发式建议，但尚无独立人工确认，因此不能写成正式 qrels 或课程测试集。扩大抓取受站点可达前沿限制，尚未满足 20k 自爬验收。RM3 已作为确定性的本地伪相关反馈扩展接入；SLM 仍需要外部固定模型与离线缓存，返回 501。
+默认分词器仍是可解释的 bigram 占位实现；公开 baseline 只有 dev 标注，真实分词对齐、Qdrant HNSW 参数和全量性能数字仍不能从本次前缀烟雾推断。集群上已经完成固定 BGE revision 的 CUDA 编码、20k 前缀上的四模式 HTTP 冒烟和 paired bootstrap；这些四模式结果使用 `memory-exact` 向量读取器，不能解释为 Qdrant HNSW 性能。真实 Qdrant server 的小批 snapshot/clean-restore/read-only 闭环已单独验收，但尚未完成 8M 规模 HNSW 与课程全量成绩。2026-10-29 已将有界 `evaluation.crawl_web` 工作流移入当前分支，并从公开中国政府网抓取 30 篇、depth=2 的 393 篇、depth=3 的 799 篇和 depth=4 的 1,029 篇同域文档；随后从公开 sitemap 增加 108 篇页面，按 URL 合并为 1,137 篇语料。对 10 个查询的 100 条候选已按用户授权进行 assistant 语义复核并生成正式 qrels，标签来源明确为 assistant，不是独立人工 gold labels。扩大抓取仍未满足 20k 自爬验收。RM3 已作为确定性的本地伪相关反馈扩展接入；SLM 仍需要外部固定模型与离线缓存，返回 501。
+
+在 1,137 篇 assistant-reviewed 语料上，BM25 lexical 的 nDCG@10/Recall@10/MRR@10/MAP@100 为 `0.950197/1.000000/1.000000/0.918422`，RM3 为 `0.945802/0.980000/1.000000/0.916014`。10,000 次 paired bootstrap（seed `20261029`，RM3−lexical）nDCG 差值为 `-0.004394`，95% CI 为 `[-0.020271, 0.008033]`。adaptive 在无向量后端时 5/10 查询发生 fallback；dense 请求按契约返回 503。该结果只用于验证自爬语料上的评测闭环，不代表 20k 或 8M 全规模质量。
 
 ## 6. 2026-10-29 集群验收：路由比较与证据边界
 

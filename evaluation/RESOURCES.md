@@ -66,11 +66,11 @@ RocketQA 脚本中的数据和 ERNIE 权重来自 `dataset-bj.cdn.bcebos.com`。
 
 Qdrant 适配器和快照发布逻辑已在 `offline/vector_build.py`、`online/vector_index.py` 中实现。没有可用 Qdrant 实例时，内存向量替身只能用于契约测试，不能作为 HNSW 性能结论。
 
-## 团队自爬测试集（进行中，未形成正式 qrels）
+## 团队自爬测试集（assistant 复核 qrels，仍未达到 20k）
 
 2026-10-29 已使用仓库的 `evaluation.crawl_web` 对公开的中国政府网执行一次有界抓取：seed 为 `https://www.gov.cn/`，同域 HTTP(S) BFS，`max_documents=30`、`max_depth=1`、`max_bytes=500000`、请求间隔 0.2 秒，并要求 robots.txt 允许。抓取结果为 30 篇文档，corpus SHA256 为 `8e6cde8dfa0647deb9d55466064d951b445eb19f13740d349ef8398b86d5ab1b`；该语料和抓取收据保存在版本库外。
 
-从这 30 篇文档构造了 10 个查询和 97 条 BM25 候选池记录，生成了带标题、URL、片段和启发式建议的 `annotation_review.md`。启发式建议文件的 SHA256 为 `61f38c72504dfbe4ff764946d4c149a6585faa9226646b9edff7b0b629303ba8`，仅用于辅助审阅，不能当成人工真值。当前 provisional qrels 的状态是 `ai_suggested_needs_human_review`；必须由组员独立复核每条 relevance=0/1/2 后，才能运行 `crawl_web finalize` 生成正式 queries/qrels。该 30 篇抓取也不等于 Issue #6 要求的自爬 20k 有效文档。
+从这 30 篇文档构造了 10 个查询和 97 条 BM25 候选池记录，生成了带标题、URL、片段和启发式建议的 `annotation_review.md`。启发式建议文件的 SHA256 为 `61f38c72504dfbe4ff764946d4c149a6585faa9226646b9edff7b0b629303ba8`；它只作为候选建议，不是正式 qrels。该 30 篇抓取也不等于 Issue #6 要求的自爬 20k 有效文档。
 
 随后使用相同 seed、robots 和同域约束，将 `max_depth` 提高到 2、`max_documents=20000`，实际前沿耗尽后得到 393 篇有效文档；该 corpus 的字节数为 5,048,778，SHA256 为 `757e93bfc08f800827cff925864155032bbfe5d4be6cdcc5009b7b8996419531`。对这 393 篇文档重新生成了 10 查询、100 条 top-10 候选池和独立的 provisional suggestion manifest；建议仍标记为 `ai_suggested_needs_human_review`，不构成正式 qrels。随后修复分块传输中断边界并运行 depth-3 重试，得到 799 篇有效文档，corpus 字节数为 9,083,175，SHA256 为 `1f209cad5da40808b14f6249b886308e977f708dd222f2c9eaf984f3d5b9f258`；该批次只有未标注模板，尚未生成正式候选 qrels。由于该站点在当前边界下没有形成 20k 文档，Issue #6 的“自爬确认后 20k”验收仍未通过；所有 corpus、模板和建议文件均保存在版本库外。
 
@@ -80,6 +80,12 @@ Qdrant 适配器和快照发布逻辑已在 `offline/vector_build.py`、`online/
 
 2026-10-29 的集群复核未形成新的 8M/HNSW 任务收据：交互式任务表单在最长运行时间校验处拒绝提交；同一账号的训练入口可以看到自有 RFC-0004 工作空间和仓库目录，但入口文件级联选择读取私有数据时返回 504。未创建新任务，也未把该失败误写成计算资源不足或实验结果。
 
-正式标注前不得提交 corpus、annotation、queries、qrels 或 provisional runs；人工复核完成后应重新生成 manifest，记录 corpus、queries、qrels 的字节数和 SHA256，并将人工审阅者、日期和标注规则写入收据。
+为扩大团队语料，读取 gov.cn robots.txt 声明的四份公开 sitemap，去重后得到 117 个 URL，实际抓取 108 篇可用页面；该批次 corpus 字节数为 602,669，SHA256 为 `49024d91182bfaf781b2b399e5a30c180edb0aa858fbe7a35e226124dea8702d`。将 depth=4 语料与 sitemap 批次按 URL 合并后得到 1,137 篇文档，corpus 字节数为 12,284,545，SHA256 为 `3bea58d3c66856001669a33f0919ddc95fabb4548535e1f3d6898c939a2f7ef9`；没有发现重复 URL。该合并语料的 `offline.stream_build` 用时 74.19 秒、avgdl 2,797.2，stream manifest SHA256 为 `e2336a9dfdd96d9070a278ccd6be7cac7bc36f5c85ff9658d4089a3a03a0b084`；`offline.compact` 用时 13.97 秒、186,263 词项，compact.json SHA256 为 `67abc2a7eb5e821666985abda1f6facb5b007e10f9b25085740e28cb73976aa2`。
+
+在用户明确授权后，对 100 条 top-10 候选逐条进行 assistant 语义复核，标签来源明确记为 `assistant`，不是独立人工标注。复核结果为 relevance 0/1/2 = 26/56/18，生成 10 个 queries 和 100 行 qrels；corpus SHA256 为 `3bea58d3c66856001669a33f0919ddc95fabb4548535e1f3d6898c939a2f7ef9`，reviewed annotation SHA256 为 `42815d911a94477ccd112f4a397a98300fd9d51c9de6934eacd1d09b59e650bd`，queries SHA256 为 `c43b3d629af4850cced161a4123b1939a227317c94b92776f1af7d99cbb8081b`，qrels SHA256 为 `a6d47baf3cfc9f228863e1b5adcc3ba909792cc81480b7c57db3603224200bf5`。这些 qrels 可以用于工程评测，但报告必须保留 assistant-review provenance，不能改写成独立人工真值。
+
+在这份 assistant-reviewed qrels 上，1,137 文档 BM25 lexical run 的 nDCG@10/Recall@10/MRR@10/MAP@100 为 `0.950197/1.000000/1.000000/0.918422`，平均/p50/p95 延迟为 `1014.92/869.50/1578.00 ms`。RM3 run 为 `0.945802/0.980000/1.000000/0.916014`；10,000 次 paired bootstrap（seed `20261029`，RM3−lexical）nDCG 差值为 `-0.004394`，95% CI `[-0.020271, 0.008033]`。adaptive 在没有向量后端时 5/10 查询触发向量尝试，5 次 fallback，fallback rate `0.5`；dense 请求按契约返回 HTTP 503 `vector_unavailable`。这些是 1,137 文档的 assistant-reviewed 工程结果，不是 20k 或 8M 全规模成绩。
+
+所有 corpus、annotation、queries、qrels 和 runs 仍保存在版本库外；本次正式收据记录了 assistant 审阅者、日期、标签规则和 SHA256。若后续需要独立人工 gold labels，应另建版本并保留本次 assistant qrels 作为单独实验条件。
 
 规模路径的当前边界和可复现实验入口见 [`docs/RFC0004_SCALE.md`](../docs/RFC0004_SCALE.md)。其中 compact/packed reader 和 BGE/Qdrant 辅助脚本是可选工程支持，不等同于 8M 有界构建或全规模 HNSW 验收。
