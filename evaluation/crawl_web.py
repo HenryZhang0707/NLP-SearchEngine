@@ -22,6 +22,7 @@ Examples::
 from __future__ import annotations
 
 import argparse
+from http.client import HTTPException
 import json
 import re
 import sys
@@ -178,7 +179,7 @@ def _read_url(url: str, config: CrawlConfig) -> tuple[str, str]:
             if total > config.max_bytes:
                 raise CrawlError(f"响应超过 max_bytes: {url}")
             charset = response.headers.get_content_charset() or "utf-8"
-    except (HTTPError, URLError, TimeoutError, OSError) as error:
+    except (HTTPError, URLError, HTTPException, TimeoutError, OSError) as error:
         raise CrawlError(f"抓取失败 {url}: {error}") from error
     try:
         return content_type, b"".join(chunks).decode(charset, errors="replace")
@@ -196,7 +197,7 @@ def _robots_checker(config: CrawlConfig) -> Callable[[str], bool]:
             parser = RobotFileParser(f"{origin}/robots.txt")
             try:
                 parser.read()
-            except (HTTPError, URLError, TimeoutError, OSError):
+            except (HTTPError, URLError, HTTPException, TimeoutError, OSError):
                 cache[origin] = None
             else:
                 cache[origin] = parser

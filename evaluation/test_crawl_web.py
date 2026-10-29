@@ -2,10 +2,13 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+from http.client import IncompleteRead
 
 from evaluation.crawl_web import (
     CrawlConfig,
     CrawlError,
+    _read_url,
     crawl,
     finalize_annotations,
     normalize_url,
@@ -50,6 +53,33 @@ class CrawlWebTests(unittest.TestCase):
             CrawlConfig(max_documents=0)
         with self.assertRaises(CrawlError):
             crawl([], CrawlConfig(delay_seconds=0))
+
+    def test_incomplete_http_response_is_converted_to_crawl_error(self):
+        class BrokenResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def geturl(self):
+                return "https://example.org/"
+
+            class Headers:
+                def get_content_type(self):
+                    return "text/html"
+
+                def get_content_charset(self):
+                    return "utf-8"
+
+            headers = Headers()
+
+            def read(self, _size):
+                raise IncompleteRead(b"partial", 1)
+
+        with patch("evaluation.crawl_web.urlopen", return_value=BrokenResponse()):
+            with self.assertRaises(CrawlError):
+                _read_url("https://example.org/", CrawlConfig(delay_seconds=0))
 
     def test_annotation_template_and_finalization_require_human_positive_labels(self):
         with tempfile.TemporaryDirectory() as tmp:

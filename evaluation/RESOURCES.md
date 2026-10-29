@@ -72,4 +72,8 @@ Qdrant 适配器和快照发布逻辑已在 `offline/vector_build.py`、`online/
 
 从这 30 篇文档构造了 10 个查询和 97 条 BM25 候选池记录，生成了带标题、URL、片段和启发式建议的 `annotation_review.md`。启发式建议文件的 SHA256 为 `61f38c72504dfbe4ff764946d4c149a6585faa9226646b9edff7b0b629303ba8`，仅用于辅助审阅，不能当成人工真值。当前 provisional qrels 的状态是 `ai_suggested_needs_human_review`；必须由组员独立复核每条 relevance=0/1/2 后，才能运行 `crawl_web finalize` 生成正式 queries/qrels。该 30 篇抓取也不等于 Issue #6 要求的自爬 20k 有效文档。
 
+随后使用相同 seed、robots 和同域约束，将 `max_depth` 提高到 2、`max_documents=20000`，实际前沿耗尽后只得到 393 篇有效文档；该 corpus 的字节数为 5,048,778，SHA256 为 `757e93bfc08f800827cff925864155032bbfe5d4be6cdcc5009b7b8996419531`。对这 393 篇文档重新生成了 10 查询、100 条 top-10 候选池和独立的 provisional suggestion manifest；建议仍标记为 `ai_suggested_needs_human_review`，不构成正式 qrels。一次更深的 depth-3 重试还暴露了分块传输中断边界，爬虫已将 `http.client.HTTPException` 转换为单 URL 可跳过的抓取错误并加入回归测试。由于该站点在当前边界下没有形成 20k 文档，Issue #6 的“自爬确认后 20k”验收仍未通过；393 篇数据和所有标注文件均保存在版本库外。
+
 正式标注前不得提交 corpus、annotation、queries、qrels 或 provisional runs；人工复核完成后应重新生成 manifest，记录 corpus、queries、qrels 的字节数和 SHA256，并将人工审阅者、日期和标注规则写入收据。
+
+规模路径的当前边界和可复现实验入口见 [`docs/RFC0004_SCALE.md`](../docs/RFC0004_SCALE.md)。其中 compact/packed reader 和 BGE/Qdrant 辅助脚本是可选工程支持，不等同于 8M 有界构建或全规模 HNSW 验收。
