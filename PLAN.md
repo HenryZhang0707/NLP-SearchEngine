@@ -19,7 +19,7 @@
 - [ ] **数据冻结（RFC-0002 协作）**：分别登记批准的 DuReader 版本与团队自爬 20k 语料、来源、统计、ID 清单和 SHA256；不把公开归档或前缀冒充课程目标规模。
 - [ ] **规模构建**：先做资源/峰值内存/磁盘预估，再决定采用 PR #7 streaming/SQLite/compact 路线；旧 v1 内存 builder 不得直接宣称支持 8M。
 - [~] **四组前缀烟雾实验**：已在官方 dev corpus 的 20k 固定前缀上冻结 Router、candidate pool、RRF、模型和截断规则，并在独立 9-query test split 上运行 lexical/dense/hybrid/adaptive，保存指标、延迟、vector success/fallback 和 TREC runs；这不是课程全量正式成绩。
-- [~] **不确定性与交付**：已用 `evaluation.compare` 对 lexical→hybrid 和 lexical→adaptive 做 10,000 次 paired bootstrap，并保留资源/模型/Qdrant 限制；完整 Qdrant server 收据、团队自爬测试集和全量成本表仍待补齐。
+- [~] **不确定性与交付**：已用 `evaluation.compare` 对 lexical→hybrid 和 lexical→adaptive 做 10,000 次 paired bootstrap，并保留资源/模型/Qdrant 限制；真实 Qdrant server 小批恢复收据已补齐，团队自爬测试集、全量成本表和 8M/HNSW 正式验收仍待补齐。
 
 本地 Windows 使用 `python`，Linux/集群可使用 `python3`；两者运行同一测试入口。当前仓库没有提交数据集、权重、Qdrant collection、快照或生成索引；本次已记录受限前缀的语义冒烟和 paired bootstrap，但不报告 Qdrant HNSW 性能或全规模结果。运行 `typst compile slides/proposal.typ slides/proposal.pdf` 可更新汇报。
 
