@@ -17,6 +17,8 @@ from evaluation.crawl_web import (
 class CrawlWebTests(unittest.TestCase):
     def test_url_normalization_rejects_credentials_and_fragments(self):
         self.assertEqual(normalize_url("HTTPS://Example.org/a#part"), "https://example.org/a")
+        self.assertEqual(normalize_url("https://例子.org/政策/文件?主题=人工智能"),
+                         "https://xn--fsqu00a.org/%E6%94%BF%E7%AD%96/%E6%96%87%E4%BB%B6?%E4%B8%BB%E9%A2%98=%E4%BA%BA%E5%B7%A5%E6%99%BA%E8%83%BD")
         with self.assertRaises(CrawlError):
             normalize_url("https://user:password@example.org/")
         with self.assertRaises(CrawlError):

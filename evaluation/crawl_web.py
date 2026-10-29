@@ -32,7 +32,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Callable, Iterable, Sequence
 from urllib.error import HTTPError, URLError
-from urllib.parse import urljoin, urlsplit, urlunsplit
+from urllib.parse import quote, urljoin, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 from urllib.robotparser import RobotFileParser
 
@@ -92,14 +92,21 @@ def normalize_url(value: str) -> str:
         port = parts.port
     except ValueError as error:
         raise CrawlError("URL 端口无效") from error
+    try:
+        host = host.encode("idna").decode("ascii")
+    except UnicodeError as error:
+        raise CrawlError("URL 主机名无效") from error
     netloc = host.lower()
     if ":" in host and not host.startswith("["):
         netloc = f"[{netloc}]"
     if port is not None and not ((parts.scheme.lower() == "http" and port == 80)
                                  or (parts.scheme.lower() == "https" and port == 443)):
         netloc += f":{port}"
-    path = parts.path or "/"
-    return urlunsplit((parts.scheme.lower(), netloc, path, parts.query, ""))
+    # ``http.client`` requires an ASCII request target.  Keep URL separators
+    # and existing escapes while percent-encoding Unicode path/query text.
+    path = quote(parts.path or "/", safe="/%:@!$&'()*+,;=-._~")
+    query = quote(parts.query, safe="/%:@!$&'()*+,;=-._~?=&")
+    return urlunsplit((parts.scheme.lower(), netloc, path, query, ""))
 
 
 class _PageParser(HTMLParser):
