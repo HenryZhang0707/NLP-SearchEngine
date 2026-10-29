@@ -14,13 +14,15 @@
 - [x] 执行一次可审计的公开站点抓取：gov.cn、30 篇文档、10 个查询候选池、97 条 provisional 建议；收据、文件哈希和审阅模板均保存在版本库外。
 - [x] 复跑同域 depth=2 的扩大抓取并记录实际结果：393 篇有效文档、corpus SHA256 `757e93bfc08f800827cff925864155032bbfe5d4be6cdcc5009b7b8996419531`、10 查询/100 条 provisional 候选；未把请求上限误报为实际文档数。
 - [x] 修复 HTTP 分块传输中断并完成 depth=3 重试：799 篇有效文档、corpus SHA256 `1f209cad5da40808b14f6249b886308e977f708dd222f2c9eaf984f3d5b9f258`；仍只有未标注模板，未形成正式 qrels。
+- [x] 完成 depth=4 有界重试：1,029 篇有效文档、corpus SHA256 `463ac4eff4fdc22047da362fdc22d47f0be6bf09c1587c3c8ba318b9e8164ff3`；生成 10 查询/100 条 provisional 候选和人工复核表，仍未形成正式 qrels。
+- [x] 用 SQLite 流式构建器和 compact reader 对 depth=4 的 1,029 篇语料完成规模路径冒烟；stream/compact 产物保存在版本库外，不能外推为 8M 验收。
 
 ## NEXT（需要继续做，但不应伪造结果）
 
 - [ ] 用课程实际提供的、可追溯的 100001/2000/9839 版本执行 `prepare_dataset`，固定 dev/test ID 清单、哈希和数据分割；若仍拿不到，报告中保留阻塞证据。
 - [ ] 在 dev 上冻结 Router 阈值、candidate pool、RRF `c` 和模型配置，再在独立 test 上运行 lexical、dense、固定 hybrid、adaptive 四组；逐查询保存 TREC run、路由原因分布、向量触发/成功/fallback、平均/p50/p95 延迟。
 - [ ] 用 `evaluation.compare` 至少完成 fixed-hybrid vs adaptive 的 paired bootstrap，并在报告中给出 query-level 差值和区间；不要在 test 上挑阈值。
-- [~] 选择允许抓取的公开站点并运行 `crawl_web crawl` 已完成 30 篇和 393 篇候选批次；当前启发式标签仍待组员人工复核，且 gov.cn 当前边界只形成 393 篇，之后需找到来源扩展到 20k 有效文档并重新生成正式 qrels。未完成人工标注前不得把 provisional 文件当评测集。
+- [~] 选择允许抓取的公开站点并运行 `crawl_web crawl` 已完成 30/393/799/1,029 篇候选批次；当前启发式标签仍待组员人工复核，且 gov.cn 当前边界只形成 1,029 篇，之后需找到来源扩展到 20k 有效文档并重新生成正式 qrels。未完成人工标注前不得把 provisional 文件当评测集。
 - [ ] 将经过人工确认的自爬 20k corpus、queries、qrels 和 manifest 接入统一双索引构建；保留来源、ID、计数和 SHA256。
 - [x] 纳入 SQLite 支持的 `offline.stream_build`、compact/packed reader、DiskDocuments 和临时 SQLite ID 校验，并以 tiny corpus conformance 验证；仍需进行 8M 预检、全量构建、峰值 RSS/磁盘/吞吐和快照收据。
 - [ ] 若要声称 HNSW 或 Qdrant 服务性能，必须另行启动可复现的 HTTP Qdrant 服务并记录版本、索引参数、快照哈希和失败率；local exact smoke 不替代这项验收。
@@ -31,6 +33,7 @@
 - 官方公开 baseline 只有 dev 标注，课程目标快照和 test labels 尚未被公开资源证明存在；不能把 dev 或 prefix smoke 改名为 test/full-scale。
 - 本地电脑没有 NVIDIA GPU；真实 embedding/Qdrant 的集群运行产物不提交仓库，且不代表全量语义质量。
 - 网络爬取只负责构造候选 corpus；相关性 qrels 必须有人审阅。脚本不会从网页标题自动制造“真值”。
+- 集群交互式任务表单已确认存在 A800 配额，但当前提交动作被“最长运行时间 <= 0日6时0分”的表单校验拦截，任务列表仍显示 0 个交互式运行应用；在平台校验修复或提供可用任务入口前，不记录 8M/HNSW 任务已启动。
 
 ## 固定验证入口
 

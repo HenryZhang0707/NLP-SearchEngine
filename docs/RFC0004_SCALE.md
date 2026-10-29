@@ -26,6 +26,14 @@ corpus or the 8M-document build has completed.
 The compact reader and the preparation/vector helper pass the tiny-corpus
 conformance regression in `tests/test_scale_support.py` on Windows.
 
+As an external, non-versioned smoke receipt, the same path was run on the
+1,029-document depth-4 government-web crawl: `stream_build` completed in
+66.69 seconds with average document length 2,945.7, and `compact` completed in
+15.22 seconds with 178,504 terms. The resulting manifests and their hashes are
+recorded in `evaluation/RESOURCES.md`. This is evidence that the staged path is
+usable on a small external corpus; it is not an 8M peak-RSS, disk, throughput,
+or Qdrant HNSW receipt.
+
 ## Remaining production gate
 
 The legacy `offline.build` path still materializes the conformance oracle in

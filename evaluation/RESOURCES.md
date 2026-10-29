@@ -74,6 +74,10 @@ Qdrant 适配器和快照发布逻辑已在 `offline/vector_build.py`、`online/
 
 随后使用相同 seed、robots 和同域约束，将 `max_depth` 提高到 2、`max_documents=20000`，实际前沿耗尽后得到 393 篇有效文档；该 corpus 的字节数为 5,048,778，SHA256 为 `757e93bfc08f800827cff925864155032bbfe5d4be6cdcc5009b7b8996419531`。对这 393 篇文档重新生成了 10 查询、100 条 top-10 候选池和独立的 provisional suggestion manifest；建议仍标记为 `ai_suggested_needs_human_review`，不构成正式 qrels。随后修复分块传输中断边界并运行 depth-3 重试，得到 799 篇有效文档，corpus 字节数为 9,083,175，SHA256 为 `1f209cad5da40808b14f6249b886308e977f708dd222f2c9eaf984f3d5b9f258`；该批次只有未标注模板，尚未生成正式候选 qrels。由于该站点在当前边界下没有形成 20k 文档，Issue #6 的“自爬确认后 20k”验收仍未通过；所有 corpus、模板和建议文件均保存在版本库外。
 
+随后运行 depth-4 重试，得到 1,029 篇有效文档；corpus 字节数为 11,681,876，SHA256 为 `463ac4eff4fdc22047da362fdc22d47f0be6bf09c1587c3c8ba318b9e8164ff3`。该批次生成了 10 个查询、100 条 top-10 候选池记录和 `annotation20k-depth4_review.md`；建议文件 SHA256 为 `5400b65c24c1a4e114df67c1cf4e9428621cde92052ec5ebe7bef5ae8beda643`，状态仍为 `ai_suggested_needs_human_review`。它仍不是人工 qrels，也没有达到 20k 有效文档。
+
+对这 1,029 篇外部语料完成了不入库的规模路径冒烟：`offline.stream_build` 生成 1,029 文档、平均文档长度 2,945.7 的 v1 索引，耗时 66.69 秒；`offline.compact` 生成 178,504 词项的 compact-v1 产物，耗时 15.22 秒。stream manifest SHA256 为 `529b7c4576c50e59a20a031ad1e46b8d382e5455cc55a5be5f11782185574e10`，compact manifest SHA256 为 `06c71823b174f2b85ff5200eed96bfa8e0d90494ac5c7cee617bbe223fa00c07`。这些是 1,029 文档工程证据，不能外推为 8M 峰值 RSS、磁盘、吞吐或 Qdrant HNSW 性能。
+
 正式标注前不得提交 corpus、annotation、queries、qrels 或 provisional runs；人工复核完成后应重新生成 manifest，记录 corpus、queries、qrels 的字节数和 SHA256，并将人工审阅者、日期和标注规则写入收据。
 
 规模路径的当前边界和可复现实验入口见 [`docs/RFC0004_SCALE.md`](../docs/RFC0004_SCALE.md)。其中 compact/packed reader 和 BGE/Qdrant 辅助脚本是可选工程支持，不等同于 8M 有界构建或全规模 HNSW 验收。
