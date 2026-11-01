@@ -1,5 +1,7 @@
 # 首轮结论：不推广当前学习 Router，保留研究与验证框架
 
+CE 成本分配补充结果见 [`docs/contributions/rfc0001-final-router.md`](../contributions/rfc0001-final-router.md) 和 [CE 文献矩阵](CE_COST_AWARE_LITERATURE.md)。该补充把 CE-0/28/40、学习排序器、固定策略和 Router 分开统计；MMarco 仍只作为方法证据。
+
 2026-10-27，独立分支 `codex/rfc0001-bm25-first`。
 本轮达到“交付当前候选的完整研究证据”的目标，**没有达到预先声明的质量—成本改进目标**，也没有完成整个 RFC-0001。
 不修改默认 Router，不向 GitHub 发布本轮研究 PR，不改 RFC-0004 PR #7，不关闭服务器。
@@ -112,4 +114,5 @@ BM25/模型nDCG为0，hybrid为0.4307。只是公开数据集检索判例，不�
 - 审计表/model SHA、所有外层分组覆盖、逐查询指标算术、HTTP请求完整性、无fallback与实验进程退出均通过。
 - JSONL Unicode分隔符缺陷已修复并回归。实验Qdrant/HTTP均已停止，机器未关机。
 
-入口与复现见 README.md；压缩逐查询证据在 `evaluation/bm25_evidence/`，原始大数据/权重/索引仍不提交Git。
+入口与复现见 README.md；仓库只保留汇总指标、协议和哈希清单。压缩逐查询证据已从 PR
+移除，原始大数据/权重/索引及逐查询记录从本地 artifacts 或外部存储获取。

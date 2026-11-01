@@ -78,8 +78,9 @@ python3 -m evaluation.round4_router_study \
 
 ## 历史结果及限制
 
-`router_evidence/` 的 JSON/JSONL 是原实验记录；`inventory.json` 标记来源提交及文件校验和。
-`replay_router_evidence` 校验文件并逐查询重算 997 条 dev 的损失、BM25 调用节省和成本节省。
+`router_evidence/` 只保留汇总结果和 `inventory.json` 校验清单。逐查询预测已移出 Git，
+完整回放需要从本地 artifacts 或外部归档取得原始文件；`replay_router_evidence` 会校验
+仓库内摘要并明确报告外部逐查询输入缺失，不会把摘要冒充逐查询复算。
 复算验证记录自洽，不代表在当前拆分分支重新完成训练或端到端检索。
 
 | 历史评估 | dense nDCG@10 | 固定加权 hybrid | 冻结 cascade | BM25 调用节省 |
@@ -99,5 +100,7 @@ Round4 新语料特征在 .01 预算下没有改变外层选择；.002 严格预
 - 冻结模型覆盖线性导出公式及非法输入；全部历史逐查询证据复算通过。
 - 另外以小型人工特征验证 sklearn 训练/导出/加载一致性；不将其作为检索质量实验。
 
-仍需由 RFC-0001 工作补充论文调研、主线 BM25-first 的新特征/训练与独立评测，
+CE 成本分配、固定策略对照和成本感知文献补充见 `docs/contributions/rfc0001-final-router.md`，
+主线仍需在团队离线索引完成后使用自有数据复测。当前 MMarco 结果仅作为方法证据，
+不替代自有数据上的最终验收。
 并和 RFC-0003 协商最终策略扩展接口。没有把概念扩展、单字索引、重排序、UI 或在线读表优化混入这里。

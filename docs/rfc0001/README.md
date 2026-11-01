@@ -8,7 +8,10 @@
 - [8篇文献矩阵](LITERATURE.md)及[source-verification.json](source-verification.json)
 - [至少两份方案卡与选型](PROPOSALS.md)
 - [完整结果、局限与后续](RESULTS.md)
-- 完整逐查询证据：`evaluation/bm25_evidence/`（gzip文本，不含大语料、权重或索引）。
+- [CE 成本感知文献矩阵](CE_COST_AWARE_LITERATURE.md)
+- CE 动作汇总由 `evaluation.study_prebge_ce_ablation` 生成；完整输入从本地 artifacts 获取并按汇总中的 SHA256 校验。
+- 结果摘要和协议：`evaluation/bm25_evidence/`；逐查询 JSONL/JSONL.GZ 不提交 Git，
+  完整证据从本地 artifacts 或外部归档取得并按清单校验。
 
 ## 无模型/数据即可核对
 
