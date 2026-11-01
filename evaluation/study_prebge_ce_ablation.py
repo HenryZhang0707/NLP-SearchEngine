@@ -55,18 +55,31 @@ def _router_rows(path, relevance):
 
 
 def _http_costs(paths):
-    """Use only measured CE action samples; mark them conditional in output."""
-    samples = {"CE-28": [], "CE-40": [], "Router": []}
+    """Summarise measured fixed-policy and Router HTTP runs."""
+    samples = {"CE-28": [], "CE-28 + learned ranker": [],
+               "CE-40": [], "CE-40 + learned ranker": [], "Router": []}
     for path in paths:
+        stem = path.name
+        if "ce28-raw" in stem:
+            target = "CE-28"
+        elif "ce28-learned" in stem:
+            target = "CE-28 + learned ranker"
+        elif "ce40-raw" in stem:
+            target = "CE-40"
+        elif "ce40-learned" in stem:
+            target = "CE-40 + learned ranker"
+        else:
+            target = "Router"
         for row in jsonl_rows(path / "requests.jsonl"):
             route = row.get("research_route") or {}
             pairs = route.get("ce_pairs")
-            if pairs == 28:
-                samples["CE-28"].append(row)
-            elif pairs == 40:
-                samples["CE-40"].append(row)
-            if route.get("action") in ("cheap", "heavy"):
-                samples["Router"].append(row)
+            if target == "Router" and route.get("action") not in ("cheap", "heavy"):
+                continue
+            if target.startswith("CE-28") and pairs != 28:
+                continue
+            if target.startswith("CE-40") and pairs != 40:
+                continue
+            samples[target].append(row)
     result = {}
     for name, rows in samples.items():
         ce = [float(r.get("timings_ms", {}).get("rerank", 0.0)) for r in rows]
@@ -77,7 +90,7 @@ def _http_costs(paths):
             "ce_component_p95_ms": percentile(ce, .95) if ce else None,
             "e2e_p50_ms": percentile(e2e, .5) if e2e else None,
             "e2e_p95_ms": percentile(e2e, .95) if e2e else None,
-            "scope": "measured HTTP action samples; fixed policies are conditional action timings, Router is its full selected-action sample",
+            "scope": "measured HTTP requests from the named fixed-policy or Router run; same index, engine, batch and HTTP harness",
         }
     return result
 
@@ -145,9 +158,7 @@ def run(args):
         "scope": "CE-free control; no CE timing is incurred",
     }
     for alias, target in (("always-cheap", "CE-28"), ("fixed-depth-28", "CE-28"),
-                          ("CE-28 + learned ranker", "CE-28"),
-                          ("always-heavy", "CE-40"), ("fixed-depth-40", "CE-40"),
-                          ("CE-40 + learned ranker", "CE-40")):
+                          ("always-heavy", "CE-40"), ("fixed-depth-40", "CE-40")):
         http_costs[alias] = dict(http_costs[target], scope=http_costs[target]["scope"] + "; ranking variant shares the same CE call")
     report_actions = {}
     groups = np.asarray(data28.groups)

@@ -96,7 +96,9 @@ def run(a):
     harness.NativeLengthRouter = functools.partial(NestedGainPreBGERouter,
                                                    export_path=a.export, model_path=a.reranker_path,
                                                    scorer_batch_size=a.scorer_batch_size,
-                                                   document_token_parity=a.document_token_parity)
+                                                   document_token_parity=a.document_token_parity,
+                                                   force_action=a.force_action,
+                                                   learned_ranker=not a.raw_ce)
     a.study, a.qrels, a.table = bundle, bundle / 'qrels.tsv', bundle / 'table.jsonl'
     a.scorer_batch_size, a.query_graph, a.scorer_graph = a.scorer_batch_size, True, False
     a.fast_support, a.freeze_index_gc = True, True
@@ -104,6 +106,8 @@ def run(a):
     summary = json.loads((a.out / 'summary.json').read_text())
     protocol = summary['protocol']
     protocol['kind'] = 'real-http-audited-nested-preBGE-development-v1'
+    protocol['forced_action'] = a.force_action
+    protocol['learned_ranker'] = not a.raw_ce
     bindings = [source_study / 'study.json', source_study / 'independent-audit.json',
                 dataset / 'dataset.json', a.export / 'summary.json']
     bindings += list((bundle / 'models').glob('*.joblib'))
@@ -146,4 +150,7 @@ if __name__ == '__main__':
     p.add_argument('--quality-replay-all', action='store_true')
     p.add_argument('--scorer-batch-size', type=int, default=20)
     p.add_argument('--document-token-parity', type=Path)
+    p.add_argument('--force-action', choices=('cheap', 'heavy'))
+    p.add_argument('--raw-ce', action='store_true',
+                   help='rank the selected CE pool by raw CE logits without the learned action ranker')
     run(p.parse_args())

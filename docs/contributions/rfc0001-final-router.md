@@ -17,7 +17,7 @@
 
 ## CE 动作消融与成本对照
 
-维护者要求的 CE 方向补充使用同一固定 MMarco 开发协议、同一 equal-RRF hybrid 基线和冻结 BGE-28/BGE-40 logits 完成。汇总脚本是 `evaluation/study_prebge_ce_ablation.py`，结果保存在本地 `artifacts/rfc01/twenty-percent/ce-ablation-r5/summary.json`；逐查询预测和请求记录没有写入仓库。
+维护者要求的 CE 方向补充使用同一固定 MMarco 开发协议、同一 equal-RRF hybrid 基线和冻结 BGE-28/BGE-40 logits 完成。汇总脚本是 `evaluation/study_prebge_ce_ablation.py`，结果保存在本地 `artifacts/rfc01/twenty-percent/ce-ablation-r6/summary.json`；逐查询预测和请求记录没有写入仓库。
 
 | 动作 | nDCG@10 | Recall@10 | 平均 CE pairs | heavy 比例 | nDCG/Recall 配对 CI 下界（相对 CE-0） |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -28,7 +28,9 @@
 | CE-40 + 学习排序器 | 0.83588 | 0.91489 | 40 | 100% | +0.19217 / +0.13535 |
 | Router | 0.83249 | 0.90844 | 33.408 | 45.07% | +0.18854 / +0.12891 |
 
-在声明的固定深度集合中，Router 的 33.408 平均 CE pairs 预算下，质量高于成本不超过该预算的最佳固定策略 CE-28（nDCG +0.00722、Recall +0.00800）。这属于“预算内最佳固定策略”比较，不能夸大为精确同预算 Pareto 最优；Router 低于 CE-40 + 学习排序器的质量，因此同质量成本交点仍需更多预注册深度点确认。HTTP 记录给出的 CE-28/CE-40 条件动作样本 p50/p95 分别为 29.40/32.37 ms 与 40.41/46.75 ms，Router 选中动作样本为 40.11/46.09 ms；对应端到端 p50/p95 为 43.60/49.60、56.90/66.99、55.97/66.31 ms。固定动作的 HTTP 数字是同一运行时下观察到的条件动作样本，不冒充已经完成的全量 always-cheap/always-heavy 独立 HTTP 重放。
+在声明的固定深度集合中，Router 的 33.408 平均 CE pairs 预算下，质量高于成本不超过该预算的最佳固定策略 CE-28（nDCG +0.00722、Recall +0.00800）。这属于“预算内最佳固定策略”比较，不能夸大为精确同预算 Pareto 最优；Router 低于 CE-40 + 学习排序器的质量，因此同质量成本交点仍需更多预注册深度点确认。
+
+四个固定动作和 Router 都在同一真实 HTTP harness 中各执行 48 条查询、3 次重复（每个固定动作 144 次请求；Router 复用同一运行时的 144 条动作请求）。固定 CE-28 原始分数的 CE p50/p95 为 27.82/30.10 ms、端到端为 41.06/44.42 ms；CE-28 + 学习排序器为 28.25/30.40 ms、42.13/46.24 ms；固定 CE-40 原始分数为 40.22/42.82 ms、54.22/58.28 ms；CE-40 + 学习排序器为 39.75/42.42 ms、55.09/59.67 ms；Router 为 40.01/42.79 ms、54.65/59.28 ms。强制动作运行时开关和协议字段位于 `evaluation/runtime_nested_prebge.py` 与 `evaluation/benchmark_nested_prebge_http.py`，独立聚合审计确认这些记录来自同一索引、引擎、批大小和 HTTP harness。
 
 这份结果将固定 CE 收益、学习排序器收益和 Router 的逐查询选择分开归因。MMarco 只作为方法证据，离线索引和自有数据验收仍未替代。
 

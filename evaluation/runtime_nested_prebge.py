@@ -43,7 +43,10 @@ def gain_features(stats, bm25_names, lexical, dense):
 
 class NestedGainPreBGERouter(BGECalibrationRouter):
     def __init__(self, base, backend, study_dir, fold, *, export_path, model_path,
-                 scorer_batch_size=20, document_token_parity=None):
+                 scorer_batch_size=20, document_token_parity=None,
+                 force_action=None, learned_ranker=True):
+        if force_action not in (None, 'cheap', 'heavy'):
+            raise ValueError('force_action must be cheap, heavy, or None')
         self.base, self.reader, self.backend = base, base.reader, backend
         root = Path(study_dir)
         serving = json.loads((root / 'study.json').read_text())
@@ -97,6 +100,8 @@ class NestedGainPreBGERouter(BGECalibrationRouter):
                 raise ValueError('serving model changed: ' + kind)
             loaded[kind] = joblib.load(path)
         self.gate, self.model = loaded['gate'], loaded['action']
+        self.force_action = force_action
+        self.learned_ranker = bool(learned_ranker)
         # Reuse discovered libraries; constructing threadpool_limits on every
         # prediction repeatedly walks loaded shared libraries in the request.
         if not hasattr(backend, 'nested_prebge_threads'):
@@ -108,7 +113,8 @@ class NestedGainPreBGERouter(BGECalibrationRouter):
                              source_study_sha256=protocol['source_study_sha256'], backend=backend.identity,
                              gate_before_ce=True, one_cross_encoder_per_query=True,
                              label_assets_loaded=False, cached_query_predictions=False,
-                             cached_query_vectors=False)
+                             cached_query_vectors=False, force_action=force_action,
+                             learned_ranker=self.learned_ranker)
 
     def search(self, request):
         parsed = parser.parse(request.query)
@@ -139,10 +145,12 @@ class NestedGainPreBGERouter(BGECalibrationRouter):
             with self.threads.limit(limits=1):
                 gain = float(self.gate.predict(gx[None])[0])
             heavy = gain > self.threshold
+            if self.force_action is not None:
+                heavy = self.force_action == 'heavy'
             timings['pre_ce_gate'] = (time.perf_counter() - tick) * 1000
             pool = sorted(ids[:40 if heavy else 28])
             raw_future = None
-            if heavy:
+            if heavy and self.learned_ranker:
                 raw_future = backend.feature_executor.submit(
                     candidate_matrix, request.query, backend.texts, pool, lexical, dense,
                     backend.normalized_texts, backend.feature_extension)
@@ -153,7 +161,7 @@ class NestedGainPreBGERouter(BGECalibrationRouter):
             teacher = np.array(logits)
             normalized = zscore(teacher)
             prediction = normalized
-            if heavy:
+            if heavy and self.learned_ranker:
                 ranks = np.empty(len(pool))
                 ranks[np.argsort(-teacher, kind='stable')] = np.arange(1, len(pool) + 1)
                 extra = np.column_stack((teacher, normalized, 1. / ranks, teacher.max() - teacher))
@@ -184,7 +192,8 @@ class NestedGainPreBGERouter(BGECalibrationRouter):
                         took_ms=(time.perf_counter() - started) * 1000, results=items,
                         parsed=parsed, expanded=[], timings_ms=timings,
                         routing=dict(requested_mode='adaptive', executed_mode='nested-preBGE',
-                                     score_kind='learned-rank', vector_attempted=True, vector_used=True,
+                                     score_kind='learned-rank' if self.learned_ranker and heavy else 'ce-score',
+                                     vector_attempted=True, vector_used=True,
                                      fallback=False, candidate_k=200, policy_version='nested-preBGE-1'),
                         research_route=dict(action='heavy' if heavy else 'cheap', ce_max_length=self.ce_max_length,
                                             ce_pairs=len(pool), fold=self.fold['fold'], gate_before_ce=True,
