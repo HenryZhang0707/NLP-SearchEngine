@@ -100,7 +100,7 @@ Qdrant 适配器和快照发布逻辑已在 `offline/vector_build.py`、`online/
 
 全量 CPU 词法构建使用冻结源码副本和分盘临时库；初次非检查点进程异常终止且旧 SQLite 损坏，原目录完整保留。后续 `checkpoint_build` 使用 WAL/FULL 和输入/代码绑定，正在重新构建；仅实际发布并经数量、哈希、reader 验收后才登记完整交付。可恢复 compact 已在相同真实 10k pilot 上确认六个数据文件字节一致、全部 384,350 词项逻辑行一致和 28 篇 reader 抽样；此次包装脚本验证阶段 API 使用错误后补验通过，但没有保存转换成本，故不填新耗时/RAM。
 
-完整 official-dev 的本地确定性划分固定为 train/dev/local-holdout=172/1020/808 queries（qrels=825/4960/4054），seed `20261028`；冻结文件含全部 query IDs 和 SHA256。它仍来自 official dev，且包括已观察过前缀查询，不是官方 test 或完全盲测。模型、candidate pool、RRF 和规则策略已记录；正式质量运行前另行冻结了 HNSW 建图与搜索配置：m=16、ef_construct=100、full_scan_threshold=0、max_indexing_threads=2、on_disk=true、hnsw_ef=256、exact=false。必须核验服务实际配置、索引状态和快照恢复，参数本身不证明图就绪。
+完整 official-dev 的本地确定性划分固定为 train/dev/local-holdout=172/1020/808 queries（qrels=825/4960/4054），seed `20261028`；冻结文件含全部 query IDs 和 SHA256。它仍来自 official dev，且包括已观察过前缀查询，不是官方 test 或完全盲测。模型、candidate pool、RRF 和规则策略已记录；正式质量运行前另行冻结了 HNSW 建图与搜索配置：m=16、ef_construct=100、full_scan_threshold=10 KiB、max_indexing_threads=2、on_disk=true、hnsw_ef=256、exact=false。必须核验服务实际配置、索引状态和快照恢复，参数本身不证明图就绪。 原冻结的阈值 0 后经官方 1.16.0 二进制实测返回 HTTP 422（REST 最小值 10），故在任何正式质量请求前另存 v2 冻结，不覆盖旧配置；新配置 SHA256 为 `5fc1204abbd52faa5ded5f5dcfb7fd2a643c63163861213822db9644f616c899`。修正依据是接口约束，不是检索结果。
 
 历史 IAB 导航、会话或入口观察不能扩大为“集群不可用”或“配额不足”。本轮非 GUI 内存 API 已核对既有任务、剩余配额、当前工作区节点名单和平台健康信息，并实际完成独立 CPU 任务。集群端重新验证全部 corpus/queries/qrels 的 SHA、字节数及行数，与本地冻结资源一致。既有任务未修改；用户禁止电脑控制访问集群，后续继续仅用 CLI/SSH/API。全量 Qdrant/HNSW 仍未运行。
 
@@ -115,3 +115,13 @@ Qdrant 适配器和快照发布逻辑已在 `offline/vector_build.py`、`online/
 新的自爬版本使用 `evaluation.crawl_articles`，目标为清洗去重后的 20k accepted unique articles，不再以 raw URL 计数。原 raw 采集已停止并完整保留为 superseded 证据（2,015 raw docs）。新版本导入原 frontier 的 11,703 个 URL（seed 文件 SHA256 `69c807888876cba583abe372826e900ac0b90ba561c42bf07128895ebdd85f4a`，全部 depth=0），绑定固定 `news-cn-body-v1` 规则、NFKC/空白精确去重、SimHash64 距离 <=3 且长度比 >=0.9 的近重复政策。原 HTTP bytes 先持久化到 SHA 寻址 gzip，再清洗并记录完整 sidecar；不因检索分数选择文章。只读抽样前五篇的原字节/decoded SHA、正文、标题及全部元数据重算一致；150 篇 snapshot 中未发现满足当前规则的残留近重复。采集仍在进行，抽样不是最终 20k 审核，也未生成新版本 queries/qrels。正文/缓存无再分发授权，均留在 Git 外。
 
 当前代码批次核心 62/62、evaluation 74/74、checkpoint/stream/BGE/文档源/CLI/HNSW 专项 107/107，compile 和 diffcheck 通过，未改动的 Web 代码此前 Node 5/5 通过。规模路径的当前边界和可复现实验入口见 [`docs/RFC0004_SCALE.md`](../docs/RFC0004_SCALE.md)。上述文档源和模型 CPU 收据不替代完整双索引、真实 CUDA/HNSW 与全规模评测验收。
+
+### REST 配置与存储检查的边界
+
+隔离 CPU2 / RAM2GiB / GPU0 检查确认官方 Qdrant `1.16.0`（commit `0d79528705ff04def1b52842f747e5a00ab1e338a`）对 `full_scan_threshold=0` 返回 422，并明确要求至少 10。原始请求/响应收据 SHA256 为 `3c9bf01ad297ad74fe45d3156d85c1f44f625a1ea7fa12f50e055b108bfe5307`。检查脚本原预期 400 因而停在这一负例，不能宣称正向 10、graph readiness 或查询已通过；此前 Python3.10 hash API 不兼容和 JSON 配置未被发现的失败均保留，未把失败收据升级为 PASS。
+
+服务配置文件使用 `.yaml`，并禁止静默退回默认端口/存储；模型加载前仍需单独正向建库核验。私有共享存储被服务识别为 NFS，不能用作此次 Qdrant 数据目录；独占 `/tmp` 的可见类型为 overlay，其 writable backing 尚未证明是物理磁盘，因此不构成 8M 存储容量/耐久性准入。小型协议检查与正式规模存储验收分开，不能把输入配置或空库建成当成 HNSW 图搜索。
+
+后续独立正向流水线已实际通过阈值 10 的 HTTP200 建库、完整 HNSW 配置/metadata、精确 count=0 和 YAML 资源设置继承；该组件回执 SHA256 为 `b7f13044f2844104b2dca05699b578043de7579a5c3f43d4ab1a588cc82d79d5`。语料/模型/版本准入也通过，随后在编码开始前的模型初始化阶段耗尽有界预算：wall 1185.58 秒、进程 CPU 11.84 秒、峰值 RSS 491,229,184 bytes，监督器在 1193.16 秒内清理本次新进程组。最终失败回执 SHA256 为 `42db086184e3ae93ce8cc26084c3c82b00f12ee42900b8dcd78e41809516a334`。尚无完整文档编码、graph counter 或快照恢复成功，不能将正向空库准入改写为完整 HNSW PASS；需要定位初始化/缓存/I/O 等待点，而不是扩大时限或降低模型标准。
+
+独立 10k scratch feasibility 也已尝试：source/prefix/ID、非volatile overlay 和空间检查通过，但 cgroup 内存统计路径不可解析，在启动 builder 之前停止。43.44 秒不作为构建成本，回执 SHA256 为 `37399802366c4ea4986fee7e35cfcff31b0aae564337c5a45d035050e7708b27`。这不是 SQLite/索引或科学结果失败；后续先诊断 namespace/mount 映射，保留资源限额及完整验证，不虚构吞吐。

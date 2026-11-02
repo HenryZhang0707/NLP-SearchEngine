@@ -37,8 +37,10 @@
 - [x] 显式 `--hnsw-ef` 接到 Qdrant `SearchParams(exact=false)`，默认行为兼容，非法/不适用配置在加载前拒绝；当前只证实参数接线，真实图构建、planner 路径、快照恢复和质量尚待验证。
 - [x] 修复 Qdrant writer 只保存 HNSW 参数 metadata、却未将参数传入真实建库请求的缺口；非空参数严格传入并在快照前核对服务实际配置，忽略/错类型/缺字段不发布。默认空配置与旧客户端替身保持兼容，7 项专项回归通过。
 - [x] 修复向量产物归属保护：SQLite 使用独占临时目录，snapshot/manifest 以不覆盖既有目标的 hard link 发布，拒绝跨平台非法快照文件名与截断下载；Qdrant 创建冲突、超时或显式拒绝不触发删除，已确认本次创建后才清理。15 项专项通过；不支持 hard link 的文件系统安全拒绝发布。
+- [x] 真实官方 Qdrant 1.16 REST 负例确认阈值 0 被 422 拒绝；校验器/CLI 提前拦截 ef_construct<4、full_scan_threshold<10，质量运行前另存阈值10的新冻结配置并保留旧值。正向建库、图/恢复仍待独立验收；私有NFS不作Qdrant数据目录，overlay backing未证明时不计全量存储准入。
 - [x] 固定 BGE 的真实 CPU 数值准入通过：Torch2.3.0 / Transformers4.46.3，FP32、CLS、right/512、长短文本、padding、两共享实例及重复编码；最大绝对差 `1.7753e-7 < 1e-5`，峰值 RSS 743,702,528 bytes，全部 dependency/model/source hashes 保留。它不是语义质量评测。
-- [~] 为 4090 / 2080Ti 各提交一个隔离的同版 2,048 文档 CUDA 数值/吞吐 pilot（每任务 1 GPU / 4 CPU / 8 GiB）；提交已确认，最新 pod 仍为 Pending、无已启动容器，平台同时显示 Scheduled/Failed，尚无 inference 收据。保留任务句柄，只读检查调度事件，不重复提交或影响已有任务；通过 frozen tolerance 后再决定全量分片/缓存。提交或 CPU PASS 不等于 GPU PASS。
+- [~] 为 4090 / 2080Ti 各提交一个隔离的同版 2,048 文档 CUDA 数值/吞吐 pilot（每任务 1 GPU / 4 CPU / 8 GiB）；提交已确认；4090 最新仍显示 Scheduled/Failed 且保留 1 个 pod，2080Ti 显示 Scheduled/Transited、pod=0，目录只有提交输入，没有 inference 收据。保留任务句柄，只读检查调度事件，不重复提交或影响已有任务；通过 frozen tolerance 后再决定全量分片/缓存。提交或 CPU PASS 不等于 GPU PASS。
+- [~] 真实 2,048 文档 HNSW 流水线的正向空库配置/metadata/精确 count=0、模型/依赖/source/prefix 准入已通过；模型初始化未进入 encoding RUNNING 即触发 1200s 内有界停止（CPU11.84s/RSS491MB），完整编码/图/恢复仍未通过。单独10k scratch试验在builder启动前因cgroup路径不可解析停止；两条先做只读stage/stack/cache和挂载诊断，不延长时限、不降低验收、不覆盖失败。
 - [x] 预检完整 2,000 queries 无语法错误，其中 3 条显式约束预期被 dense 契约拒绝；新增默认严格、query SHA 绑定的显式 expected-unsupported policy 和可追溯请求日志，保留全部查询的指标分母、单列覆盖率和失败延迟，意外错误仍中止。正式 policy 留在 Git 外，尚未运行正式质量请求。
 - [x] 规模恢复/清洗批次已集中提交 `4e8ed60`、仅推送 fork，更新现有 PR #8 / Issue #6；后续文档源/HNSW 接线及完整规模结果继续积累，不为状态变化单独建 PR。
 

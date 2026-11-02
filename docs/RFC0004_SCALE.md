@@ -264,6 +264,30 @@ success response can therefore leave an unpublished collection for inspection;
 unknown ownership is preserved rather than inferred. Fifteen targeted
 regressions cover these filesystem and remote-creation boundaries.
 
+## Real REST validation correction
+
+The official Qdrant 1.16.0 binary rejected `full_scan_threshold=0` with HTTP422,
+requiring at least 10 KiB. Its REST `HnswConfigDiff` also requires
+`ef_construct>=4`; these limits differ from the lower-level core config. The
+writer and CLI now enforce them before remote creation or model loading. The
+old frozen recipe is preserved and explicitly superseded by a 10-KiB recipe
+before formal quality requests; no retrieval result informed this correction.
+The negative probe stopped because it had expected HTTP400; its positive
+case and graph behavior were not executed. A subsequent independent pipeline
+verified real HTTP200 creation at10KiB, metadata, exact zero count and YAML
+inheritance before model loading. Its identity gates also passed, but model
+initialization then exhausted the bounded budget (1185.58s wall,11.84s CPU);
+encoding, graph search and clean restore remain unverified. The supervisor
+cleaned only its new process group within1193.16s. A separate10k full-builder
+probe stopped before its worker because cgroup accounting paths were unresolved;
+its43.44s is not build-throughput evidence.
+
+The shared private filesystem was detected as NFS. Qdrant data must use an
+isolated supported runtime filesystem. Container `/tmp` reports overlay; that
+alone does not prove a physical-disk writable backing or admit an 8M build.
+YAML configuration discovery and non-default port/config checks are mandatory;
+a silently ignored JSON config is a failed setup, not an accepted downgrade.
+
 ## Remaining production gate
 
 The current code batch passes core 62/62, evaluation 74/74,

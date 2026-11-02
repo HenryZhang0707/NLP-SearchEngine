@@ -126,10 +126,10 @@ def build_vectors(reader: DocumentSource, encoder: TextEncoder, writer: VectorWr
 
 
 def _validated_hnsw_params(index_params: dict) -> dict:
-    """Validate the supported SDK fields without Pydantic's type coercion."""
+    """Validate supported fields against Qdrant 1.16 REST limits, without coercion."""
     if not isinstance(index_params, dict):
         raise ValueError("Qdrant index_params must be a JSON object")
-    minimums = {"m": 0, "ef_construct": 1, "full_scan_threshold": 0,
+    minimums = {"m": 0, "ef_construct": 4, "full_scan_threshold": 10,
                 "max_indexing_threads": 0}
     for name, value in index_params.items():
         if name == "on_disk":

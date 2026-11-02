@@ -59,6 +59,12 @@ def main(argv=None):
     p.add_argument('--hnsw-max-indexing-threads', type=_nonnegative_int)
     p.add_argument('--hnsw-on-disk', action=argparse.BooleanOptionalAction, default=None)
     args = p.parse_args(argv)
+    # Qdrant 1.16 REST HnswConfigDiff is stricter than its core config.
+    if args.hnsw_ef_construct < 4:
+        p.error('--hnsw-ef-construct must be >= 4 for Qdrant REST')
+    if (args.hnsw_full_scan_threshold_kb is not None
+            and args.hnsw_full_scan_threshold_kb < 10):
+        p.error('--hnsw-full-scan-threshold-kb must be >= 10 for Qdrant REST')
     if args.corpus is not None:
         if args.corpus_sha256 is None or args.corpus_n_docs is None:
             p.error('--corpus requires --corpus-sha256 and --corpus-n-docs')

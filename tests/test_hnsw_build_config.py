@@ -124,7 +124,7 @@ class HnswBuildConfigTests(unittest.TestCase):
         self.writer._download_snapshot.assert_called_once()
 
     def test_partial_parameters_and_zero_auto_values_are_preserved(self):
-        for params in ({'m': 0}, {'ef_construct': 1}, {'full_scan_threshold': 0},
+        for params in ({'m': 0}, {'ef_construct': 4}, {'full_scan_threshold': 10},
                        {'max_indexing_threads': 0}, {'on_disk': False}):
             with self.subTest(params=params):
                 client = _Client()
@@ -135,7 +135,8 @@ class HnswBuildConfigTests(unittest.TestCase):
         invalid = [{'unknown': 1}, {'payload_m': 8}, {'inline_storage': True}]
         for name in ('m', 'ef_construct', 'full_scan_threshold', 'max_indexing_threads'):
             invalid += [{name: value} for value in (True, False, -1, 1.5, '16', None)]
-        invalid += [{'ef_construct': 0}]
+        invalid += [{'ef_construct': value} for value in range(4)]
+        invalid += [{'full_scan_threshold': value} for value in range(10)]
         invalid += [{'on_disk': value} for value in (0, 1, 'true', None)]
         for params in invalid:
             with self.subTest(params=params):

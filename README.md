@@ -153,10 +153,12 @@ python3 scripts/build_vectors.py --corpus /data/corpus.jsonl \
   --corpus-sha256 <64位小写SHA256> --corpus-n-docs <文档数> \
   --out /output/vectors --collection <新的版本化collection> \
   --model-path /path/to/verified-bge-model --device cuda:0 \
-  --hnsw-full-scan-threshold-kb 0 --hnsw-max-indexing-threads 2 --hnsw-on-disk
+  --hnsw-full-scan-threshold-kb 10 --hnsw-max-indexing-threads 2 --hnsw-on-disk
 ```
 
 已有词法产物可继续使用 `--index /path/to/bm25`，两种来源二选一。
+Qdrant 1.16 REST 要求 `ef_construct >= 4`、`full_scan_threshold >= 10 KiB`；
+实际服务对阈值 0 返回 HTTP 422，CLI 在读取数据/加载模型之前拒绝这些无效值。
 建图默认仍为 `--hnsw-m 16 --hnsw-ef-construct 100`；其余可选设置会写入 manifest，
 writer 会核对服务实际配置。现有普通文件或被普通文件阻断的输出路径会在语料扫描及
 模型加载前拒绝。线程数应与实际分配一致；显式参数不替代真实图就绪与快照恢复验收。

@@ -100,10 +100,10 @@ class BuildVectorsCliTests(unittest.TestCase):
                     contextlib.redirect_stdout(io.StringIO()):
                 cli.main(self.common + ['--index', 'index', '--hnsw-m', '24',
                                         '--hnsw-ef-construct', '160',
-                                        '--hnsw-full-scan-threshold-kb', '0',
+                                        '--hnsw-full-scan-threshold-kb', '10',
                                         '--hnsw-max-indexing-threads', '2', disk_flag])
             self.assertEqual(build.call_args.kwargs['index_params'], {
-                'm': 24, 'ef_construct': 160, 'full_scan_threshold': 0,
+                'm': 24, 'ef_construct': 160, 'full_scan_threshold': 10,
                 'max_indexing_threads': 2, 'on_disk': expected})
 
     def test_argument_errors_precede_reader_model_and_writer_initialization(self):
@@ -121,6 +121,9 @@ class BuildVectorsCliTests(unittest.TestCase):
                    ['--index', 'i', '--hnsw-ef-construct', '0'],
                    ['--index', 'i', '--hnsw-full-scan-threshold-kb', '-1'],
                    ['--index', 'i', '--hnsw-max-indexing-threads', '-1']]
+        invalid += [['--index', 'i', '--hnsw-ef-construct', str(value)] for value in range(1, 4)]
+        invalid += [['--index', 'i', '--hnsw-full-scan-threshold-kb', str(value)]
+                    for value in range(10)]
         with patch.object(cli, 'DiskDocuments') as disk, \
                 patch.object(cli, 'CorpusDocuments') as corpus, \
                 patch.object(cli, 'BGEEncoder') as bge, \
