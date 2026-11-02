@@ -49,12 +49,12 @@ class CheckpointCompactTests(unittest.TestCase):
         with closing(sqlite3.connect(self.state_dir / "compact-state.sqlite")) as database:
             return json.loads(database.execute("SELECT value FROM checkpoint WHERE id=1").fetchone()[0])
 
-    def crash(self, event, condition="True"):
+    def crash(self, event, condition="True", checkpoint_terms=1):
         script = """
 import os, sys
 from pathlib import Path
 from offline import checkpoint_compact as c
-c.CHECKPOINT_TERMS = 1
+c.CHECKPOINT_TERMS = int(sys.argv[6])
 c.SCAN_BYTES = 64
 def hook(event, state):
     if event == sys.argv[4] and eval(sys.argv[5]):
@@ -63,7 +63,7 @@ c._hook = hook
 c.compile_checkpoint(Path(sys.argv[1]), Path(sys.argv[2]), state_dir=Path(sys.argv[3]), checkpoint_docs=2)
 """
         result = subprocess.run([sys.executable, "-c", script, str(self.source), str(self.target),
-            str(self.state_dir), event, condition], cwd=ROOT, capture_output=True, timeout=45)
+            str(self.state_dir), event, condition, str(checkpoint_terms)], cwd=ROOT, capture_output=True, timeout=45)
         self.assertEqual(result.returncode, 73, result.stderr.decode(errors="replace"))
 
     def oracle(self):
@@ -179,6 +179,58 @@ c.compile_checkpoint(Path(sys.argv[1]), Path(sys.argv[2]), state_dir=Path(sys.ar
                 self.crash(event)
                 self.assertEqual(self.state()["postings_row"], count)
                 self.compile()
+                self.oracle()
+
+    def test_private_wal_can_checkpoint_at_postings_and_export_commits(self):
+        checkpoints = []
+        connect = sqlite3.connect
+
+        class ObservedConnection(sqlite3.Connection):
+            def commit(database):
+                super().commit()
+                with closing(database.execute("SELECT value FROM checkpoint WHERE id=1")) as cursor:
+                    state = json.loads(cursor.fetchone()[0])
+                if state["status"] in ("POSTINGS", "TERMS_SQLITE") and state["postings_row"]:
+                    try:
+                        result = database.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchone()
+                    except sqlite3.OperationalError as error:
+                        result = str(error)
+                    checkpoints.append((state["status"], state["postings_row"], result))
+
+        def observed_connect(path, *args, **kwargs):
+            if Path(path) == self.state_dir / "compact-state.sqlite":
+                kwargs["factory"] = ObservedConnection
+            database = connect(path, *args, **kwargs)
+            database.execute("PRAGMA wal_autocheckpoint=1")
+            return database
+
+        # Byte checkpoints can occur midway through a fetched page as well.
+        with patch.object(compiler.sqlite3, "connect", side_effect=observed_connect), \
+                patch.object(compiler, "CHECKPOINT_TERMS", 2), patch.object(compiler, "CHECKPOINT_BYTES", 1):
+            self.compile()
+        self.assertGreaterEqual(len(checkpoints), 4)
+        self.assertEqual({status for status, _, _ in checkpoints}, {"POSTINGS", "TERMS_SQLITE"})
+        for status, row, result in checkpoints:
+            with self.subTest(status=status, row=row):
+                self.assertIsInstance(result, tuple, result)
+                self.assertEqual(result[0], 0)
+                self.assertEqual(result[1], result[2], "private WAL is pinned at a durable checkpoint")
+        self.oracle()
+
+    def test_postings_page_boundary_process_death_preserves_all_artifact_bytes(self):
+        reference = self.root / "reference"
+        with patch.object(compiler, "CHECKPOINT_TERMS", 2):
+            compiler.compile_checkpoint(self.source, reference, state_dir=self.root / "reference-state", checkpoint_docs=2)
+        expected = {path.name: path.read_bytes() for path in reference.iterdir()}
+        for event, committed in (("postings_fsynced", 2), ("postings_committed", 4)):
+            with self.subTest(event=event):
+                self.target = self.root / event
+                self.state_dir = self.root / (event + "-state")
+                self.crash(event, "state['postings_row'] == 4", checkpoint_terms=2)
+                self.assertEqual(self.state()["postings_row"], committed)
+                with patch.object(compiler, "CHECKPOINT_TERMS", 2):
+                    self.compile()
+                self.assertEqual(expected, {path.name: path.read_bytes() for path in self.target.iterdir()})
                 self.oracle()
 
     def test_exports_and_publication_windows(self):

@@ -305,16 +305,27 @@ def _postings(database, state, source, stage, lengths):
             _commit(database, state)
             _hook("postings_committed", state)
 
-        for seq, start, size in database.execute("SELECT seq,start,size FROM source_rows WHERE seq>=? ORDER BY seq", (state["postings_row"],)):
-            begin = writer.tell()
-            row = _BoundedRow(stream, start, size)
-            term, df = _term(iter(compact_stream._events(row)), database, lengths, writer, state["last_term"])
-            database.execute("INSERT INTO terms VALUES(?,?,?,?)", (term, begin, writer.tell() - begin, df))
-            state.update(postings_row=seq + 1, last_term=term)
-            if state["postings_row"] - batch_start >= CHECKPOINT_TERMS or writer.tell() - state["postings_bytes"] >= CHECKPOINT_BYTES:
-                save()
-                batch_start = state["postings_row"]
-                database.execute("BEGIN IMMEDIATE")
+        while True:
+            # A live SELECT on this connection pins WAL frames across commits.
+            # Materialize only row boundaries, and close before any output/write.
+            cursor = database.execute("SELECT seq,start,size FROM source_rows WHERE seq>=? ORDER BY seq LIMIT ?",
+                                      (state["postings_row"], CHECKPOINT_TERMS))
+            try:
+                rows = cursor.fetchall()
+            finally:
+                cursor.close()
+            if not rows:
+                break
+            for seq, start, size in rows:
+                begin = writer.tell()
+                row = _BoundedRow(stream, start, size)
+                term, df = _term(iter(compact_stream._events(row)), database, lengths, writer, state["last_term"])
+                database.execute("INSERT INTO terms VALUES(?,?,?,?)", (term, begin, writer.tell() - begin, df))
+                state.update(postings_row=seq + 1, last_term=term)
+                if state["postings_row"] - batch_start >= CHECKPOINT_TERMS or writer.tell() - state["postings_bytes"] >= CHECKPOINT_BYTES:
+                    save()
+                    batch_start = state["postings_row"]
+                    database.execute("BEGIN IMMEDIATE")
         if database.execute("SELECT 1 FROM documents WHERE total<>length LIMIT 1").fetchone():
             raise ValueError("source posting token totals mismatch")
         save("TERMS_SQLITE")
@@ -327,22 +338,30 @@ def _terms_database(database, state, stage):
         out.execute("PRAGMA synchronous=FULL")
         out.execute("CREATE TABLE IF NOT EXISTS terms(term TEXT PRIMARY KEY, start INTEGER, size INTEGER, df INTEGER) WITHOUT ROWID")
         count = 0
-        query = "SELECT * FROM terms"
-        params = ()
-        if state["terms_export_last"] is not None:
-            query += " WHERE term>?"
-            params = (state["terms_export_last"],)
-        for row in database.execute(query + " ORDER BY term", params):
-            out.execute("INSERT OR REPLACE INTO terms VALUES(?,?,?,?)", row)
-            count += 1
-            state["terms_export_last"] = row[0]
-            if count % CHECKPOINT_TERMS == 0:
-                out.commit()
-                with path.open("r+b") as file:
-                    os.fsync(file.fileno())
-                _hook("terms_sqlite_fsynced", state)
-                _commit(database, state)
-                _hook("terms_sqlite_committed", state)
+        while True:
+            query = "SELECT * FROM terms"
+            params = ()
+            if state["terms_export_last"] is not None:
+                query += " WHERE term>?"
+                params = (state["terms_export_last"],)
+            cursor = database.execute(query + " ORDER BY term LIMIT ?", (*params, CHECKPOINT_TERMS))
+            try:
+                rows = cursor.fetchall()
+            finally:
+                cursor.close()
+            if not rows:
+                break
+            for row in rows:
+                out.execute("INSERT OR REPLACE INTO terms VALUES(?,?,?,?)", row)
+                count += 1
+                state["terms_export_last"] = row[0]
+                if count % CHECKPOINT_TERMS == 0:
+                    out.commit()
+                    with path.open("r+b") as file:
+                        os.fsync(file.fileno())
+                    _hook("terms_sqlite_fsynced", state)
+                    _commit(database, state)
+                    _hook("terms_sqlite_committed", state)
         out.commit()
     finally:
         out.close()

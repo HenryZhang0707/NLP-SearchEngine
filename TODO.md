@@ -25,22 +25,24 @@
 - [x] 修复真实语料 `()` 的零 token 兼容问题并保留全部 ID/行序；增加可选事件流 compact、严格源哈希、分盘 SQLite scratch 和专项回归。
 - [x] 完成官方 shard 01 的 10k 资源 pilot 和磁盘补测；结果用于容量预估，未冒充正式评测或全量成本。
 - [~] **RUNNING（本地 CPU）**：首个非检查点 8M 进程已异常终止，旧 journal-OFF DB 已确认损坏并保留。新 `offline.checkpoint_build` 用 WAL/FULL、文件长度/输入 offset 事务检查点恢复全量 lexical；compact、全文件 SHA256、数量、ID/offset/reader 验收仍待完成，启动不算交付。
-- [x] 构建检查点 hard-exit/发布/绑定及首次空库恢复回归通过；完整 official-dev 内部划分已固定为 train/dev/holdout=172/1020/808 queries，并保留来源及已观察过前缀查询的边界；HNSW 建图和显式搜索配置也已在正式质量运行前冻结，实际图就绪仍待验收。
+- [x] 构建检查点 hard-exit/发布/绑定及首次空库恢复回归通过；完整 official-dev 内部划分已固定为 train/dev/holdout=172/1020/808 queries，并保留来源及已观察过前缀查询的边界；HNSW 建图和显式搜索配置也已在正式质量运行前冻结，2,048 文档实际图/恢复已通过独立工程验收，全量仍待验收。
 - [x] 持久 raw 抓取、固定正文清洗、原响应字节缓存、精确/近重复和 sidecar 已实现；原 raw 任务以 2,015 篇状态停止并保留，新 `crawl_articles` 直接以有效唯一文章为目标运行，不复用旧 qrels。前五篇真实 capture/正文/metadata 重算一致，150 篇 snapshot 未发现规则内残留近重复。
-- [~] **RUNNING（本地网络采集）**：继续采集至清洗去重后 20k，冻结 corpus/sidecar/receipt 和 SHA256，再设计 150–300 查询、盲化多系统池化并以明确 assistant provenance 逐条复核。当前运行与抽样不算最终验收。
+- [~] **RUNNING（本地网络采集）**：继续采集至清洗去重后 20k，冻结 corpus/sidecar/receipt 和 SHA256；已从独立正文阅读的 220 个来源中按预冻顺序选出 200 条 assistant 查询草案，并冻结 dev/test=50/150 的 query IDs。仍须绑定全部选中来源的最终正文身份，再做盲化多系统池化及明确 assistant provenance 的标签复核；查询草案不是 qrels 或已测试结果。
 - [x] 可恢复 `checkpoint_compact`、compact 自动 reader 接线及严格元数据校验已实现；相同真实 10k pilot 的六个数据文件字节、384,350 词项逻辑行和 28 篇抽样一致。源码审查发现首次空库启动窗口并补严格恢复；全量 compact 仍须等 lexical 发布。
 - [x] 通过仅驻留内存的非 GUI API 会话核对现有任务和剩余 CPU/RAM/型号配额；新隔离 CPU2/RAM2GiB/GPU0 源码预检在真实 Python3.10.14 / Torch2.3.0 环境通过核心、evaluation、56 项专项及编译，耗时 52.90 秒。未修改已有任务，不使用电脑控制；后续每次提交仍须刷新容量。
 - [x] 集群标准语料原始 SHA/大小/行数重新核验通过；固定模型六个官方文件完成本机下载、集群传输和回下载 SHA 验证。34 个依赖 wheel 经官方 PyPI hash/size 和原生 Linux 依赖闭包核验，离线安装成功；旧缓存缺文件、直接下载超时及安装阶段超时证据均保留。
 - [x] 共享固定 BGE 已通过显式本地路径接入 online server，含 inventory 验证、FP32/CLS/right 和清晰失败路径；无模型接线回归通过。
 - [x] 新增校验原始 SHA/文档数的 `CorpusDocuments`、最小共享 `DocumentSource` 和向量 CLI，允许冻结 corpus 的编码与词法构建并行；有序 fingerprint 算法和公共文件格式不变，输入先于模型校验，含 Windows 文件变化/关闭/并发及真实小语料对齐回归。
 - [x] 实际全扫 8,096,668 行冻结 corpus 的文档源准入通过：108.55 秒、峰值工作集 208.44 MiB，固定首/中/末 ID 可读且 reader 已关闭；未重复全扫。此结果不替代外部 ID 唯一性、完整双索引或语义质量验收。
-- [x] 显式 `--hnsw-ef` 接到 Qdrant `SearchParams(exact=false)`，默认行为兼容，非法/不适用配置在加载前拒绝；当前只证实参数接线，真实图构建、planner 路径、快照恢复和质量尚待验证。
+- [x] 显式 `--hnsw-ef` 接到 Qdrant `SearchParams(exact=false)`，默认行为兼容，非法/不适用配置在加载前拒绝；参数接线和 2,048 文档的真实图/搜索/快照恢复已分别验证；全规模资源与质量仍待验收。
 - [x] 修复 Qdrant writer 只保存 HNSW 参数 metadata、却未将参数传入真实建库请求的缺口；非空参数严格传入并在快照前核对服务实际配置，忽略/错类型/缺字段不发布。默认空配置与旧客户端替身保持兼容，7 项专项回归通过。
 - [x] 修复向量产物归属保护：SQLite 使用独占临时目录，snapshot/manifest 以不覆盖既有目标的 hard link 发布，拒绝跨平台非法快照文件名与截断下载；Qdrant 创建冲突、超时或显式拒绝不触发删除，已确认本次创建后才清理。15 项专项通过；不支持 hard link 的文件系统安全拒绝发布。
-- [x] 真实官方 Qdrant 1.16 REST 负例确认阈值 0 被 422 拒绝；校验器/CLI 提前拦截 ef_construct<4、full_scan_threshold<10，质量运行前另存阈值10的新冻结配置并保留旧值。正向建库、图/恢复仍待独立验收；私有NFS不作Qdrant数据目录，overlay backing未证明时不计全量存储准入。
+- [x] 真实官方 Qdrant 1.16 REST 负例确认阈值 0 被 422 拒绝；校验器/CLI 提前拦截 ef_construct<4、full_scan_threshold<10，质量运行前另存阈值10的新冻结配置并保留旧值。后续独立 2,048 文档正向建库、图搜索和恢复通过；静态 ROOT 实测为 LeoFS，不能把历史 NFS 检查泛化到全部私有存储；`/tmp` overlay backing 未证明，仍不计全量存储准入。
 - [x] 固定 BGE 的真实 CPU 数值准入通过：Torch2.3.0 / Transformers4.46.3，FP32、CLS、right/512、长短文本、padding、两共享实例及重复编码；最大绝对差 `1.7753e-7 < 1e-5`，峰值 RSS 743,702,528 bytes，全部 dependency/model/source hashes 保留。它不是语义质量评测。
-- [~] 为 4090 / 2080Ti 各提交一个隔离的同版 2,048 文档 CUDA 数值/吞吐 pilot（每任务 1 GPU / 4 CPU / 8 GiB）；提交已确认；4090 最新仍显示 Scheduled/Failed 且保留 1 个 pod，2080Ti 显示 Scheduled/Transited、pod=0，目录只有提交输入，没有 inference 收据。保留任务句柄，只读检查调度事件，不重复提交或影响已有任务；通过 frozen tolerance 后再决定全量分片/缓存。提交或 CPU PASS 不等于 GPU PASS。
-- [~] 真实 2,048 文档 HNSW 流水线的正向空库配置/metadata/精确 count=0、模型/依赖/source/prefix 准入已通过；模型初始化未进入 encoding RUNNING 即触发 1200s 内有界停止（CPU11.84s/RSS491MB），完整编码/图/恢复仍未通过。单独10k scratch试验在builder启动前因cgroup路径不可解析停止；两条先做只读stage/stack/cache和挂载诊断，不延长时限、不降低验收、不覆盖失败。
+- [x] 独立 local-cache 2080Ti pilot 实测 1 GPU / 4 CPU / 4 GiB，`GPU_PILOT_PASS`：CPU/GPU 最大绝对差 `1.6391277e-7 < 1e-5`，2,048 篇全文 batch16/32/64 分别为 420.896/404.423/414.533 docs/s，进程峰值 RSS 1,015,775,232 bytes。flat cgroup 路径未证明 exact membership，不用其数值宣称任务峰值。历史 4090/2080Ti 调度任务及失败证据继续保留，不因新 pilot 通过而改动旧任务；此结果不是质量或 8M 吞吐验收。
+- [x] 独立 local-cache 真实 BGE/512/FP32 + Qdrant1.16 的 2,048 文档 HNSW pilot 通过：A/B exact count 均为 2,048、全部非空 segment indexed 且两次稳定观测；各 16 查询的非空 segment HNSW counter +16、plain/exact +0，空 segment 的 plain +16 单列；新进程/空存储恢复后 ANN/exact 各自 IDs、顺序、scores 一致（abs `1e-5`）。快照持久化在静态 ROOT，详见资源收据；历史模型初始化超时保留，未据新通过结果归因旧超时。
+- [x] 原生 10k lexical scratch repair 通过：2 CPU / 2 GiB、核心构建 31.215 秒（320.359 docs/s）、精确进程成员映射的 cgroup 峰值 858,669,056 bytes、无 OOM、两次重开全量 reader 通过；overlay physical backing 仍 UNKNOWN，不是物理 SSD 或全量准入。
+- [~] 原生 100k pilot 的 Unicode13 repair1 已完成 A1 构建与独立校验，但 compact 在原定 4 GiB cgroup 的 90% 门禁停止：进程 RSS 约 46 MB、私有 WAL 约 1.98 GB，无 OOM。已用真实 SQLite 复现同连接长读游标钉住 WAL，并将 compact 两处遍历改为有界分页且提交前关闭游标；旧代码新回归失败、修复后通过，8 个公开产物字节不变。完整同预算原生复验仍待完成，不放宽资源门禁，不登记 100k/full PASS。
 - [x] 预检完整 2,000 queries 无语法错误，其中 3 条显式约束预期被 dense 契约拒绝；新增默认严格、query SHA 绑定的显式 expected-unsupported policy 和可追溯请求日志，保留全部查询的指标分母、单列覆盖率和失败延迟，意外错误仍中止。正式 policy 留在 Git 外，尚未运行正式质量请求。
 - [x] 规模恢复/清洗批次已集中提交 `4e8ed60`、仅推送 fork，更新现有 PR #8 / Issue #6；后续文档源/HNSW 接线及完整规模结果继续积累，不为状态变化单独建 PR。
 
@@ -48,9 +50,9 @@
 - [ ] 在 dev 上冻结 Router 阈值、candidate pool、RRF `c` 和模型配置，再在独立 test 上运行 lexical、dense、固定 hybrid、adaptive 四组；逐查询保存 TREC run、路由原因分布、向量触发/成功/fallback、平均/p50/p95 延迟。
 - [ ] 用 `evaluation.compare` 至少完成 fixed-hybrid vs adaptive 的 paired bootstrap，并在报告中给出 query-level 差值和区间；不要在 test 上挑阈值。
 - [~] 选择允许抓取的公开站点并运行 `crawl_web crawl` 已完成 gov.cn 的 30/393/799/1,029 篇候选批次、sitemap 合并后的 1,137 篇，以及新华网 100 篇跨站点候选；assistant qrels 已按授权生成，但仍需找到来源扩展到 20k 有效文档。若要独立人工 gold labels，必须另行复核，不能把 assistant labels 改称人工真值。
-- [ ] 将经过人工确认的自爬 20k corpus、queries、qrels 和 manifest 接入统一双索引构建；保留来源、ID、计数和 SHA256。
+- [ ] 将最终冻结的自爬 20k corpus、queries、按授权完成 assistant 语义复核的正式工程 qrels 和 manifest 接入统一双索引构建；保留来源、ID、计数和 SHA256。
 - [x] 纳入 SQLite 支持的 `offline.stream_build`、compact/packed reader、DiskDocuments 和临时 SQLite ID 校验，并以 tiny corpus conformance 验证；1,029 文档的 stream/compact 已完成，但全量 packed conformance 在本地超过 20 分钟无收据后停止，仍需进行有界验证、8M 预检、全量构建、峰值 RSS/磁盘/吞吐和快照收据。
-- [ ] 若要声称 HNSW 或 Qdrant 服务性能，必须另行启动可复现的 HTTP Qdrant 服务并记录版本、索引参数、快照哈希和失败率；local exact smoke 不替代这项验收。
+- [ ] 2,048 文档真实 HTTP Qdrant/HNSW 工程准入已通过；若要声称全规模服务性能，仍须记录完整规模的资源/磁盘/吞吐、失败率及四模式质量收据；小批 HNSW 与 local exact smoke 均不替代全规模验收。
 - [ ] 公共站点当前展示的是 tiny lexical 部署；向量模式必须在后端真正提供固定模型和向量库后再宣称可用。部署变更后重新做 `/health`、`/index/info`、四模式和错误路径检查。
 
 ## BLOCKED / 证据边界
@@ -62,7 +64,7 @@
 
 ## 固定验证入口
 
-当前新增代码验证为核心 62/62、evaluation 74/74、checkpoint/stream/BGE/文档源/CLI/HNSW/产物保护专项 107/107，compile 和 diffcheck 通过；此前未变动的 Web 代码已通过 Node 5/5。这些是代码验证；全量文档源和真实 CPU 模型准入已有独立收据，完整双索引与 HNSW 实验仍待完成。
+当前新增代码验证为核心 62/62、evaluation 74/74、checkpoint/stream/BGE/文档源/CLI/HNSW/产物保护专项 109/109，compile 和 diffcheck 通过；此前未变动的 Web 代码已通过 Node 5/5。这些是代码验证；全量文档源、真实 CPU/GPU 模型及小批 HNSW 已有独立工程收据，完整双索引与全规模四模式/paired bootstrap 仍待完成。
 
 ```bash
 python tests/run.py

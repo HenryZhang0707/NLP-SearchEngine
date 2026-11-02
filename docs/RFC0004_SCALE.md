@@ -88,8 +88,8 @@ not establish cluster unavailability or insufficient quota. A memory-only API
 session subsequently authenticated, read existing jobs and remaining CPU/RAM/GPU
 quotas, and submitted an isolated CPU-only source preflight. It passed core,
 evaluation, 56 targeted tests and compilation in 52.90 seconds on Python 3.10.14
-and Torch 2.3.0, using 2 CPUs / 2 GiB host RAM / 0 GPUs. No existing cluster
-task was changed or new GPU job submitted. The user prohibits computer-control
+and Torch 2.3.0, using 2 CPUs / 2 GiB host RAM / 0 GPUs. That preflight changed
+no existing cluster task and submitted no GPU job. The user prohibits computer-control
 access to the cluster because it takes over the keyboard/mouse; further access
 must use non-GUI CLI/SSH/API, with task/resource state verified before submission.
 
@@ -217,8 +217,15 @@ norms range from 0.9999999454 to 1.0000000735. Process peak RSS is 743,702,528 b
 The 211.51-second worker includes 147.69 seconds of offline dependency installation.
 Receipt SHA256:
 `25c9369d437f07265ef2e90a51383dfb1e7f35c55843827d34aa9d984e54ae93`.
-This is a real numerical admission, not retrieval-quality evidence. GPU numerical
-and throughput admission remain separate from CPU success.
+This is a real numerical admission, not retrieval-quality evidence.
+
+An independent local-cache 2080Ti gate now reports `GPU_PILOT_PASS` using
+1 GPU / 4 CPUs / 4 GiB, with largest CPU/GPU absolute difference
+`1.6391277313232422e-7 < 1e-5`. The full-text batch16/32/64 throughput and
+process RSS measurements are in `evaluation/RESOURCES.md`; the flat cgroup path
+has no admitted exact-membership mapping and is not an authoritative job peak.
+Historical GPU tasks and failures remain protected. This bounded numerical and
+throughput gate does not admit an 8M build or retrieval quality.
 
 `scripts/build_vectors.py` also accepts `--corpus` with mandatory
 `--corpus-sha256` and `--corpus-n-docs`, mutually exclusive with `--index`.
@@ -244,7 +251,8 @@ their separate gates.
 
 The serving CLI can pass `--hnsw-ef 256` through to Qdrant's nonexact search
 parameters. This explicit configuration has SDK-double regression coverage;
-actual graph construction and planner behavior still require a real service.
+the independent real-service graph/restore admission below also verifies it
+on a bounded 2,048-document pilot.
 
 ## Vector publication ownership
 
@@ -277,24 +285,61 @@ case and graph behavior were not executed. A subsequent independent pipeline
 verified real HTTP200 creation at10KiB, metadata, exact zero count and YAML
 inheritance before model loading. Its identity gates also passed, but model
 initialization then exhausted the bounded budget (1185.58s wall,11.84s CPU);
-encoding, graph search and clean restore remain unverified. The supervisor
-cleaned only its new process group within1193.16s. A separate10k full-builder
-probe stopped before its worker because cgroup accounting paths were unresolved;
-its43.44s is not build-throughput evidence.
+that historical attempt did not reach encoding, graph search or clean restore.
+The supervisor cleaned only its new process group within1193.16s. Its failure
+receipt remains preserved; subsequent success does not establish its root cause.
 
-The shared private filesystem was detected as NFS. Qdrant data must use an
-isolated supported runtime filesystem. Container `/tmp` reports overlay; that
-alone does not prove a physical-disk writable backing or admit an 8M build.
+An independent local-cache BGE/512/FP32 and Qdrant1.16 pilot now reports
+`REAL_BGE_HNSW_PILOT_PASS`, using 2 CPUs / 4 GiB / 0 GPUs. A before snapshot and
+B after fresh-process/empty-storage restore both have exact count=2,048,
+all nonempty segments indexed, and two stable readiness observations. In each
+16-query ANN window, nonempty segment HNSW counters increase by 16 with
+plain/exact increments of 0; empty-segment plain increments of 16 are recorded separately.
+These counters measure segment searches. ANN uses `hnsw_ef=256`, `exact=false`;
+ANN and exact results each retain their IDs, order and scores across restore
+within absolute tolerance `1e-5`. This is a mechanical restore check, not a
+quality or recall measurement. The 10,060,800-byte snapshot SHA256 is
+`69f84ccf6607cd57a280010af9a2ec900f52b676b6e911e60e0773fed9394d39`;
+the published artifact is in static ROOT and does not rely on a `/tmp` pointer.
+Worker/supervisor times are 656.764/667.318 seconds, `COMPLETE`, exit 0, no timeout.
+Constructor time 314.718 seconds does not localize the historical wait; the
+90.98-second document encoding is CPU engineering throughput for this pilot.
+Receipt hashes and full limits are in `evaluation/RESOURCES.md`; qrels and
+quality evaluation were not used, and 8M/four-mode/paired-bootstrap gates remain.
+
+A separate 10k full-builder probe initially stopped before its worker because
+cgroup accounting paths were unresolved; its 43.44s is not build-throughput
+evidence. The native repair passed using 2 CPUs / 2 GiB, with core build 31.215s
+(320.359 docs/s), exact-process-membership cgroup peak 858,669,056 bytes,
+no OOM and two full reader reopens. This cgroup is not process-exclusive.
+The 100k successor's first attempt failed before build because the wrapper
+incorrectly pinned Unicode14 for Python3.10. The repair strictly pins Unicode13
+per the [official Python3.10 documentation](https://docs.python.org/3.10/library/unicodedata.html);
+the repaired run completed A1 build and independent acceptance, but compact hit
+the unchanged 90% guard on a 4 GiB cgroup. Process RSS was about 46 MB while
+private WAL reached 1.98 GB; no OOM occurred. A live same-connection SELECT
+pinned WAL frames. Bounded keyset pages close that reader before writes/commits
+in both postings and terms export. The new regression fails on the old code
+and passes with the fix; all eight public tiny artifacts are byte-identical,
+including recovery at the tested fsync/commit page boundary. WAL/FULL, save
+ordering, format and validation remain unchanged. Full native100k with the
+same 4 GiB budget remains pending; no full admission is claimed.
+
+The historical NFS check does not describe every private mount: static ROOT
+was subsequently observed as LeoFS. Qdrant runtime data uses isolated storage.
+Container `/tmp` reports overlay with physical backing UNKNOWN; that alone
+does not prove physical SSD, durable storage or admit an 8M build.
 YAML configuration discovery and non-default port/config checks are mandatory;
 a silently ignored JSON config is a failed setup, not an accepted downgrade.
 
 ## Remaining production gate
 
 The current code batch passes core 62/62, evaluation 74/74,
-checkpoint/stream/BGE/document-source/CLI/HNSW/artifact-ownership checks 107/107, Node 5/5,
+checkpoint/stream/BGE/document-source/CLI/HNSW/artifact-ownership checks 109/109, Node 5/5,
 compilation and diff checks.
 Independent final review found no additional blocker. These checks do not
-replace full-index acceptance, the real-model smoke or HNSW experiments.
+replace full-index acceptance or full-scale retrieval-quality experiments;
+real-model CPU/GPU and bounded HNSW/restore gates now have independent receipts.
 
 The legacy `offline.build` path still materializes the conformance oracle in
 memory; use `offline.stream_build` when measuring a large lexical build. The
