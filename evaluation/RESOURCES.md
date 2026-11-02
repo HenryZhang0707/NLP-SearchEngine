@@ -62,7 +62,7 @@ python -m evaluation.prepare_dureader \
 
 为了验证工程闭环，公开的 [C-MTEB 快照镜像](https://github.com/Lsogod/everything-ent-hybrid-rag/tree/main/data/knowledge/datasets) 可在当前网络中取得，但它只有 5000 篇文档、100 条查询和 425 条 qrels。它适合冒烟评测，不能替代课程全量数据；本地实验结果也不能写成提案的最终成绩。
 
-RocketQA 脚本中的数据和 ERNIE 权重来自 `dataset-bj.cdn.bcebos.com`。数据包已完成哈希和结构核验；本次集群已完成 BGE CUDA 编码和受限前缀四模式实验，但模型权重、8M 规模索引和 Qdrant server/HNSW 仍未形成可交付收据。按 [评测说明](README.md) 构建 BM25、向量索引和四组实验时，模型 revision、维度、前缀、截断规则和 Qdrant HNSW 参数必须随实验结果一并记录。
+RocketQA 脚本中的数据和 ERNIE 权重来自 `dataset-bj.cdn.bcebos.com`。数据包已完成哈希和结构核验；本次集群已完成 BGE CUDA 编码和受限前缀四模式实验，后续固定模型文件已完成 SHA 验证及真实 CPU 准入，详见后文；8M 规模双索引和 Qdrant server/HNSW 仍未形成最终交付收据。按 [评测说明](README.md) 构建 BM25、向量索引和四组实验时，模型 revision、维度、前缀、截断规则和 Qdrant HNSW 参数必须随实验结果一并记录。
 
 Qdrant 适配器和快照发布逻辑已在 `offline/vector_build.py`、`online/vector_index.py` 中实现。没有可用 Qdrant 实例时，内存向量替身只能用于契约测试，不能作为 HNSW 性能结论。
 
@@ -100,10 +100,18 @@ Qdrant 适配器和快照发布逻辑已在 `offline/vector_build.py`、`online/
 
 全量 CPU 词法构建使用冻结源码副本和分盘临时库；初次非检查点进程异常终止且旧 SQLite 损坏，原目录完整保留。后续 `checkpoint_build` 使用 WAL/FULL 和输入/代码绑定，正在重新构建；仅实际发布并经数量、哈希、reader 验收后才登记完整交付。可恢复 compact 已在相同真实 10k pilot 上确认六个数据文件字节一致、全部 384,350 词项逻辑行一致和 28 篇 reader 抽样；此次包装脚本验证阶段 API 使用错误后补验通过，但没有保存转换成本，故不填新耗时/RAM。
 
-完整 official-dev 的本地确定性划分固定为 train/dev/local-holdout=172/1020/808 queries（qrels=825/4960/4054），seed `20261028`；冻结文件含全部 query IDs 和 SHA256。它仍来自 official dev，且包括已观察过前缀查询，不是官方 test 或完全盲测。模型、candidate pool、RRF 和规则策略已记录；HNSW 显式 search 参数仍须在完整质量运行前冻结。
+完整 official-dev 的本地确定性划分固定为 train/dev/local-holdout=172/1020/808 queries（qrels=825/4960/4054），seed `20261028`；冻结文件含全部 query IDs 和 SHA256。它仍来自 official dev，且包括已观察过前缀查询，不是官方 test 或完全盲测。模型、candidate pool、RRF 和规则策略已记录；正式质量运行前另行冻结了 HNSW 建图与搜索配置：m=16、ef_construct=100、full_scan_threshold=0、max_indexing_threads=2、on_disk=true、hnsw_ef=256、exact=false。必须核验服务实际配置、索引状态和快照恢复，参数本身不证明图就绪。
 
-本轮 IAB 登录后确认工作区被迫下线，导航/会话失败；另一已授权入口当前返回空响应。先前的 node-service 未就绪、runtime 表单及 504 记录均保留为当时的观察。本地终端对一个入口取得 HTTP 200 且页面标题正常，用户确认自己的浏览器可用；因此不能把上述 IAB/入口观察扩大为“集群不可用”，也没有证据支持“GPU 配额不足”。现已通过不保存凭据的内存 API 会话完成认证、账号资料和 GPU 型号配额读取；任务列表和完整可调度容量仍待核验，未修改已有任务或新提交 GPU 作业。用户明确禁止电脑控制访问集群，以免抢占键鼠；后续仅使用非 GUI CLI/SSH/API 核验。全量 Qdrant/HNSW 仍未运行。
+历史 IAB 导航、会话或入口观察不能扩大为“集群不可用”或“配额不足”。本轮非 GUI 内存 API 已核对既有任务、剩余配额、当前工作区节点名单和平台健康信息，并实际完成独立 CPU 任务。集群端重新验证全部 corpus/queries/qrels 的 SHA、字节数及行数，与本地冻结资源一致。既有任务未修改；用户禁止电脑控制访问集群，后续继续仅用 CLI/SSH/API。全量 Qdrant/HNSW 仍未运行。
+
+独立文档源 `CorpusDocuments` 已实际扫描并解析全 8,096,668 行：108.55 秒、峰值工作集 218,562,560 bytes，原始 SHA/大小/数量匹配，首/中/末固定内部 ID 可读。该验收保留两 uint64 数组，总有效载荷 129,546,688 bytes；外部 ID 唯一性和最终双索引 fingerprint 仍有各自门禁。收据 SHA256 为 `12784e7d2156c756f0962eb867c8564278b7153994b26f7e6a10bec3bb558491`，不将文档访问准入称为完整索引交付。
+
+固定 revision 的六个官方模型文件已逐 SHA 取得并传到新的隔离目录，回下载一致。旧缓存缺文件、集群直连下载超时和首次依赖安装时限超出的证据均保留。原生 Linux 从先前下载的 wheels 构造 34 包依赖闭包，每个 wheel 经官方 PyPI JSON 核对；46,498,720-byte wheelhouse SHA256 为 `d39dc737917e17ebab4f23a0085170709a6e715eca5750915a9bff4d57dac277`。不修改共享环境，Torch 保留基础镜像版本。
+
+同一模型的真实 CPU 数值准入通过：Python3.10.14、Torch2.3.0、Transformers4.46.3，FP32/CLS/right/512/L2；覆盖短中文、标点、长输入、batch/padding、两个共享编码实例和重复编码。最大绝对差 `1.775333657860756e-7`，范数 `[0.9999999454,1.0000000735]`，峰值进程 RSS 743,702,528 bytes；worker 211.51 秒包含离线安装 147.69 秒。收据 SHA256 为 `25c9369d437f07265ef2e90a51383dfb1e7f35c55843827d34aa9d984e54ae93`。这是实际数值路径验证，仍不代表语义质量或 GPU/HNSW 实验。
+
+完整 2,000 queries 的语法预检发现 3 条显式约束（train/dev/local-holdout=0/1/2）。它们按当前 dense 契约预期返回特定 HTTP400；评测器提供显式、query SHA 绑定的 policy，仍发送全部请求，将准确匹配的预期拒绝记为空检索并单列覆盖率和延迟。默认仍严格失败，其他错误不能被吞掉；完整分母不会被共同支持子集分析替换。对应 policy 在质量运行前冻结于 Git 外，尚无正式请求或质量指标。
 
 新的自爬版本使用 `evaluation.crawl_articles`，目标为清洗去重后的 20k accepted unique articles，不再以 raw URL 计数。原 raw 采集已停止并完整保留为 superseded 证据（2,015 raw docs）。新版本导入原 frontier 的 11,703 个 URL（seed 文件 SHA256 `69c807888876cba583abe372826e900ac0b90ba561c42bf07128895ebdd85f4a`，全部 depth=0），绑定固定 `news-cn-body-v1` 规则、NFKC/空白精确去重、SimHash64 距离 <=3 且长度比 >=0.9 的近重复政策。原 HTTP bytes 先持久化到 SHA 寻址 gzip，再清洗并记录完整 sidecar；不因检索分数选择文章。只读抽样前五篇的原字节/decoded SHA、正文、标题及全部元数据重算一致；150 篇 snapshot 中未发现满足当前规则的残留近重复。采集仍在进行，抽样不是最终 20k 审核，也未生成新版本 queries/qrels。正文/缓存无再分发授权，均留在 Git 外。
 
-当前代码批次核心 62/62、evaluation 65/65、checkpoint/stream/BGE 专项 56/56、Node 5/5，compile 和 diffcheck 通过；独立最终审查无新增阻塞。规模路径的当前边界和可复现实验入口见 [`docs/RFC0004_SCALE.md`](../docs/RFC0004_SCALE.md)。其中 compact/packed reader 和 BGE/Qdrant 辅助脚本是可选工程支持；代码验证不替代真实模型 smoke、8M 有界构建或全规模 HNSW 验收。
+当前代码批次核心 62/62、evaluation 74/74、checkpoint/stream/BGE/文档源/CLI/HNSW 专项 107/107，compile 和 diffcheck 通过，未改动的 Web 代码此前 Node 5/5 通过。规模路径的当前边界和可复现实验入口见 [`docs/RFC0004_SCALE.md`](../docs/RFC0004_SCALE.md)。上述文档源和模型 CPU 收据不替代完整双索引、真实 CUDA/HNSW 与全规模评测验收。

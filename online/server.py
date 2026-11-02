@@ -143,6 +143,7 @@ def main(argv=None):
     ap.add_argument("--rrf-c", type=float, default=60.0)
     ap.add_argument("--vector-url", help="Qdrant URL; requires --vector-manifest")
     ap.add_argument("--vector-manifest", help="published vector_manifest.json")
+    ap.add_argument("--hnsw-ef", type=int, help="positive Qdrant HNSW search beam; requires vector arguments")
     ap.add_argument("--bge-model-path", help="verified local pinned BGE directory; requires vector arguments")
     ap.add_argument("--encoder-device", help="device for --bge-model-path (default: cpu)")
     args = ap.parse_args(argv)
@@ -150,6 +151,11 @@ def main(argv=None):
     encoder = vectors = None
     if bool(args.vector_url) != bool(args.vector_manifest):
         ap.error("--vector-url 与 --vector-manifest 必须同时提供")
+    if args.hnsw_ef is not None:
+        if not args.vector_url or not args.vector_manifest:
+            ap.error("--hnsw-ef requires --vector-url and --vector-manifest")
+        if type(args.hnsw_ef) is not int or args.hnsw_ef <= 0:
+            ap.error("--hnsw-ef must be a positive integer")
     if args.bge_model_path is not None and not args.vector_manifest:
         ap.error("--bge-model-path requires --vector-url and --vector-manifest")
     if args.encoder_device is not None and args.bge_model_path is None:
@@ -170,7 +176,8 @@ def main(argv=None):
                     spec.model_id, spec.revision, spec.dimension, spec.max_tokens,
                     spec.query_prefix, spec.document_prefix,
                 )
-            vectors = QdrantVectorIndex(manifest, args.vector_url)
+            search_options = {"hnsw_ef": args.hnsw_ef} if args.hnsw_ef is not None else {}
+            vectors = QdrantVectorIndex(manifest, args.vector_url, **search_options)
         except (OSError, ValueError, RetrievalUnavailable) as error:
             ap.error(f"向量后端初始化失败: {error}")
     reader = DiskIndex(args.index)

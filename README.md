@@ -85,7 +85,9 @@ python3 -m offline.validate --build-dir /path/to/released-dual-index
 严格 validator 要求 A1 的四个 JSONL/统计文件都带 SHA256，并核对 BM25 与向量的文档数、
 corpus fingerprint、快照文件和 provenance/report。旧 v1 产物仍可由普通 `DiskIndex` 兼容
 读取，但缺少文件摘要的旧产物不能作为 RFC-0004 的生产交付。Qdrant writer 逐批消费向量，
-新 collection 后续失败时尝试清理，快照先写 `.part` 再原子改名。2026-10-29 已在
+已确认本次创建的新 collection 后续失败时才尝试清理；创建冲突或响应未知时保留远端资源。
+快照使用独占 `.part`、大小/哈希校验和不覆盖目标的 hard link 发布，manifest 同样不覆盖；
+输出文件系统必须支持 hard link，否则安全拒绝发布。2026-10-29 已在
 Qdrant 1.16.0 服务端上完成 3 点小批快照的干净实例恢复和只读适配器验收；这不等于
 8M 规模的 HNSW 构建或性能验收。
 
@@ -141,6 +143,26 @@ python3 -m online.server --index /path/to/compact \
 固定 revision、CLS、右截断和 FP32，启动前校验同一 model inventory；缺依赖、错模型或
 坏哈希明确拒绝。未传 BGE 参数时仍使用通用 SentenceTransformer 路径。无模型接线测试
 不替代真实模型的长短文本、padding/batch 一致性和运行环境记录。
+
+向量构建可以直接读取冻结的标准 corpus，与词法构建并行；必须显式提供原始文件的
+SHA256 和文档数。内部 ID 保持物理行序，空行、坏字段、文件变化和错哈希都会拒绝。
+这条路径只提供文档，不制造词法 manifest；最终双索引仍须核对相同的有序语料指纹。
+
+```bash
+python3 scripts/build_vectors.py --corpus /data/corpus.jsonl \
+  --corpus-sha256 <64位小写SHA256> --corpus-n-docs <文档数> \
+  --out /output/vectors --collection <新的版本化collection> \
+  --model-path /path/to/verified-bge-model --device cuda:0 \
+  --hnsw-full-scan-threshold-kb 0 --hnsw-max-indexing-threads 2 --hnsw-on-disk
+```
+
+已有词法产物可继续使用 `--index /path/to/bm25`，两种来源二选一。
+建图默认仍为 `--hnsw-m 16 --hnsw-ef-construct 100`；其余可选设置会写入 manifest，
+writer 会核对服务实际配置。现有普通文件或被普通文件阻断的输出路径会在语料扫描及
+模型加载前拒绝。线程数应与实际分配一致；显式参数不替代真实图就绪与快照恢复验收。
+在线 `--hnsw-ef 256` 可显式记录搜索 beam（须同时提供向量参数）；它传入
+`exact=false`，但是否实际走 HNSW 仍取决于 collection 索引状态及 Qdrant planner。
+该参数本身不是 HNSW 已完成或已有性能结果的证据。
 
 服务会从 manifest 读取模型 ID、固定 revision、维度、前缀和截断配置，并校验
 Qdrant collection 中持久化的完整构建元数据、真实维度／距离和精确文档数，随后校验与倒排索引的语料指纹。

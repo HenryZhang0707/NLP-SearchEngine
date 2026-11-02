@@ -85,8 +85,10 @@ and another entry returned an empty response. These observations are limited to
 those access attempts: a local terminal received HTTP 200 with a normal page
 title from one entry, and the user confirmed their own browser works. They do
 not establish cluster unavailability or insufficient quota. A memory-only API
-session subsequently authenticated and read the account profile and GPU quotas;
-the full existing-job/capacity check is still pending. No existing cluster
+session subsequently authenticated, read existing jobs and remaining CPU/RAM/GPU
+quotas, and submitted an isolated CPU-only source preflight. It passed core,
+evaluation, 56 targeted tests and compilation in 52.90 seconds on Python 3.10.14
+and Torch 2.3.0, using 2 CPUs / 2 GiB host RAM / 0 GPUs. No existing cluster
 task was changed or new GPU job submitted. The user prohibits computer-control
 access to the cluster because it takes over the keyboard/mouse; further access
 must use non-GUI CLI/SSH/API, with task/resource state verified before submission.
@@ -193,12 +195,80 @@ dependencies, wrong model identity and invalid local inventory fail clearly.
 This wiring is covered by stub-only tests; before the full semantic build, a
 real-model smoke must record runtime/dtype and check short/long inputs, padding,
 batch invariance, finite values, norms and the actual service encoder path. The
-current CPU tests are not evidence of real-model equivalence or semantic quality.
+stub-only tests are not evidence of real-model equivalence or semantic quality.
+
+The first real CPU admission attempt checked the old model cache and stopped
+before dependency installation or inference: none of the bounded candidate
+directories contained all six pinned files. This is a missing-cache result,
+not evidence that the cluster is unavailable. A separate fresh stage downloads
+only the official pinned files and checks their known SHA256 values before the
+same frozen numerical gate. The direct cluster download timed out; the six
+official files were instead downloaded locally and transported with verified
+remote-download hashes. A native Linux wheelhouse then verified 34 wheels
+against official PyPI metadata and dependency closure. Its 46,498,720-byte archive
+hashes to `d39dc737917e17ebab4f23a0085170709a6e715eca5750915a9bff4d57dac277`.
+
+The real CPU gate now passes on Python 3.10.14, Torch 2.3.0, Transformers 4.46.3,
+tokenizers 0.20.3 and the pinned six-file model. It checks actual FP32 forward,
+CLS plus float32 L2, right/512 truncation, short/punctuation/long inputs,
+batch/padding, shared query/document instances and repeat encoding. The largest
+absolute difference is `1.775333657860756e-7`, below the frozen `1e-5` tolerance;
+norms range from 0.9999999454 to 1.0000000735. Process peak RSS is 743,702,528 bytes.
+The 211.51-second worker includes 147.69 seconds of offline dependency installation.
+Receipt SHA256:
+`25c9369d437f07265ef2e90a51383dfb1e7f35c55843827d34aa9d984e54ae93`.
+This is a real numerical admission, not retrieval-quality evidence. GPU numerical
+and throughput admission remain separate from CPU success.
+
+`scripts/build_vectors.py` also accepts `--corpus` with mandatory
+`--corpus-sha256` and `--corpus-n-docs`, mutually exclusive with `--index`.
+`CorpusDocuments` scans and verifies immutable raw JSONL before model loading,
+keeps two uint64 offset/length arrays, and preserves physical row IDs and all
+original fields. It rejects blank lines and observable input changes. The
+existing vector builder still checks external-ID uniqueness and computes the
+unchanged ordered fingerprint before publication. It creates no lexical files
+and does not relax final dual-index fingerprint matching.
+
+This document source has now passed a real full-input admission, independently
+of the unfinished lexical build: it scanned and parsed all 8,096,668 rows of the
+7,425,979,008-byte frozen corpus, verified the expected raw SHA256, and read fixed
+internal IDs 0, 4,048,334 and 8,096,667. Construction took 108.55 seconds, with a
+process peak working set of 218,562,560 bytes (208.44 MiB), below the predeclared
+256 MiB limit. The two uint64 arrays contain 129,546,688 payload bytes. The
+supervisor observed a clean exit and a closed reader, and source hashes matched
+before and after the run. The admission receipt SHA256 is
+`12784e7d2156c756f0962eb867c8564278b7153994b26f7e6a10bec3bb558491`.
+This proves full-input document access and its measured memory bound; external-ID
+uniqueness, final dual-index alignment, semantic encoding and HNSW delivery retain
+their separate gates.
+
+The serving CLI can pass `--hnsw-ef 256` through to Qdrant's nonexact search
+parameters. This explicit configuration has SDK-double regression coverage;
+actual graph construction and planner behavior still require a real service.
+
+## Vector publication ownership
+
+Vector identity databases now live in per-invocation temporary directories.
+Existing reserved SQLite files and snapshot/manifest temporary files are never
+adopted or removed. Snapshot downloads use exclusive `.part` creation, validate
+an integer server-declared size when supplied, hash the complete bytes, and
+publish with an atomic non-overwriting hard link. Manifest publication uses the
+same non-overwriting mechanism. Both require hard-link support in the output
+filesystem and fail closed otherwise; this is not a power-loss durability claim.
+Snapshot filenames reject both POSIX and Windows traversal and reserved names.
+
+A collection preflight 404 does not reserve its name. Failed, conflicting,
+explicitly rejected or timed-out creation never grants cleanup ownership. Only
+an acknowledged creation may be cleaned after later validation failure. A lost
+success response can therefore leave an unpublished collection for inspection;
+unknown ownership is preserved rather than inferred. Fifteen targeted
+regressions cover these filesystem and remote-creation boundaries.
 
 ## Remaining production gate
 
-The current code batch passes core 62/62, evaluation 65/65,
-checkpoint/stream/BGE checks 56/56, Node 5/5, compilation and diff checks.
+The current code batch passes core 62/62, evaluation 74/74,
+checkpoint/stream/BGE/document-source/CLI/HNSW/artifact-ownership checks 107/107, Node 5/5,
+compilation and diff checks.
 Independent final review found no additional blocker. These checks do not
 replace full-index acceptance, the real-model smoke or HNSW experiments.
 

@@ -39,6 +39,101 @@ with a nonzero exit status.
 Standalone TREC runs contain no routing or latency evidence: those fields are
 `null`, not zero failures or zero latency.
 
+### Frozen unsupported-request policy and coverage
+
+The default remains strict: any HTTP error aborts evaluation. For a separately
+predeclared capability evaluation, `--unsupported-policy policy.json` allows
+only the specific dense-mode rejection of explicit lexical constraints. It
+still sends every query to the public `POST /search` endpoint, without changing
+query text, parsing, routing, or API semantics. No other HTTP error is ignored.
+
+The policy JSON has exactly these fields (digest placeholders below are a
+schema example, not a runnable policy):
+
+```json
+{
+  "schema_version": 1,
+  "queries_sha256": "<SHA256 of original query file bytes>",
+  "preflight_parser_sha256": "<parser SHA256 recorded before evaluation>",
+  "request": {"mode": "dense", "scorer": "bm25", "expander": "none"},
+  "expected_unsupported": {
+    "query_ids": ["predeclared-query-id"],
+    "status": 400,
+    "body": {"error": "dense 模式无法保证显式词法约束，请使用 lexical、hybrid 或 adaptive"}
+  }
+}
+```
+
+Digests must be lowercase 64-character hex strings. Unknown or duplicate JSON
+fields, duplicate/absent qids, changed query bytes or records, and mismatched
+request parameters are rejected before creating outputs or sending requests.
+The parser digest is **preflight provenance only**; this independent evaluator
+does not import the parser or claim to verify the server's runtime parser.
+The exact observed HTTP status and JSON error body form the behavioral check.
+A predeclared qid returning HTTP200, another error, or malformed JSON aborts.
+
+```bash
+python3 -m evaluation.evaluate \
+  --endpoint http://127.0.0.1:8000/search \
+  --queries queries.jsonl --qrels qrels.tsv --mode dense \
+  --unsupported-policy policy.json --output-run runs/dense.trec \
+  --output-json runs/dense.json --include-per-query
+```
+
+Existing output paths are rejected, including sidecars and pending `.tmp`
+files. Use fresh paths for each attempt. With `--output-run`, request evidence
+defaults to `OUTPUT_RUN.requests.json`; `--output-requests` can choose another
+path. A policy requires one of these durable request outputs. Alongside the
+snapshot, `OUTPUT_REQUESTS.events.jsonl` is exclusively created as an append-only
+journal. Its `START` line stores the ordered query universe and full policy once;
+each request appends a sequenced `BEGIN` followed by its terminal `OUTCOME`,
+including unexpected errors. Every event is written as one complete JSON line
+and flushed. Per-step atomic `INCOMPLETE` snapshots contain only counters,
+query-universe SHA256, compact policy identity, the last/inflight outcome, and
+journal basename; they never rewrite the growing full history. Serialization
+and logical write volume grow linearly with request count.
+
+Only after all requests and metrics finish does the snapshot become `COMPLETE`
+and include full query IDs/outcomes and the final journal SHA256. Unexpected
+failures leave a partial run and an `INCOMPLETE` snapshot, and CLI exit status
+is nonzero; there is no successful summary JSON. Recover history from the
+complete journal lines: validate `START`'s universe digest, monotonically
+increasing sequence numbers, attempt/qid matching, and each BEGIN/OUTCOME pair.
+An unpaired BEGIN means an attempted request with unknown terminal outcome,
+never a successful response or an empty ranking. A crash can leave a partial
+final journal line; disregard only that trailing incomplete line and preserve
+it as crash evidence. A malformed complete line, missing START, or inconsistent
+sequence is an invalid receipt. Snapshot replacement can lag a flushed event,
+so the journal is authoritative for history; it does not authorize automatic
+resumption or treating an interrupted run as complete. Preserve pending `.tmp`
+files and start a new attempt with fresh paths. Do not score partial TREC
+artifacts as completed experiments. Existing journals are included in stale
+output and path-collision checks.
+
+An exactly matching HTTP400 is recorded as `EXPECTED_UNSUPPORTED`, not HTTP
+success or fallback. Its ranking is empty, all four ranking metrics are zero,
+and routing and success latency are null. The original query remains in the
+full evaluation denominator. The `requests` summary and sidecar retain the
+policy bytes SHA256, provenance, ordered qids/outcomes, attempted requests,
+validated `http_200` responses, expected rejections, unexpected errors, and
+coverage. `http_success_coverage` is validated HTTP200 / all input queries;
+`protocol_accounted_coverage` is (validated HTTP200 + expected rejection) / all
+input queries. The latter is not an HTTP success rate. Existing latency
+aggregates use validated successful HTTP200 requests only; rejection latency
+is retained separately in request outcomes. Routing rates use only responses
+with validated routing, with their query count explicitly reported.
+
+Empty rankings create no TREC rows. To reproduce full-query metrics from a
+TREC file, preserve the sidecar's query universe and build selected qrels with
+an entry (possibly empty) for every input qid. Standalone scoring otherwise
+uses the union of qrels/run IDs and cannot distinguish missing requests from
+empty rankings. A secondary common-support comparison must freeze its qid
+subset before looking at relevance or outcomes, and filter **both runs and
+qrels** to that same subset before using `evaluation.compare`. Report it
+alongside full-query metrics and request coverage, not as a replacement for
+the full-query result. Never select the subset from whichever requests happened
+to succeed or from favorable scores.
+
 An existing run can be scored without a server:
 
 ```bash

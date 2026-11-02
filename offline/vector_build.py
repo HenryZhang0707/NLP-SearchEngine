@@ -4,12 +4,15 @@
 """
 
 import json
+import os
 import sqlite3
+import tempfile
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 
 from contracts.index_format import sha256_of
-from contracts.reader import IndexReader
+from contracts.reader import DocumentSource
 from contracts.retrieval import (
     VECTOR_BUILD_METADATA_KEY, VECTOR_MANIFEST, TextEncoder, VectorManifest,
     VectorRecord, VectorWriter,
@@ -17,14 +20,22 @@ from contracts.retrieval import (
 )
 
 
-def _validate_reader_ids(reader: IndexReader, out_dir: Path) -> None:
+@contextmanager
+def _identity_database(out_dir: Path):
+    """Own an isolated SQLite directory, including any SQLite sidecar files."""
+    with tempfile.TemporaryDirectory(prefix=".vector-ids-", dir=out_dir) as directory:
+        database = sqlite3.connect(Path(directory) / "ids.sqlite")
+        try:
+            database.execute("CREATE TABLE ids(doc_id TEXT PRIMARY KEY) WITHOUT ROWID")
+            yield database
+        finally:
+            database.close()
+
+
+def _validate_reader_ids(reader: DocumentSource, out_dir: Path) -> None:
     """Check external-ID uniqueness without retaining an O(N) Python set."""
 
-    path = out_dir / ".vector-ids.sqlite"
-    path.unlink(missing_ok=True)
-    database = sqlite3.connect(path)
-    try:
-        database.execute("CREATE TABLE ids(doc_id TEXT PRIMARY KEY) WITHOUT ROWID")
+    with _identity_database(out_dir) as database:
         for docid in range(reader.n_docs):
             doc_id = reader.doc(docid).doc_id
             try:
@@ -32,15 +43,9 @@ def _validate_reader_ids(reader: IndexReader, out_dir: Path) -> None:
             except sqlite3.IntegrityError as error:
                 raise ValueError("doc_id 不唯一") from error
         database.commit()
-    finally:
-        database.close()
-        try:
-            path.unlink()
-        except FileNotFoundError:
-            pass
 
 
-def build_vectors(reader: IndexReader, encoder: TextEncoder, writer: VectorWriter,
+def build_vectors(reader: DocumentSource, encoder: TextEncoder, writer: VectorWriter,
                   out_dir: Path, collection: str, batch_size: int = 32,
                   backend: str = "qdrant-hnsw", index_params: dict | None = None
                   ) -> VectorManifest:
@@ -99,10 +104,13 @@ def build_vectors(reader: IndexReader, encoder: TextEncoder, writer: VectorWrite
             if not snapshot.is_file() or sha256_of(snapshot) != digest:
                 raise ValueError("快照不存在或 SHA256 校验失败")
         manifest = published
-        pending = target.with_name(target.name + ".tmp")
-        pending.write_text(json.dumps(manifest.to_dict(), ensure_ascii=False, indent=2),
-                           encoding="utf-8")
-        pending.replace(target)
+        # Hard-link publication is atomic and refuses an existing target on
+        # Windows/POSIX. Filesystems without hard links fail closed.
+        with tempfile.TemporaryDirectory(prefix=".vector-manifest-", dir=out_dir) as directory:
+            pending = Path(directory) / target.name
+            pending.write_text(json.dumps(manifest.to_dict(), ensure_ascii=False, indent=2),
+                               encoding="utf-8")
+            os.link(pending, target)
         return manifest
     except Exception:
         # A writer may complete a remote build before local manifest
@@ -115,6 +123,24 @@ def build_vectors(reader: IndexReader, encoder: TextEncoder, writer: VectorWrite
             except Exception:
                 pass
         raise
+
+
+def _validated_hnsw_params(index_params: dict) -> dict:
+    """Validate the supported SDK fields without Pydantic's type coercion."""
+    if not isinstance(index_params, dict):
+        raise ValueError("Qdrant index_params must be a JSON object")
+    minimums = {"m": 0, "ef_construct": 1, "full_scan_threshold": 0,
+                "max_indexing_threads": 0}
+    for name, value in index_params.items():
+        if name == "on_disk":
+            if type(value) is not bool:
+                raise ValueError("HNSW on_disk must be a boolean")
+        elif name in minimums:
+            if type(value) is not int or value < minimums[name]:
+                raise ValueError(f"HNSW {name} must be an integer >= {minimums[name]}")
+        else:
+            raise ValueError(f"Unsupported HNSW index parameter: {name!r}")
+    return dict(index_params)
 
 
 class QdrantSnapshotWriter:
@@ -135,17 +161,19 @@ class QdrantSnapshotWriter:
     def replace(self, manifest: VectorManifest, records) -> VectorManifest:
         if self.batch_size <= 0:
             raise ValueError("batch_size 必须为正数")
+        hnsw_params = _validated_hnsw_params(manifest.index_params)
         try:
             from qdrant_client import QdrantClient, models
         except ImportError as error:
             raise RuntimeError("QdrantSnapshotWriter 需要安装 qdrant-client") from error
+        # An empty mapping deliberately leaves all server defaults untouched.
+        hnsw_options = ({"hnsw_config": models.HnswConfigDiff(**hnsw_params)}
+                        if hnsw_params else {})
         client = QdrantClient(url=self.url, timeout=self.timeout)
         created = False
         self.snapshot_dir.mkdir(parents=True, exist_ok=True)
-        identity_path = self.snapshot_dir / ".qdrant-doc-ids.sqlite"
-        identity_path.unlink(missing_ok=True)
-        identity_db = sqlite3.connect(identity_path)
-        identity_db.execute("CREATE TABLE ids(doc_id TEXT PRIMARY KEY) WITHOUT ROWID")
+        identity_context = _identity_database(self.snapshot_dir)
+        identity_db = identity_context.__enter__()
         count = 0
         batch = []
 
@@ -171,17 +199,20 @@ class QdrantSnapshotWriter:
                     raise RuntimeError(f"无法检查 Qdrant collection: {error}") from error
             else:
                 raise ValueError(f"Qdrant collection 已存在: {manifest.collection}")
-            # Claim ownership before the request. If the SDK loses the
-            # response after the server creates the collection, cleanup still
-            # attempts to remove this versioned build name.
-            created = True
-            client.create_collection(
+            # A preflight 404 does not reserve the name. Claim ownership only
+            # after creation returns successfully; a timeout or conflict cannot
+            # establish whose collection now exists, so leave it untouched.
+            creation_result = client.create_collection(
                 collection_name=manifest.collection,
                 vectors_config=models.VectorParams(
                     size=manifest.embedding.dimension, distance=models.Distance.COSINE,
                 ),
                 metadata={VECTOR_BUILD_METADATA_KEY: manifest.build_metadata()},
+                **hnsw_options,
             )
+            if creation_result is False:
+                raise RuntimeError("Qdrant collection creation was not confirmed")
+            created = True
             for record in records:
                 validate_vector(record.vector, manifest.embedding)
                 if type(record.docid) is not int or record.docid != count:
@@ -207,16 +238,17 @@ class QdrantSnapshotWriter:
             if (not isinstance(metadata, dict)
                     or metadata.get(VECTOR_BUILD_METADATA_KEY) != manifest.build_metadata()):
                 raise ValueError("Qdrant 未保存构建元数据；需要 Qdrant / qdrant-client 1.16+")
+            hnsw_config = getattr(getattr(info, "config", None), "hnsw_config", None)
+            for name, expected in hnsw_params.items():
+                actual = getattr(hnsw_config, name, None)
+                if type(actual) is not type(expected) or actual != expected:
+                    raise ValueError(f"Qdrant HNSW parameter was not applied: {name}")
             exact_count = client.count(collection_name=manifest.collection, exact=True).count
             if type(exact_count) is not int or exact_count != manifest.n_docs:
                 raise ValueError(f"Qdrant 点数不符: {exact_count} != {manifest.n_docs}")
             published = self._download_snapshot(client, manifest)
-            identity_db.close()
-            identity_path.unlink(missing_ok=True)
             return published
         except Exception:
-            identity_db.close()
-            identity_path.unlink(missing_ok=True)
             delete = getattr(client, "delete_collection", None)
             if created and callable(delete):
                 try:
@@ -224,6 +256,8 @@ class QdrantSnapshotWriter:
                 except Exception:
                     pass
             raise
+        finally:
+            identity_context.__exit__(None, None, None)
 
     def rollback(self, manifest: VectorManifest) -> None:
         """Best-effort deletion after local publication fails post-build."""
@@ -239,27 +273,43 @@ class QdrantSnapshotWriter:
 
     def _download_snapshot(self, client, manifest: VectorManifest) -> VectorManifest:
         """Download through a .part file; only the complete file is published."""
+        owned_pending = False
         try:
             snapshot = client.create_snapshot(collection_name=manifest.collection)
             snapshot_name = getattr(snapshot, "name", None) or getattr(snapshot, "result", None)
-            if not isinstance(snapshot_name, str) or not Path(snapshot_name).name:
+            # Reject path syntax for both Windows and POSIX, even when the
+            # current host would interpret the other platform's syntax literally.
+            reserved = {"CON", "PRN", "AUX", "NUL"} | {
+                f"{prefix}{digit}" for prefix in ("COM", "LPT") for digit in "123456789¹²³"}
+            if (not isinstance(snapshot_name, str) or not snapshot_name
+                    or snapshot_name in (".", "..")
+                    or any(ord(c) < 32 or c in '/\\:<>"|?*' for c in snapshot_name)
+                    or snapshot_name.rstrip(" .") != snapshot_name
+                    or snapshot_name.partition(".")[0].rstrip(" ").upper() in reserved):
                 raise ValueError("Qdrant 未返回有效快照文件名")
             self.snapshot_dir.mkdir(parents=True, exist_ok=True)
-            target = self.snapshot_dir / Path(snapshot_name).name
+            target = self.snapshot_dir / snapshot_name
             pending = target.with_name(target.name + ".part")
+            if os.path.lexists(target):
+                raise FileExistsError(f"快照产物已存在: {target.name}")
             from urllib.request import urlopen
             import urllib.parse
             endpoint = (self.url.rstrip("/") + "/collections/" +
                         urllib.parse.quote(manifest.collection, safe="") + "/snapshots/" +
                         urllib.parse.quote(target.name, safe=""))
-            with urlopen(endpoint, timeout=self.timeout) as response, pending.open("wb") as output:
-                while chunk := response.read(1024 * 1024):
-                    output.write(chunk)
-            pending.replace(target)
+            with pending.open("xb") as output:
+                owned_pending = True
+                with urlopen(endpoint, timeout=self.timeout) as response:
+                    while chunk := response.read(1024 * 1024):
+                        output.write(chunk)
+            expected_size = getattr(snapshot, "size", None)
+            if type(expected_size) is int and pending.stat().st_size != expected_size:
+                raise ValueError("快照下载大小与 Qdrant 声明不符")
+            published = replace(manifest, snapshot_files={target.name: sha256_of(pending)})
+            os.link(pending, target)
         except Exception as error:
-            try:
-                pending.unlink()
-            except (UnboundLocalError, FileNotFoundError):
-                pass
             raise RuntimeError(f"Qdrant 快照发布失败: {error}") from error
-        return replace(manifest, snapshot_files={target.name: sha256_of(target)})
+        finally:
+            if owned_pending:
+                pending.unlink(missing_ok=True)
+        return published

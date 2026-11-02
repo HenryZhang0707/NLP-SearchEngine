@@ -33,6 +33,19 @@ RFC-0004 的正式交付必须为这四个文件提供 64 位小写 SHA256；`ve
 
 ### 配置与产物
 
+离线文档源使用 `DocumentSource`（`n_docs` / `doc(docid)`），`IndexReader` 兼容继承它。
+这允许固定原始 corpus 的向量编码与词法构建并行，不要求先制造完整词法产物。
+`CorpusDocuments` 必须校验原始 SHA256、文档数和字段，按物理行序保留全部文档并拒绝
+空行。它自身不承诺外部 ID 唯一；`build_vectors` 在编码和发布前用 SQLite 检查。
+公共有序语料指纹算法、A1/A2 文件格式及在线双索引匹配门禁保持不变。
+
+Qdrant writer 将非空 `index_params` 作为真实 `HnswConfigDiff` 传给建库请求，并在快照前
+核对服务返回的 `config.hnsw_config`；不能只凭 metadata 声明参数已经生效。当前支持
+严格整数 `m >= 0`、`ef_construct >= 1`、`full_scan_threshold >= 0`、
+`max_indexing_threads >= 0`，以及严格布尔 `on_disk`。未知字段或类型转换会拒绝；
+空对象保留服务默认设置。搜索 beam 由在线服务的 `--hnsw-ef` 明确指定，正式实验
+同时记录建图和搜索参数；`exact=false` 本身不能证明 planner 实际走了 HNSW。
+
 `EmbeddingSpec` 精确比较以下全部字段，不仅比较维度：
 
 | 字段 | 约定 |
@@ -192,4 +205,4 @@ engine = SearchEngine(reader, encoder=query_encoder, vectors=vector_reader,
 
 零依赖 runner 检查本仓库 schema 使用的响应子集，不是完整 JSON Schema 引擎。UI 和评测器可用标准 JSON Schema 验证器直接消费 api.py 的两个 schema。
 
-真实模型权重、DuRetrieval 全量语料/qrels 和 Qdrant 服务不随仓库提供，因此当前没有真实语义质量或 HNSW 性能结论。RM3 是确定性的本地伪相关反馈扩展；SLM 仍需要外部固定模型与离线缓存并返回 501，二者都不改变显式约束，也不会自动混入四组主实验。
+真实模型权重、DuRetrieval 全量语料/qrels 和 Qdrant 服务不随仓库提供。已记录的受限前缀结果是工程冒烟；当前没有正式全规模语义质量或 HNSW 性能结论，资源和准入进展见 `evaluation/RESOURCES.md`。RM3 是确定性的本地伪相关反馈扩展；SLM 仍需要外部固定模型与离线缓存并返回 501，二者都不改变显式约束，也不会自动混入四组主实验。
