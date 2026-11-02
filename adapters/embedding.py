@@ -15,9 +15,6 @@ def bge_spec():
 
 class BGEEncoder:
     def __init__(self, spec=None, model_path=None, device="cpu", batch_size=32):
-        import torch
-        from transformers import AutoModel, AutoTokenizer
-
         self.spec = spec or bge_spec()
         if self.spec.model_id != BGE_MODEL or self.spec.revision != BGE_REVISION:
             raise ValueError("BGEEncoder only supports the pinned bge-small-zh-v1.5 revision")
@@ -33,10 +30,22 @@ class BGEEncoder:
         # A local copy must carry the downloaded revision's SHA256 inventory.
         if model_path:
             from .model_files import verify_model
-            verify_model(model_path, self.spec)
-        self.tokenizer = AutoTokenizer.from_pretrained(source, **kwargs)
-        self.tokenizer.truncation_side = "right"
-        self.model = AutoModel.from_pretrained(source, use_safetensors=True, **kwargs).to(device).eval()
+            try:
+                verify_model(model_path, self.spec)
+            except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
+                raise RetrievalUnavailable(f"BGE local model inventory verification failed: {error}") from error
+        try:
+            import torch
+            from transformers import AutoModel, AutoTokenizer
+        except ImportError as error:
+            raise RetrievalUnavailable("BGEEncoder requires torch and transformers") from error
+        try:
+            self.tokenizer = AutoTokenizer.from_pretrained(source, **kwargs)
+            self.tokenizer.truncation_side = "right"
+            # Forward weights and normalization are FP32 on both serving/build paths.
+            self.model = AutoModel.from_pretrained(source, use_safetensors=True, **kwargs).float().to(device).eval()
+        except Exception as error:
+            raise RetrievalUnavailable(f"BGE model initialization failed: {error}") from error
         self._torch = torch
 
     def _encode(self, texts):

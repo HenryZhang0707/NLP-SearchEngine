@@ -1,4 +1,4 @@
-# 交付 TODO（2026-10-26）
+# 交付 TODO（2026-11-02）
 
 这个清单把已验证事实、可继续执行的工作和受外部资源阻塞的工作分开。开题报告中的数量和方向只作为团队假设；实际资源、脚本输出和标注状态以 `evaluation/RESOURCES.md` 及本清单为准。
 
@@ -21,7 +21,20 @@
 
 ## NEXT（需要继续做，但不应伪造结果）
 
-- [ ] 用课程实际提供的、可追溯的 100001/2000/9839 版本执行 `prepare_dataset`，固定 dev/test ID 清单、哈希和数据分割；若仍拿不到，报告中保留阻塞证据。
+- [x] 恢复并核验本地官方 archive，全量准备 8,096,668 篇文档、2,000 dev queries、9,839 qrels；数据准备改为原子发布，修正历史摘要误抄。
+- [x] 修复真实语料 `()` 的零 token 兼容问题并保留全部 ID/行序；增加可选事件流 compact、严格源哈希、分盘 SQLite scratch 和专项回归。
+- [x] 完成官方 shard 01 的 10k 资源 pilot 和磁盘补测；结果用于容量预估，未冒充正式评测或全量成本。
+- [~] **RUNNING（本地 CPU）**：首个非检查点 8M 进程已异常终止，旧 journal-OFF DB 已确认损坏并保留。新 `offline.checkpoint_build` 用 WAL/FULL、文件长度/输入 offset 事务检查点恢复全量 lexical；compact、全文件 SHA256、数量、ID/offset/reader 验收仍待完成，启动不算交付。
+- [x] 构建检查点 hard-exit/发布/绑定及首次空库恢复回归通过；完整 official-dev 内部划分已固定为 train/dev/holdout=172/1020/808 queries，并保留来源及已观察过前缀查询的边界；HNSW 显式搜索参数仍须在正式质量运行前冻结。
+- [x] 持久 raw 抓取、固定正文清洗、原响应字节缓存、精确/近重复和 sidecar 已实现；原 raw 任务以 2,015 篇状态停止并保留，新 `crawl_articles` 直接以有效唯一文章为目标运行，不复用旧 qrels。前五篇真实 capture/正文/metadata 重算一致，150 篇 snapshot 未发现规则内残留近重复。
+- [~] **RUNNING（本地网络采集）**：继续采集至清洗去重后 20k，冻结 corpus/sidecar/receipt 和 SHA256，再设计 150–300 查询、盲化多系统池化并以明确 assistant provenance 逐条复核。当前运行与抽样不算最终验收。
+- [x] 可恢复 `checkpoint_compact`、compact 自动 reader 接线及严格元数据校验已实现；相同真实 10k pilot 的六个数据文件字节、384,350 词项逻辑行和 28 篇抽样一致。源码审查发现首次空库启动窗口并补严格恢复；全量 compact 仍须等 lexical 发布。
+- [ ] 通过非 GUI CLI/SSH/API 重新只读核对集群现有任务、CPU/GPU/RAM/存储和剩余配额；已通过仅驻留内存的 API 会话完成认证、账号资料及型号配额读取；任务列表/完整剩余容量仍待核验，未提交新 GPU 作业。用户明确禁止电脑控制访问集群，以免抢占键鼠。保护所有已有任务，再推进真实语义编码和全量 HNSW；正式后端验收后撤销临时 exact/fallback 降级。
+- [x] 共享固定 BGE 已通过显式本地路径接入 online server，含 inventory 验证、FP32/CLS/right 和清晰失败路径；无模型接线回归通过。
+- [ ] 全量语义编码前运行同一已验模型目录的真实长短文本/padding/batch/device smoke，并记录实际环境和误差；stub 不作模型等价性证据。
+- [~] 本批规模恢复/清洗代码集中完成最终审查、提交并更新现有 PR #8 / Issue #6；后续完整规模结果仍集中追加，不为状态变化单独建 PR。
+
+- [x] 标准语料使用已核验的官方 8,096,668 篇版本；全部 official-dev 查询的内部划分、ID 清单和 SHA256 已在全规模质量运行前冻结（train/dev/local-holdout=172/1020/808）。100001/2000/9839 只是团队提案假设，不作为教师指定快照；不声称拥有未公开的 official test labels。
 - [ ] 在 dev 上冻结 Router 阈值、candidate pool、RRF `c` 和模型配置，再在独立 test 上运行 lexical、dense、固定 hybrid、adaptive 四组；逐查询保存 TREC run、路由原因分布、向量触发/成功/fallback、平均/p50/p95 延迟。
 - [ ] 用 `evaluation.compare` 至少完成 fixed-hybrid vs adaptive 的 paired bootstrap，并在报告中给出 query-level 差值和区间；不要在 test 上挑阈值。
 - [~] 选择允许抓取的公开站点并运行 `crawl_web crawl` 已完成 gov.cn 的 30/393/799/1,029 篇候选批次、sitemap 合并后的 1,137 篇，以及新华网 100 篇跨站点候选；assistant qrels 已按授权生成，但仍需找到来源扩展到 20k 有效文档。若要独立人工 gold labels，必须另行复核，不能把 assistant labels 改称人工真值。
@@ -35,13 +48,16 @@
 - 官方公开 baseline 只有 dev 标注，课程目标快照和 test labels 尚未被公开资源证明存在；不能把 dev 或 prefix smoke 改名为 test/full-scale。
 - 本地电脑没有 NVIDIA GPU；真实 embedding/Qdrant 的集群运行产物不提交仓库，且不代表全量语义质量。
 - 网络爬取只负责构造候选 corpus；本次 qrels 的标签来源明确为 assistant 语义复核，用户已授权将其作为正式工程 qrels，但它不是独立人工 gold labels。脚本不会从网页标题自动制造真值。
-- 集群交互式任务表单已确认存在 A800 配额，但当前提交动作被“最长运行时间 <= 0日6时0分”的表单校验拦截，任务列表仍显示 0 个交互式运行应用。改查同一账号的训练任务入口时，自有 RFC-0004 工作空间和仓库目录可见，但程序入口文件级联选择在读取私有数据时返回 504，未创建任务；在平台校验或入口文件服务修复前，不记录 8M/HNSW 任务已启动。
+- 本轮仅证实 IAB 导航/会话失败及另一入口当前空响应；本地终端对一个入口取得 HTTP 200 且页面标题正常，用户确认自己的浏览器可用。这些证据不能支持“集群不可用”或“配额不足”。历史 runtime 表单/504 问题保留在资源记录；后续仅通过非 GUI CLI/SSH/API 核验任务和容量，不使用电脑控制。
 
 ## 固定验证入口
+
+当前代码批次验证为核心 62/62、evaluation 65/65、checkpoint/stream/BGE 专项 56/56、Node 5/5，compile 和 diffcheck 通过；独立最终审查无新增阻塞。这些是代码验证，不代表全量索引、真实模型 smoke 或 HNSW 实验完成。
 
 ```bash
 python tests/run.py
 python -m unittest discover -s evaluation -p 'test_*.py'
+python -m unittest tests.test_checkpoint_build tests.test_checkpoint_compact tests.test_compact_stream tests.test_bge_serving -v
 node --test tests/test_web.cjs
 python -m compileall .
 git diff --check

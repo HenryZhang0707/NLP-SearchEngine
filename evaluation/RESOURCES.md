@@ -41,9 +41,9 @@ python -m evaluation.prepare_dureader \
 ## 2026-10-29 集群验收记录（受限前缀烟雾实验）
 
 以下结果来自一次固定的集群任务，所有生成数据、权重、索引和 TREC run 均留在任务私有临时目录，没有提交到仓库。公开 baseline archive 为 4,214,306,577 bytes，SHA256 为
-`b051d3d966f7b0288aed95a923fc3b706176767d8bdcff8aa8fe5fff84b20662`；准备后的 dev 资源为 8,096,668 篇文档、2,000 条查询和 9,839 条 qrels。其 passage map、corpus、queries.dev 和 qrels.dev 的 SHA256 分别为 `9b091ee62278b02973c6fa6de5798c3b0bee9a493613ab29a4b807efdd387411a`、`bc67f3ccfe7423c039f04c7a5e7f6eae07a7f722087edf0caa7cfc694a8c45e8`、`3be3067e73022ea5b3b919196baae29dc2d50c6aa7053ad911e2b3d5cf8d3899a` 和 `150f4665e779c0c876a46102d9a00fa467759847bc01ff344ee6c7f92c43fd79`。
+`b051d3d966f7b0288aed95a923fc3b706176767d8bdcff8aa8fe5fff84b20662`；准备后的 dev 资源为 8,096,668 篇文档、2,000 条查询和 9,839 条 qrels。其 passage map、corpus、queries.dev 和 qrels.dev 的 SHA256 分别为 `9b091ee62278b02973c6fa6de5798c3b0bee9a493613ab29a4b807efdd38741a`、`bc67f3ccfe7423c039f04c7a5e7f6eae07a7f722087edf0caa7cfc694a8c45e8`、`3be3067e73022ea5b3b919196baae29dc2d50c6aa7053ad911e2b3d5cf8d389a` 和 `150f4665e779c0c876a46102d9a00fa467759847bc01ff344ee6c7f92c43fd79`。
 
-为控制内存和验证完整 HTTP 闭环，从该 dev corpus 流式取前 20,000 篇文档，固定 seed `20261028`，按 dev/test/train=0.5/0.4/0.1 得到 7/9/3 条查询。前缀 corpus SHA256 为 `7e2a20ca5f7a75ece81efffbb45f10983c90ebaf500f60f60a4a53f9c775a55bfc8`；test qrels、queries 的 SHA256 分别为 `b07146daa42cd3b53c4c55779625ecce20dca3d337d86a64eb03a1c3d288f1cc2` 和 `f05c990beb04a4997b7910149d4a128f74823aae6f1af7b09c84c80ec5f20eff5`。这仍是官方 dev 的前缀烟雾数据，不能替代课程目标快照，也不是团队自爬测试集。
+为控制内存和验证完整 HTTP 闭环，从该 dev corpus 流式取前 20,000 篇文档，固定 seed `20261028`，按 dev/test/train=0.5/0.4/0.1 得到 7/9/3 条查询。前缀 corpus SHA256 为 `7e2a20ca5f7a75ece81efffbb45f10983c90ebaf500f60a4a53f9c775a55bfc8`；test qrels、queries 的 SHA256 分别为 `b07146daa42cd3b53c4c55779625ecce20dca3d337d86a64eb03a1c3d288f1c2` 和 `f05c990beb04a4997b7910149d4a128f74823aae6f1af7b09c84c80ec5f20ef5`。这仍是官方 dev 的前缀烟雾数据，不能替代课程目标快照，也不是团队自爬测试集。
 
 语义编码使用 `BAAI/bge-small-zh-v1.5`，固定 revision `7999e1d3359715c523056ef9478215996d62a620`，512 维、CLS pooling、最大 512 tokens、L2 归一化；`model.safetensors` SHA256 为 `354763b9b1357bc9c44f62c6be2276321081ed2567773608c0d0785b61d5a026`，`tokenizer.json` SHA256 为 `48cea5d44424912a6fd1ea647bf4fe50b55ab8b1e5879c3275f80e339e8fae26`。运行时为 PyTorch 2.3.0、Transformers 4.57.1、NVIDIA A800 80GB；CUDA 编码结果有限、归一化范数为 1，重复编码最大绝对差为 0。标准 Hugging Face 端点在该任务中不可达，权重通过固定 revision 的公开镜像取得；镜像只用于下载，不改变模型 ID 或 revision。
 
@@ -90,4 +90,20 @@ Qdrant 适配器和快照发布逻辑已在 `offline/vector_build.py`、`online/
 
 所有 corpus、annotation、queries、qrels 和 runs 仍保存在版本库外；本次正式收据记录了 assistant 审阅者、日期、标签规则和 SHA256。若后续需要独立人工 gold labels，应另建版本并保留本次 assistant qrels 作为单独实验条件。
 
-规模路径的当前边界和可复现实验入口见 [`docs/RFC0004_SCALE.md`](../docs/RFC0004_SCALE.md)。其中 compact/packed reader 和 BGE/Qdrant 辅助脚本是可选工程支持，不等同于 8M 有界构建或全规模 HNSW 验收。
+## 2026-11-02 全量数据恢复与规模构建
+
+本地续传完成 4,214,306,577-byte 官方 archive 并重新核验 SHA256；经四分片、连续 ID、唯一性及 qrels 引用校验后，原子发布 8,096,668 篇 corpus、2,000 个 official dev queries 和 9,839 条 qrels。corpus 大小为 7,425,979,008 bytes，SHA256 为 `bc67f3ccfe7423c039f04c7a5e7f6eae07a7f722087edf0caa7cfc694a8c45e8`。数据仍位于 Git 外，完整准备不等于完整索引或语义实验完成。
+
+本轮重新计算发现历史文字中 passage map、queries.dev 和 prefix20k/split 的五个摘要存在多抄字符，长度甚至超过 64 位。上文已用本轮真实 manifest 和相同 seed/行序/LF 规则重新构造的 prefix20k、test queries/qrels 摘要修正。这里只重建并核验了输入身份，没有重新运行或重新确认历史四模式实验的指标。
+
+官方 shard 01 的 10,000-document 资源 pilot 保留了正文 `()` 的零 token 文档；索引契约和 stream/compact 均已支持该类记录，保持原文与内部行序。pilot 使用明确的合成 ID，只用于资源估计，不用于评测。stream 构建 152.93 秒、进程峰值工作集 33,714,176 bytes；事件流 compact 转换 21.24 秒、峰值 34,058,240 bytes。另一次相同输出的磁盘补测为 106.67 秒，100 ms 采样观测到 SQLite 最大 42,618,880 bytes、总 staging 最大 130,210,588 bytes；这些值不能作为 8M 实测资源成本。
+
+全量 CPU 词法构建使用冻结源码副本和分盘临时库；初次非检查点进程异常终止且旧 SQLite 损坏，原目录完整保留。后续 `checkpoint_build` 使用 WAL/FULL 和输入/代码绑定，正在重新构建；仅实际发布并经数量、哈希、reader 验收后才登记完整交付。可恢复 compact 已在相同真实 10k pilot 上确认六个数据文件字节一致、全部 384,350 词项逻辑行一致和 28 篇 reader 抽样；此次包装脚本验证阶段 API 使用错误后补验通过，但没有保存转换成本，故不填新耗时/RAM。
+
+完整 official-dev 的本地确定性划分固定为 train/dev/local-holdout=172/1020/808 queries（qrels=825/4960/4054），seed `20261028`；冻结文件含全部 query IDs 和 SHA256。它仍来自 official dev，且包括已观察过前缀查询，不是官方 test 或完全盲测。模型、candidate pool、RRF 和规则策略已记录；HNSW 显式 search 参数仍须在完整质量运行前冻结。
+
+本轮 IAB 登录后确认工作区被迫下线，导航/会话失败；另一已授权入口当前返回空响应。先前的 node-service 未就绪、runtime 表单及 504 记录均保留为当时的观察。本地终端对一个入口取得 HTTP 200 且页面标题正常，用户确认自己的浏览器可用；因此不能把上述 IAB/入口观察扩大为“集群不可用”，也没有证据支持“GPU 配额不足”。现已通过不保存凭据的内存 API 会话完成认证、账号资料和 GPU 型号配额读取；任务列表和完整可调度容量仍待核验，未修改已有任务或新提交 GPU 作业。用户明确禁止电脑控制访问集群，以免抢占键鼠；后续仅使用非 GUI CLI/SSH/API 核验。全量 Qdrant/HNSW 仍未运行。
+
+新的自爬版本使用 `evaluation.crawl_articles`，目标为清洗去重后的 20k accepted unique articles，不再以 raw URL 计数。原 raw 采集已停止并完整保留为 superseded 证据（2,015 raw docs）。新版本导入原 frontier 的 11,703 个 URL（seed 文件 SHA256 `69c807888876cba583abe372826e900ac0b90ba561c42bf07128895ebdd85f4a`，全部 depth=0），绑定固定 `news-cn-body-v1` 规则、NFKC/空白精确去重、SimHash64 距离 <=3 且长度比 >=0.9 的近重复政策。原 HTTP bytes 先持久化到 SHA 寻址 gzip，再清洗并记录完整 sidecar；不因检索分数选择文章。只读抽样前五篇的原字节/decoded SHA、正文、标题及全部元数据重算一致；150 篇 snapshot 中未发现满足当前规则的残留近重复。采集仍在进行，抽样不是最终 20k 审核，也未生成新版本 queries/qrels。正文/缓存无再分发授权，均留在 Git 外。
+
+当前代码批次核心 62/62、evaluation 65/65、checkpoint/stream/BGE 专项 56/56、Node 5/5，compile 和 diffcheck 通过；独立最终审查无新增阻塞。规模路径的当前边界和可复现实验入口见 [`docs/RFC0004_SCALE.md`](../docs/RFC0004_SCALE.md)。其中 compact/packed reader 和 BGE/Qdrant 辅助脚本是可选工程支持；代码验证不替代真实模型 smoke、8M 有界构建或全规模 HNSW 验收。

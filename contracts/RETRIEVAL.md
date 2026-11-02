@@ -16,6 +16,8 @@
 
 保留 `IndexReader`：`postings(term)`、`df(term)`、`doc_length(docid)`、`doc(docid)`、`vocab()`、`manifest()`，以及 n_docs / avgdl。
 
+`doc_length` 等于共享 analyzer 的实际 token 数，可以为 0。官方语料含 `()` 等非空但没有可分析 token 的正文；构建必须保留原文、外部 ID 和行序，不得静默跳过。该类文档的 offsets 为空且不出现在词法 postings 中；`n_docs` 和 `avgdl` 仍涵盖全部文档。全零 token 语料的 `avgdl=0`、词表为空，词法查询返回空结果。conformance 仍逐文档核对 analyzer 的实际输出，因此不能用伪造零长度掩盖缺失 postings。此约定不改变 v1 文件结构，既有 `DiskIndex` 已接受非负长度。
+
 - docid：内部 int，按语料行号从 0 连续编号；跨两套索引保持一致。
 - doc_id：非空唯一 str，用于评测输出；不得把内部 docid 和外部字符串混用。
 - postings 按 docid 升序；位置严格递增；tf 等于位置数。

@@ -11,9 +11,11 @@
 
 工作边界：**离线负责 BM25 构建和向量数据库构建；在线负责查询编码、Router、向量召回与 RRF 融合**。不训练模型、不生成答案。两侧只共享 contracts/；在线只读离线产物。
 
-## 当前 TODO / 状态（2026-10-29）
+## 当前 TODO / 状态（2026-11-02）
 
-- [x] **代码与契约闸门**：A1 staging/原子发布、严格文件 SHA256、双索引指纹对齐、Qdrant 批量消费/精确计数/失败清理、快照 `.part` 发布、provenance/report 和 `offline.validate` 已在 PR #8 提交；本地 `python tests/run.py` 56/56、evaluation 27/27、Web 5/5。
+本轮已恢复并原子准备完整官方 8,096,668 篇 corpus、2,000 dev queries 和 9,839 qrels。零 token 保留、原子准备、事件流 compact、分盘 scratch、WAL/FULL lexical/compact 检查点及 reader 自动接线均有回归；同一真实 10k pilot 的 compact 数据与词项已核对一致。首个非检查点进程异常终止及坏 DB 保留，新的全量 lexical 在冻结源码上运行。新自爬版本直接计数清洗去重文章并缓存原字节/sidecar，替代 raw URL 任务；20k 冻结、多系统池化和新 qrels 待完成。完整 official-dev 内部划分已固定，HNSW 搜索参数和全量质量运行尚未完成。本轮集群访问仅观察到 IAB 导航/会话失败及另一入口空响应；本地终端对一个入口取得 HTTP 200 且标题正常，用户确认自己的浏览器可用，不能据此宣称集群不可用或配额不足。用户禁止电脑控制访问集群，后续仅使用非 GUI CLI/SSH/API；已有任务未修改。具体状态及完整验证入口以 [TODO.md](TODO.md) 和 [规模说明](docs/RFC0004_SCALE.md) 为准；GitHub 集中更新现有 PR #8。
+
+- [x] **代码与契约闸门**：A1 staging/原子发布、严格文件 SHA256、双索引指纹对齐、Qdrant 批量消费/精确计数/失败清理、快照 `.part` 发布、provenance/report 和 `offline.validate` 已在 PR #8 提交；此前本地核心 56/56、evaluation 27/27、Web 5/5。当前代码批次核心 62/62、evaluation 65/65、checkpoint/stream/BGE 专项 56/56、Node 5/5，compile 和 diffcheck 通过；独立最终审查无新增阻塞，不代表全量实验完成。
 - [x] **分工澄清**：RFC-0002 负责爬虫/清洗/qrels，RFC-0003 负责在线接线，RFC-0001 负责 Router 研究；本分支已审计并纳入独立的 stream/compact/packed/BGE 支持，但不把它们写成 8M 验收结果。
 - [x] **真实小批闭环（集群）**：已在 A800 上完成固定 BGE revision 的 CUDA 编码；仓库自身 Qdrant writer 使用 1.16.0 server/client 完成真实 collection、metadata、snapshot、独立干净实例恢复和 `QdrantVectorIndex` 只读验收。完整规模成本表和 8M 构建仍单独保留为后续项。
 - [ ] **数据冻结（RFC-0002 协作）**：分别登记批准的 DuReader 版本与团队自爬 20k 语料、来源、统计、ID 清单和 SHA256；不把公开归档或前缀冒充课程目标规模。

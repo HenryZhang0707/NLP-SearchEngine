@@ -4,3 +4,5 @@ transformers==4.46.3
 huggingface-hub==0.26.5
 safetensors==0.5.3
 qdrant-client==1.16.0
+# Optional bounded compact conversion (--streaming); core lexical tests stay dependency-free.
+ijson==3.4.0.post0

@@ -75,13 +75,15 @@ python3 -m evaluation.evaluate \
 
 ## 5. 当前限制
 
-默认分词器仍是可解释的 bigram 占位实现；公开 baseline 只有 dev 标注，真实分词对齐、Qdrant HNSW 参数和全量性能数字仍不能从本次前缀烟雾推断。集群上已经完成固定 BGE revision 的 CUDA 编码、20k 前缀上的四模式 HTTP 冒烟和 paired bootstrap；这些四模式结果使用 `memory-exact` 向量读取器，不能解释为 Qdrant HNSW 性能。真实 Qdrant server 的小批 snapshot/clean-restore/read-only 闭环已单独验收，但尚未完成 8M 规模 HNSW 与课程全量成绩。2026-10-29 已将有界 `evaluation.crawl_web` 工作流移入当前分支，并从公开中国政府网抓取 30 篇、depth=2 的 393 篇、depth=3 的 799 篇和 depth=4 的 1,029 篇同域文档；随后从公开 sitemap 增加 108 篇页面，按 URL 合并为 1,137 篇语料；另完成新华网 100 篇跨站点未标注抓取试验，作为抓取器的补充收据。对 10 个查询的 100 条候选已按用户授权进行 assistant 语义复核并生成正式 qrels，标签来源明确为 assistant，不是独立人工 gold labels。扩大抓取仍未满足 20k 自爬验收。RM3 已作为确定性的本地伪相关反馈扩展接入；SLM 仍需要外部固定模型与离线缓存，返回 501。
+2026-11-02 更新：已在本地重建并核验 8,096,668 篇官方 corpus 和全部 dev queries/qrels，保持官方文档行序和来源。真实语料中的 `()` 文档暴露出旧规模路径错误；现已保留零 token 文档并用 exact analyzer oracle 验证。事件流 compact、原子数据准备、严格源哈希和分盘 SQLite scratch 已通过回归及 10k 资源 pilot。首个无检查点构建进程已异常终止，旧 SQLite 损坏证据保留；冻结源码上的 WAL/FULL 检查点构建正在运行全量 lexical，后续再接可恢复 compact。新转换器已在相同真实 10k pilot 上确认六个数据文件字节一致、384,350 词项逻辑行一致及 28 篇 reader 抽样；转换耗时/RAM 未被包装脚本保存，因此不填新的成本值。本段不将启动当作索引交付，也不新增全量检索质量或 HNSW 指标。
+
+默认分词器仍是可解释的 bigram 占位实现；公开 baseline 只有 dev 标注，真实分词对齐、Qdrant HNSW 参数和全量性能数字仍不能从本次前缀烟雾推断。集群上已经完成固定 BGE revision 的 CUDA 编码、20k 前缀上的四模式 HTTP 冒烟和 paired bootstrap；这些四模式结果使用 `memory-exact` 向量读取器，不能解释为 Qdrant HNSW 性能。真实 Qdrant server 的小批 snapshot/clean-restore/read-only 闭环已单独验收，但尚未完成 8M 规模 HNSW 与课程全量成绩。2026-10-29 已将有界 `evaluation.crawl_web` 工作流移入当前分支，并从公开中国政府网抓取 30 篇、depth=2 的 393 篇、depth=3 的 799 篇和 depth=4 的 1,029 篇同域文档；随后从公开 sitemap 增加 108 篇页面，按 URL 合并为 1,137 篇语料；另完成新华网 100 篇跨站点未标注抓取试验，作为抓取器的补充收据。对 10 个查询的 100 条候选已按用户授权进行 assistant 语义复核并生成正式 qrels，标签来源明确为 assistant，不是独立人工 gold labels。扩大抓取仍未满足 20k 自爬验收。新的 `crawl_articles` 版本按固定正文规则、精确/近重复政策直接计数 accepted unique articles，保留原响应字节 SHA/gzip 和 sidecar；已替代仅计 raw URL 的采集任务，正在运行，尚未冻结语料或生成新 qrels。RM3 已作为确定性的本地伪相关反馈扩展接入；SLM 仍需要外部固定模型与离线缓存，返回 501。
 
 在 1,137 篇 assistant-reviewed 语料上，BM25 lexical 的 nDCG@10/Recall@10/MRR@10/MAP@100 为 `0.950197/1.000000/1.000000/0.918422`，RM3 为 `0.945802/0.980000/1.000000/0.916014`。10,000 次 paired bootstrap（seed `20261029`，RM3−lexical）nDCG 差值为 `-0.004394`，95% CI 为 `[-0.020271, 0.008033]`。adaptive 在无向量后端时 5/10 查询发生 fallback；dense 请求按契约返回 503。该结果只用于验证自爬语料上的评测闭环，不代表 20k 或 8M 全规模质量。
 
 ## 6. 2026-10-29 集群验收：路由比较与证据边界
 
-本次验收固定使用官方 RocketQA DuReader baseline archive（8,096,668 passages、2,000 dev queries、9,839 dev qrels；archive SHA256 为 `b051d3d966f7b0288aed95a923fc3b706176767d8bdcff8aa8fe5fff84b20662`）。为避免把 v1 全量内存 builder 当成 8M 生产构建，只取 dev corpus 前 20,000 篇文档，seed `20261028` 得到 train/dev/test=3/7/9；该前缀 corpus SHA256 为 `7e2a20ca5f7a75ece81efffbb45f10983c90ebaf500f60f60a4a53f9c775a55bfc8`。官方资源与固定划分的完整哈希清单见 [evaluation/RESOURCES.md](evaluation/RESOURCES.md)。
+本次验收固定使用官方 RocketQA DuReader baseline archive（8,096,668 passages、2,000 dev queries、9,839 dev qrels；archive SHA256 为 `b051d3d966f7b0288aed95a923fc3b706176767d8bdcff8aa8fe5fff84b20662`）。为避免把 v1 全量内存 builder 当成 8M 生产构建，只取 dev corpus 前 20,000 篇文档，seed `20261028` 得到 train/dev/test=3/7/9；该前缀 corpus SHA256 为 `7e2a20ca5f7a75ece81efffbb45f10983c90ebaf500f60a4a53f9c775a55bfc8`。官方资源与固定划分的完整哈希清单见 [evaluation/RESOURCES.md](evaluation/RESOURCES.md)。
 
 语义侧使用 `BAAI/bge-small-zh-v1.5` revision `7999e1d3359715c523056ef9478215996d62a620`，512 维、CLS pooling、512 token 截断、L2 归一化，运行在 NVIDIA A800 80GB、PyTorch 2.3.0、Transformers 4.57.1。模型权重和 tokenizer 的哈希、CUDA 编码有限性与重复编码检查已记录在资源文档；模型没有进入 Git。
 

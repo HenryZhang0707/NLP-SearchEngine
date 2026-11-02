@@ -51,16 +51,26 @@ def _write_postings(database: sqlite3.Connection, path: Path) -> None:
 
 
 def build(corpus_path: Path, out_dir: Path, dataset: str,
-          bm25: BM25Spec | None = None) -> Manifest:
+          bm25: BM25Spec | None = None, *, work_dir: Path | None = None,
+          progress_every: int = 0) -> Manifest:
     """Build a v1 lexical index without materializing the corpus in Python."""
 
     corpus_path, out_dir = Path(corpus_path), Path(out_dir)
+    if type(progress_every) is not int or progress_every < 0:
+        raise ValueError("progress_every 必须是非负整数")
     if out_dir.exists() and any(out_dir.iterdir()):
         raise ValueError("索引输出目录必须不存在或为空；不会覆盖既有产物")
     out_dir.parent.mkdir(parents=True, exist_ok=True)
     stage = Path(tempfile.mkdtemp(prefix=f".{out_dir.name}.stream-", dir=out_dir.parent))
-    database = sqlite3.connect(stage / "build.sqlite")
+    database = None
+    work_stage = None
     try:
+        if work_dir is not None:
+            work_dir = Path(work_dir)
+            work_dir.mkdir(parents=True, exist_ok=True)
+            work_stage = Path(tempfile.mkdtemp(prefix=f".{out_dir.name}.sqlite-", dir=work_dir))
+        database_path = (work_stage or stage) / "build.sqlite"
+        database = sqlite3.connect(database_path)
         database.executescript(
             """
             PRAGMA journal_mode=OFF;
@@ -97,8 +107,8 @@ def build(corpus_path: Path, out_dir: Path, dataset: str,
                 except sqlite3.IntegrityError as error:
                     raise ValueError(f"doc_id 必须唯一：{row['doc_id']}") from error
                 tokens = analyzer.analyze(row["text"])
-                if not tokens:
-                    raise ValueError(f"语料第 {line_number} 行没有可分析 token")
+                # Preserve punctuation-only documents and their row IDs. They
+                # have length zero, empty offsets and no lexical postings.
                 per_term: dict[str, list[int]] = {}
                 spans = []
                 for position, token in enumerate(tokens):
@@ -124,6 +134,8 @@ def build(corpus_path: Path, out_dir: Path, dataset: str,
                 n_docs += 1
                 if n_docs % 10000 == 0:
                     database.commit()
+                if progress_every and n_docs % progress_every == 0:
+                    print(f"stream documents {n_docs}", flush=True)
         if n_docs == 0:
             raise ValueError("语料不能为空")
         database.commit()
@@ -140,7 +152,9 @@ def build(corpus_path: Path, out_dir: Path, dataset: str,
         _write_postings(database, stage / POSTINGS)
         database.close()
         database = None
-        (stage / "build.sqlite").unlink()
+        database_path.unlink()
+        if work_stage is not None:
+            work_stage.rmdir()
         files = {name: sha256_of(stage / name)
                  for name in (DOCS, POSTINGS, OFFSETS, STATS)}
         manifest = Manifest(
@@ -161,6 +175,8 @@ def build(corpus_path: Path, out_dir: Path, dataset: str,
         if database is not None:
             database.close()
         shutil.rmtree(stage, ignore_errors=True)
+        if work_stage is not None:
+            shutil.rmtree(work_stage, ignore_errors=True)
         raise
 
 
@@ -169,12 +185,16 @@ def main() -> int:
     parser.add_argument("--corpus", required=True, type=Path)
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--dataset", required=True)
+    parser.add_argument("--work-dir", type=Path,
+                        help="SQLite 临时数据库目录，可使用另一磁盘；不提供断点续建")
+    parser.add_argument("--progress-every", type=int, default=0)
     parser.add_argument("--k1", type=float, default=1.2)
     parser.add_argument("--b", type=float, default=0.75)
     args = parser.parse_args()
     started = time.perf_counter()
     manifest = build(args.corpus, args.out, args.dataset,
-                      BM25Spec(k1=args.k1, b=args.b))
+                      BM25Spec(k1=args.k1, b=args.b), work_dir=args.work_dir,
+                      progress_every=args.progress_every)
     print(f"完成：{manifest.n_docs} 篇文档，avgdl={manifest.avgdl:.1f}，"
           f"耗时 {time.perf_counter() - started:.2f}s -> {args.out}")
     return 0

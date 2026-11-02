@@ -89,6 +89,20 @@ corpus fingerprint、快照文件和 provenance/report。旧 v1 产物仍可由�
 Qdrant 1.16.0 服务端上完成 3 点小批快照的干净实例恢复和只读适配器验收；这不等于
 8M 规模的 HNSW 构建或性能验收。
 
+8M 规模路径和最新资源 pilot 见 [RFC-0004 scale path](docs/RFC0004_SCALE.md)。
+`offline.stream_build --work-dir` 可将 SQLite 临时库放到独立磁盘；可选
+`offline.compact --streaming` 使用固定 `ijson==3.4.0.post0` 逐事件转换高频词倒排，
+保持 compact-v1 与默认零依赖路径兼容。包含 `()` 的零 token 文档会保留其 ID、
+空 offsets 和原文，计入全部文档数及 avgdl，不被静默丢弃。
+
+需要跨进程中断恢复时使用 `offline.checkpoint_build --state-dir /scratch/checkpoint`。
+它将已落盘的 docs/offsets 长度、输入字节位置和 SQL 记录一同提交，恢复时校验输入、
+配置与源码身份，并支持按完整词项边界继续导出 postings。旧 `stream_build` 的临时库
+不能作为这种检查点导入。完整 v1 发布后，使用 `offline.checkpoint_compact` 的独立
+`--state-dir` 继续可恢复的 compact 转换。`online.server --index /path/to/compact`
+经现有 `DiskIndex` 入口自动使用 packed reader，始终核验 compact 文件 SHA256，
+同时存在两种 manifest 的目录会被拒绝。详见同一份规模说明及相应专项测试。
+
 ## 扩充后的构建/在线接线
 
 真实 embedding 和 Qdrant 适配器是可选依赖，默认安装不下载模型。安装
@@ -113,6 +127,20 @@ python3 -m online.server --index /path/to/bm25 \
   --vector-url http://127.0.0.1:6333 \
   --vector-manifest /path/to/vector_manifest.json
 ```
+
+固定 BGE 构建的正式接线应显式复用已验 SHA 的本地模型目录：
+
+```bash
+python3 -m online.server --index /path/to/compact \
+  --vector-url http://127.0.0.1:6333 \
+  --vector-manifest /path/to/vector_manifest.json \
+  --bge-model-path /path/to/verified-bge-model --encoder-device cpu
+```
+
+集群 GPU 可将 device 改为 `cuda:0`。该路径与离线共用 `adapters.embedding.BGEEncoder`，
+固定 revision、CLS、右截断和 FP32，启动前校验同一 model inventory；缺依赖、错模型或
+坏哈希明确拒绝。未传 BGE 参数时仍使用通用 SentenceTransformer 路径。无模型接线测试
+不替代真实模型的长短文本、padding/batch 一致性和运行环境记录。
 
 服务会从 manifest 读取模型 ID、固定 revision、维度、前缀和截断配置，并校验
 Qdrant collection 中持久化的完整构建元数据、真实维度／距离和精确文档数，随后校验与倒排索引的语料指纹。

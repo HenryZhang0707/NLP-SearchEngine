@@ -20,7 +20,7 @@ import threading
 import time
 
 from contracts import analyzer
-from contracts.index_format import load_manifest, verify_files, sha256_of, REQUIRED_FILES
+from contracts.index_format import Manifest, load_manifest, verify_files, sha256_of, REQUIRED_FILES
 from contracts.reader import Document
 
 PAIR = struct.Struct('<QQ')
@@ -54,12 +54,15 @@ def integers(data):
     return values
 
 
-def compile_index(source, target):
+def compile_index(source, target, *, streaming=False):
+    if streaming:
+        from offline.compact_stream import compile_streaming
+        return compile_streaming(source, target)
     source, target = Path(source), Path(target)
     manifest = load_manifest(source)
     if set(REQUIRED_FILES) - set(manifest.files):
         raise ValueError('source manifest requires all file checksums')
-    verify_files(source, manifest)
+    verify_files(source, manifest, require_hashes=True)
     if manifest.analyzer_hash != analyzer.config_hash() or manifest.n_docs <= 0:
         raise ValueError('source analyzer/document count mismatch')
     if target.exists() and any(target.iterdir()):
@@ -70,8 +73,8 @@ def compile_index(source, target):
     if set(lengths) != {str(i) for i in range(manifest.n_docs)}:
         raise ValueError('source document lengths incomplete')
     lengths = [lengths[str(i)] for i in range(manifest.n_docs)]
-    if any(type(n) is not int or n <= 0 for n in lengths):
-        raise ValueError('compact source requires positive token lengths')
+    if any(type(n) is not int or n < 0 for n in lengths):
+        raise ValueError('compact source requires nonnegative token lengths')
     if not math.isclose(sum(lengths)/len(lengths), manifest.avgdl, rel_tol=1e-9) or not math.isclose(stats['avgdl'],manifest.avgdl,rel_tol=1e-9):
         raise ValueError('source length statistics mismatch')
     with tempfile.TemporaryDirectory(prefix='.compact-', dir=target.parent) as tmp:
@@ -80,10 +83,12 @@ def compile_index(source, target):
         with (source/'docs.jsonl').open('rb') as docs, (stage/'docs.jsonl').open('wb') as out, (stage/'docs.idx').open('wb') as index:
             for count, line in enumerate(docs, 1):
                 row = json.loads(line)
-                if (type(row['docid']) is not int or row['docid'] != count-1
+                if (type(row['docid']) is not int or row['docid'] != count-1 or count > manifest.n_docs
                         or not isinstance(row['doc_id'],str) or not row['doc_id'] or row['doc_id'] in ids
                         or not isinstance(row['text'],str) or not isinstance(row['title'],str)):
                     raise ValueError('invalid/duplicate source document')
+                if lengths[count-1] == 0 and analyzer.analyze(row['text']):
+                    raise ValueError('zero source length contradicts analyzer tokens')
                 ids.add(row['doc_id']);char_lengths.append(len(row['text']))
                 index.write(PAIR.pack(out.tell(),len(line)));out.write(line)
         if count != manifest.n_docs:
@@ -148,16 +153,28 @@ class CompactIndex:
             raise ValueError('invalid compact artifact files/version')
         for name,digest in metadata['files'].items():
             if sha256_of(self.root/name)!=digest:raise ValueError('compact checksum mismatch: '+name)
-        self._manifest=metadata['source_manifest'];self.n_docs=self._manifest['n_docs'];self.avgdl=self._manifest['avgdl']
+        source_manifest = Manifest.from_dict(metadata['source_manifest'])
+        self._manifest=source_manifest.to_dict();self.n_docs=source_manifest.n_docs;self.avgdl=source_manifest.avgdl
+        if (type(self.n_docs) is not int or self.n_docs <= 0
+                or type(self.avgdl) not in (int, float) or not math.isfinite(self.avgdl)
+                or self.avgdl < 0):
+            raise ValueError('invalid compact source statistics')
+        for name in REQUIRED_FILES:
+            digest = source_manifest.files.get(name)
+            if (not isinstance(digest,str) or len(digest)!=64
+                    or any(ch not in '0123456789abcdef' for ch in digest)):
+                raise ValueError('compact source requires valid SHA256: '+name)
         if self._manifest['analyzer']['config_hash']!=analyzer.config_hash():raise ValueError('compact analyzer mismatch')
         self._lengths=integers((self.root/'lengths.bin').read_bytes())
         if len(self._lengths)!=self.n_docs:raise ValueError('compact lengths mismatch')
+        if not math.isclose(sum(self._lengths)/self.n_docs,self.avgdl,rel_tol=1e-9,abs_tol=1e-9):
+            raise ValueError('compact average length mismatch')
         self._doc_index=(self.root/'docs.idx').read_bytes();self._offset_index=(self.root/'offsets.idx').read_bytes()
         if len(self._doc_index)!=self.n_docs*PAIR.size or len(self._offset_index)!=self.n_docs*PAIR.size:
             raise ValueError('compact row index mismatch')
         binary_flag = getattr(os, 'O_BINARY', 0)
         self._files={name:os.open(self.root/name,os.O_RDONLY | binary_flag) for name in ('docs.jsonl','offsets.bin','postings.bin')}
-        self._db=sqlite3.connect('file:'+str((self.root/'terms.sqlite').resolve())+'?mode=ro&immutable=1',uri=True,check_same_thread=False)
+        self._db=sqlite3.connect((self.root/'terms.sqlite').resolve().as_uri()+'?mode=ro&immutable=1',uri=True,check_same_thread=False)
         self._lock=threading.RLock()
         self._term=lru_cache(maxsize=4096)(self._lookup)
         self.postings=lru_cache(maxsize=cache_terms)(self._postings)
@@ -198,7 +215,7 @@ class CompactIndex:
         return Document(docid,row['doc_id'],row['title'],row['text'],list(zip(data[::2],data[1::2])))
 
     def vocab(self):
-        connection=sqlite3.connect('file:'+str((self.root/'terms.sqlite').resolve())+'?mode=ro&immutable=1',uri=True)
+        connection=sqlite3.connect((self.root/'terms.sqlite').resolve().as_uri()+'?mode=ro&immutable=1',uri=True)
         try:
             for row in connection.execute('SELECT term FROM terms ORDER BY term'):yield row[0]
         finally:connection.close()
@@ -217,7 +234,8 @@ class CompactIndex:
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--source',required=True);parser.add_argument('--out',required=True)
-    args=parser.parse_args();start=time.perf_counter();result=compile_index(args.source,args.out)
+    parser.add_argument('--streaming', action='store_true', help='use optional ijson event streaming')
+    args=parser.parse_args();start=time.perf_counter();result=compile_index(args.source,args.out,streaming=args.streaming)
     print(json.dumps(dict(documents=result['source_manifest']['n_docs'],terms=result['terms'],seconds=time.perf_counter()-start),indent=2))
 
 

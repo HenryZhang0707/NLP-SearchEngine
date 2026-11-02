@@ -88,3 +88,67 @@ Run the evaluator tests with:
 ```bash
 python3 -m unittest discover -s evaluation -p 'test_*.py'
 ```
+
+## Durable collection of unlabelled web candidates
+
+For a long crawl, use the persistent FIFO workflow rather than keeping the
+frontier in process memory. It enforces same-host HTTP(S), fail-closed robots,
+redirect validation before the redirected request, and pacing for every request
+including robots, failed fetches and leaves. Site crawl-delay/request-rate may
+increase the configured interval.
+
+```bash
+python -m evaluation.crawl_resume --state-dir /data/news-crawl \
+  --seed https://www.news.cn/ --target-documents 20000 --max-depth 6 \
+  --max-attempts 100000 --delay-seconds 0.5 --timeout 8 --max-bytes 1000000
+```
+
+Repeat exactly the same command with the same frozen code after interruption.
+SQLite is authoritative; completed pages retain their IDs, interrupted attempts
+remain charged, and an OS file lock rejects concurrent writers. The binding
+includes seeds, settings, both crawler and cleaner source hashes, and robots
+policy. A temporary robots fetch failure produces `INTERRUPTED` so the page can
+be retried after connectivity returns; it is not treated as a permanent denial.
+`corpus.jsonl` and `receipt.json` are atomic exported snapshots. If a hard stop
+occurs between their replacements, re-export from SQLite on recovery rather
+than treating the two files as a joint transaction.
+
+The 20k target counts raw, URL-distinct candidate pages. It does not establish
+20k cleaned, deduplicated, searchable documents. These candidates still require
+the RFC-0002 cleaning/source review, frozen IDs, query design and pooled
+judgments. This command creates no qrels or retrieval-quality claims.
+
+## Cleaned article collection
+
+For the new Xinhua article version, count accepted unique articles directly:
+
+```bash
+python -m evaluation.crawl_articles --state-dir /data/news-clean \
+  --seed https://www.news.cn/ --target-documents 20000 --max-depth 6 \
+  --max-attempts 100000 --delay-seconds 1 --timeout 8 --max-bytes 1000000
+python -m unittest evaluation.test_clean_news evaluation.test_crawl_resume \
+  evaluation.test_crawl_articles -v
+```
+
+The frozen `news-cn-body-v1` rule accepts article `/c.html` URLs on `www.news.cn`,
+extracts `#detailContent` (fallback `#detail`), removes specified template/editor
+nodes and requires at least 80 nonspace body characters, 40 CJK characters and
+no more than 1% replacement characters. Navigation, filtered and duplicate pages
+still discover links; they do not consume accepted document IDs. Exact dedup uses
+NFKC/whitespace-normalized body SHA256, and near dedup requires SimHash64 Hamming
+distance <=3 plus length ratio >=0.9. These rules never consult qrels.
+
+Raw response bytes are stored as SHA-addressed deterministic gzip before decoding;
+sidecars distinguish that SHA from decoded UTF-8 HTML and cleaned-body identities.
+The corpus keeps only `doc_id/title/text`; `article_sidecar.jsonl` records source,
+time, selector, filtering/duplicate reasons and capture identity. Reuse exactly
+the same command and frozen code to resume. Optional `--seed-file` takes JSONL
+URLs, binds its bytes SHA and treats imported seeds as depth 0 in a new version.
+A raw crawl state cannot be silently upgraded to this policy.
+
+SQLite remains authoritative. Corpus, sidecar and receipt are separate atomic
+exports; readers must check both hashes/counts from a matching extended receipt
+and refuse an incomplete/intermediate combination. Freeze only a completed,
+reviewed export before indexing and qrel pooling. Public availability and robots
+permission do not establish redistribution rights; full text/caches stay outside
+Git. The collector creates no queries, labels or quality scores.

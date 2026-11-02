@@ -66,4 +66,206 @@ def test_stream_builder_is_deterministic_and_conformant():
         assert first_manifest["files"] == second_manifest["files"]
 
 
+def test_tokenless_documents_preserve_ids_and_exact_oracle_lengths():
+    from offline.disk_index import DiskIndex
+    from online.memory_index import MemoryIndex
+    from online.scorers import bm25, tfidf
+
+    for rows in ([{"doc_id": "punct", "title": "", "text": "()"}, *CORPUS],
+                 [{"doc_id": "punct", "title": "", "text": "()"}]):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            corpus = root / "corpus.jsonl"
+            corpus.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+            expected = MemoryIndex.from_corpus(rows)
+            check_reader(expected, rows)
+            for builder in (build, stream_build):
+                target = root / builder.__module__.replace(".", "-")
+                builder(corpus, target, "tokenless-test")
+                disk = DiskIndex(target)
+                check_reader(disk, rows)
+                assert disk.n_docs == len(rows)
+                assert disk.doc(0).doc_id == "punct" and disk.doc(0).offsets == []
+                for score in (bm25, tfidf):
+                    assert score(disk, ["手机"]) == score(expected, ["手机"])
+
+    # A tokenful document falsified as zero still fails the exact oracle gate.
+    false_reader = MemoryIndex.from_corpus(CORPUS)
+    false_reader._exp.doc_lengths[0] = 0
+    try:
+        check_reader(false_reader, CORPUS)
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError("conformance accepted a false zero token length")
+
+
+def test_separate_sqlite_work_dir_matches_default_and_cleans_failures():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        corpus = root / "corpus.jsonl"
+        _write_corpus(corpus)
+        work = root / "work"
+        work.mkdir()
+        sentinel = work / "protected.txt"
+        sentinel.write_bytes(b"protected")
+        default = stream_build(corpus, root / "default", "work-dir-test")
+        separate = stream_build(corpus, root / "separate", "work-dir-test", work_dir=work)
+        assert default.to_dict() == separate.to_dict()
+        for name in default.files:
+            assert (root / "default" / name).read_bytes() == (root / "separate" / name).read_bytes()
+        corpus.write_text(corpus.read_text(encoding="utf-8") + "invalid JSON\n", encoding="utf-8")
+        try:
+            stream_build(corpus, root / "failed", "failed", work_dir=work)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("malformed input was accepted")
+        assert not (root / "failed").exists()
+        assert [p.name for p in work.iterdir()] == [sentinel.name]
+        assert sentinel.read_bytes() == b"protected"
+        assert not list(root.glob(".*.stream-*"))
+
+
+def test_disk_index_compact_dispatch_serves_public_http():
+    import threading
+    from http.server import ThreadingHTTPServer
+    from unittest.mock import patch
+    from urllib.error import HTTPError
+    from urllib.request import Request, urlopen
+    from offline.disk_index import DiskIndex
+    from online.engine import SearchEngine
+    from online.server import make_handler
+
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        corpus = root / "corpus.jsonl"
+        _write_corpus(corpus)
+        stream_build(corpus, root / "v1", "http-compact")
+        compile_index(root / "v1", root / "compact")
+        with patch("offline.disk_index.load_manifest", side_effect=AssertionError("legacy path entered")):
+            reader = DiskIndex(root / "compact")
+        try:
+            assert reader.storage_format == "compact-packed-v1"
+            check_reader(reader, CORPUS)
+            server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(SearchEngine(reader)))
+            worker = threading.Thread(target=server.serve_forever, daemon=True)
+            worker.start()
+            try:
+                endpoint = f"http://127.0.0.1:{server.server_port}"
+                for path in ("/health", "/index/info"):
+                    with urlopen(endpoint + path, timeout=5) as response:
+                        assert response.status == 200
+                request = Request(endpoint + "/search", data=json.dumps({
+                    "query": "手机 AND NOT 充电", "mode": "lexical", "k": 5,
+                }).encode(), headers={"Content-Type": "application/json"})
+                with urlopen(request, timeout=5) as response:
+                    payload = json.load(response)
+                assert [r["doc_id"] for r in payload["results"]] == ["d0"]
+                request = Request(endpoint + "/search", data=json.dumps({
+                    "query": "手机", "mode": "dense", "k": 5,
+                }).encode(), headers={"Content-Type": "application/json"})
+                try:
+                    urlopen(request, timeout=5)
+                except HTTPError as error:
+                    assert error.code == 503
+                    error.close()
+                else:
+                    raise AssertionError("compact server hid missing vectors")
+            finally:
+                server.shutdown()
+                worker.join(timeout=5)
+                server.server_close()
+        finally:
+            reader.close()
+
+
+def test_compact_dispatch_rejects_ambiguity_and_disabled_checksum_bypass():
+    from offline.disk_index import DiskIndex
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        corpus = root / "corpus.jsonl"
+        _write_corpus(corpus)
+        stream_build(corpus, root / "v1", "compact-dispatch")
+        compile_index(root / "v1", root / "compact")
+        (root / "compact" / "manifest.json").write_bytes((root / "v1" / "manifest.json").read_bytes())
+        try:
+            DiskIndex(root / "compact")
+        except ValueError as error:
+            assert "ambiguous" in str(error)
+        else:
+            raise AssertionError("mixed index formats were silently selected")
+        (root / "compact" / "manifest.json").unlink()
+        with (root / "compact" / "docs.idx").open("ab") as output:
+            output.write(b"\0")
+        try:
+            DiskIndex(root / "compact", verify_checksums=False)
+        except ValueError as error:
+            assert "checksum" in str(error)
+        else:
+            raise AssertionError("legacy flag bypassed compact integrity validation")
+
+
+def test_compact_reader_validates_source_version_statistics_and_identity():
+    from offline.disk_index import DiskIndex
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        corpus = root / "corpus.jsonl"
+        _write_corpus(corpus)
+        stream_build(corpus, root / "v1", "metadata-validation")
+        target = root / "compact #目录"
+        compile_index(root / "v1", target)
+        with DiskIndex(target) as reader:
+            assert reader.doc(0).doc_id == "d0"
+            assert list(reader.vocab())
+        path = target / "compact.json"
+        original = path.read_text(encoding="utf-8")
+        for key, value in (("schema_version", 999), ("avgdl", 999),
+                           ("avgdl", float("nan")), ("n_docs", True),
+                           ("files", {"docs.jsonl": None})):
+            metadata = json.loads(original)
+            metadata["source_manifest"][key] = value
+            path.write_text(json.dumps(metadata), encoding="utf-8")
+            try:
+                DiskIndex(target)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError(f"compact accepted malformed source {key}")
+
+
+def test_compact_compilers_reject_noncanonical_statistics_before_publication():
+    import importlib.util
+    from offline.checkpoint_compact import compile_checkpoint
+
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        corpus = root / "corpus.jsonl"
+        corpus.write_text(json.dumps({"doc_id": "one", "title": "", "text": "()"}) + "\n",
+                          encoding="utf-8")
+        source = root / "source"
+        stream_build(corpus, source, "noncanonical-stats")
+        path = source / "manifest.json"
+        original = json.loads(path.read_text(encoding="utf-8"))
+        variants = ["default"]
+        if importlib.util.find_spec("ijson"):
+            variants += ["streaming", "checkpoint"]
+        for key, value in (("n_docs", True), ("avgdl", False),
+                           ("avgdl", float("nan")), ("schema_version", True)):
+            for variant in variants:
+                manifest = dict(original, **{key: value})
+                path.write_text(json.dumps(manifest), encoding="utf-8")
+                target = root / (variant + "-target")
+                try:
+                    if variant == "checkpoint":
+                        compile_checkpoint(source, target, state_dir=root / "state")
+                    else:
+                        compile_index(source, target, streaming=variant == "streaming")
+                except ValueError:
+                    pass
+                else:
+                    raise AssertionError(f"{variant} published invalid {key}={value!r}")
+                assert not target.exists()
+
+
 ALL_TESTS = [value for name, value in sorted(globals().items()) if name.startswith("test_")]

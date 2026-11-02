@@ -89,11 +89,16 @@ class Manifest:
             )
         except KeyError as e:
             raise ValueError(f"manifest 缺字段: {e}") from e
-        if m.schema_version != SCHEMA_VERSION:
+        if type(m.schema_version) is not int or m.schema_version != SCHEMA_VERSION:
             raise ValueError(
                 f"schema_version={m.schema_version}，本代码只支持 {SCHEMA_VERSION}；"
                 "请先确认两侧 contracts/ 版本一致"
             )
+        if type(m.n_docs) is not int or m.n_docs < 0:
+            raise ValueError("manifest n_docs 必须是非负整数")
+        if (type(m.avgdl) not in (int, float) or not math.isfinite(m.avgdl)
+                or m.avgdl < 0):
+            raise ValueError("manifest avgdl 必须是有限非负数")
         return m
 
 

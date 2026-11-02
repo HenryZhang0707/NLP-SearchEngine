@@ -30,7 +30,7 @@ class IndexReader(Protocol):
         """包含该词项的文档数；不存在返回 0。"""
 
     def doc_length(self, docid: int) -> int:
-        """该文档索引时的 token 数。"""
+        """该文档索引时的非负 token 数；无 token 文档保留 ID 和空 offsets。"""
 
     def doc(self, docid: int) -> Document:
         """取文档原文与 offsets。"""
