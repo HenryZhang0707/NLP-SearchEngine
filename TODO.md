@@ -26,9 +26,12 @@
 - [x] 完成官方 shard 01 的 10k 资源 pilot 和磁盘补测；结果用于容量预估，未冒充正式评测或全量成本。
 - [~] **RUNNING（本地 CPU）**：首个非检查点 8M 进程已异常终止，旧 journal-OFF DB 已确认损坏并保留。新 `offline.checkpoint_build` 用 WAL/FULL、文件长度/输入 offset 事务检查点恢复全量 lexical；compact、全文件 SHA256、数量、ID/offset/reader 验收仍待完成，启动不算交付。
 - [~] **RUNNING（集群分片）**：已冻结四个连续范围的原始字节与独立文档 SHA256，前两个分片已进入 A1 构建。全量合并使用本地 SQLite 与可独占原子发布的输出卷，仍待四个分片、存储门禁与全文件验收。
+- [x] 用独立 5,000 篇原生试验验证 A1 顺序产物写共享卷、SQLite 留本机的路径：摄入 fsync 后、postings 导出中、发布重命名后三处硬退出均恢复成功，五个成品哈希与本机 oracle 一致，耗时 50.31 秒。后续 100k 共享输出 A1 验证也通过五文件哈希一致性：构建 631.627 秒，cgroup 峰值 1,387,294,720 bytes，无 OOM；它仅覆盖 A1，扩大分片和并发仍须单独准入。
 - [x] 构建检查点 hard-exit/发布/绑定及首次空库恢复回归通过；完整 official-dev 内部划分已固定为 train/dev/holdout=172/1020/808 queries，并保留来源及已观察过前缀查询的边界；HNSW 建图和显式搜索配置也已在正式质量运行前冻结，2,048 文档实际图/恢复已通过独立工程验收，全量仍待验收。
 - [x] 持久 raw 抓取、固定正文清洗、原响应字节缓存、精确/近重复和 sidecar 已实现；原 raw 任务以 2,015 篇状态停止并保留，新 `crawl_articles` 直接以有效唯一文章为目标运行，不复用旧 qrels。前五篇真实 capture/正文/metadata 重算一致，150 篇 snapshot 未发现规则内残留近重复。
-- [~] **RUNNING（本地网络采集）**：继续采集至清洗去重后 20k，冻结 corpus/sidecar/receipt 和 SHA256；已从独立正文阅读的 220 个来源中按预冻顺序选出 200 条 assistant 查询草案，并冻结 dev/test=50/150 的 query IDs。仍须绑定全部选中来源的最终正文身份，再做盲化多系统池化及明确 assistant provenance 的标签复核；200 条种子候选已逐对标注并核验身份与证据位置（197 条等级 2，3 条等级 1），待最终语料与完整池确认后复用。
+- [x] 修复清洗抓取器提前发布缺少 sidecar 信息的终态回执：先完成语料和 sidecar，再一次性发布完整 receipt；sidecar 写入失败保留前一回执。两条回归在旧实现上失败、修复后通过。此前的采集任务保持冻结源码运行至完成；消费者仍核对所有 SHA256。
+- [x] 自爬清洗去重语料已达到 20,000 篇，最终 corpus/sidecar/receipt SHA256 已核验；200 条冻结查询的来源正文身份全部匹配，dev/test=50/150。200 条种子标注（197 条等级 2，3 条等级 1）保持 assistant provenance；完整盲化池化及其余标签仍待完成。
+- [~] **RUNNING（自爬双索引与候选池）**：冻结 20k 语料上的 A1 已发布，20,000 条真实 BGE GPU 向量缓存已生成并通过独立完整校验；正在接 Qdrant 与五系统深度 20 池化；完整标注、干净实例恢复、四模式深度 100 评测和 paired bootstrap 尚待实际执行。
 - [x] 可恢复 `checkpoint_compact`、compact 自动 reader 接线及严格元数据校验已实现；相同真实 10k pilot 的六个数据文件字节、384,350 词项逻辑行和 28 篇抽样一致。源码审查发现首次空库启动窗口并补严格恢复；全量 compact 仍须等 lexical 发布。
 - [x] 通过仅驻留内存的非 GUI API 会话核对现有任务和剩余 CPU/RAM/型号配额；新隔离 CPU2/RAM2GiB/GPU0 源码预检在真实 Python3.10.14 / Torch2.3.0 环境通过核心、evaluation、56 项专项及编译，耗时 52.90 秒。未修改已有任务，不使用电脑控制；后续每次提交仍须刷新容量。
 - [x] 集群标准语料原始 SHA/大小/行数重新核验通过；固定模型六个官方文件完成本机下载、集群传输和回下载 SHA 验证。34 个依赖 wheel 经官方 PyPI hash/size 和原生 Linux 依赖闭包核验，离线安装成功；旧缓存缺文件、直接下载超时及安装阶段超时证据均保留。
@@ -50,7 +53,7 @@
 - [x] 标准语料使用已核验的官方 8,096,668 篇版本；全部 official-dev 查询的内部划分、ID 清单和 SHA256 已在全规模质量运行前冻结（train/dev/local-holdout=172/1020/808）。100001/2000/9839 只是团队提案假设，不作为教师指定快照；不声称拥有未公开的 official test labels。
 - [ ] 在 dev 上冻结 Router 阈值、candidate pool、RRF `c` 和模型配置，再在独立 test 上运行 lexical、dense、固定 hybrid、adaptive 四组；逐查询保存 TREC run、路由原因分布、向量触发/成功/fallback、平均/p50/p95 延迟。
 - [ ] 用 `evaluation.compare` 至少完成 fixed-hybrid vs adaptive 的 paired bootstrap，并在报告中给出 query-level 差值和区间；不要在 test 上挑阈值。
-- [~] 选择允许抓取的公开站点并运行 `crawl_web crawl` 已完成 gov.cn 的 30/393/799/1,029 篇候选批次、sitemap 合并后的 1,137 篇，以及新华网 100 篇跨站点候选；assistant qrels 已按授权生成，但仍需找到来源扩展到 20k 有效文档。若要独立人工 gold labels，必须另行复核，不能把 assistant labels 改称人工真值。
+- [x] 公开站点抓取已从 gov.cn 历史小批推进到新华网清洗去重后的 20k 冻结语料；旧小批 assistant qrels 与新测试集分离。新测试集完整池化标签仍待完成，不能把 assistant labels 改称独立人工 gold。
 - [ ] 将最终冻结的自爬 20k corpus、queries、按授权完成 assistant 语义复核的正式工程 qrels 和 manifest 接入统一双索引构建；保留来源、ID、计数和 SHA256。
 - [x] 纳入 SQLite 支持的 `offline.stream_build`、compact/packed reader、DiskDocuments 和临时 SQLite ID 校验，并以 tiny corpus conformance 验证；1,029 文档的 stream/compact 已完成，但全量 packed conformance 在本地超过 20 分钟无收据后停止，仍需进行有界验证、8M 预检、全量构建、峰值 RSS/磁盘/吞吐和快照收据。
 - [ ] 2,048 文档真实 HTTP Qdrant/HNSW 工程准入已通过；若要声称全规模服务性能，仍须记录完整规模的资源/磁盘/吞吐、失败率及四模式质量收据；小批 HNSW 与 local exact smoke 均不替代全规模验收。
@@ -65,7 +68,7 @@
 
 ## 固定验证入口
 
-当前新增代码验证为核心 62/62、evaluation 74/74、checkpoint/stream/BGE/文档源/CLI/HNSW/产物保护专项 109/109，compile 和 diffcheck 通过；此前未变动的 Web 代码已通过 Node 5/5。这些是代码验证；全量文档源、真实 CPU/GPU 模型及小批 HNSW 已有独立工程收据，完整双索引与全规模四模式/paired bootstrap 仍待完成。
+当前新增代码验证为核心 62/62、evaluation 76/76、checkpoint/stream/BGE/文档源/CLI/HNSW/产物保护专项 109/109，compile 和 diffcheck 通过；此前未变动的 Web 代码已通过 Node 5/5。这些是代码验证；全量文档源、真实 CPU/GPU 模型及小批 HNSW 已有独立工程收据，完整双索引与全规模四模式/paired bootstrap 仍待完成。
 
 ```bash
 python tests/run.py

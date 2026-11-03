@@ -149,10 +149,7 @@ class CleanArticleCrawl(DurableCrawl):
     def _record_failure(self, url, outcome, attempt):
         self.db.execute('INSERT INTO evidence VALUES (?,?,?,?,NULL)', (attempt, url, outcome, None))
 
-    def export(self):
-        # Base exports are individually atomic; DB remains authoritative if interrupted
-        # between them. Final receipt is published only after the sidecar snapshot.
-        receipt = super().export()
+    def _prepare_receipt(self, receipt):
         captures = {}
         for row in self.db.execute('SELECT id,attempt,source_url,collected_at,http_bytes_sha256,cache_path,content_type,charset FROM captures ORDER BY id'):
             keys = ('capture_id', 'attempt', 'source_url', 'collected_at', 'http_bytes_sha256', 'cache_path', 'content_type', 'charset')
@@ -170,8 +167,6 @@ class CleanArticleCrawl(DurableCrawl):
         receipt.update(collection='clean-news/v1', accepted_unique_documents=receipt['documents'],
                        sidecar_sha256=hashlib.sha256(data).hexdigest(),
                        raw_capture_count=self.db.execute('SELECT COUNT(*) FROM captures').fetchone()[0])
-        _atomic(self.directory / 'receipt.json', (_json(receipt) + '\n').encode('utf-8'))
-        return receipt
 
 
 def main(argv=None):

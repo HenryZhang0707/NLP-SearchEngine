@@ -66,7 +66,21 @@ RocketQA 脚本中的数据和 ERNIE 权重来自 `dataset-bj.cdn.bcebos.com`。
 
 Qdrant 适配器和快照发布逻辑已在 `offline/vector_build.py`、`online/vector_index.py` 中实现。没有可用 Qdrant 实例时，内存向量替身只能用于契约测试，不能作为 HNSW 性能结论。
 
-## 团队自爬测试集（assistant 复核 qrels，仍未达到 20k）
+## 团队自爬测试集（20k 语料已冻结，完整池化 qrels 待完成）
+
+2026-11-03，新华网 `clean-news/v1` 抓取任务达到 `TARGET_REACHED`，清洗及精确/近重复去重后共有 **20,000** 篇有效文章。该语料独立于官方 DuReader 前缀试验，采用同域、robots fail-closed、深度 6、每次请求间隔 1 秒和单响应 1,000,000 字节上限。语料与 sidecar 的最终 SHA256 已重新核验，原始响应缓存、数据和索引均不进入 Git。
+
+| 最终产物 | 字节数 | SHA256 |
+| --- | ---: | --- |
+| corpus.jsonl | 84,555,357 | `3f16eaeae59ab9c0cfc80c219b0f51b8a0aeb784cca4a2be4070c0161447b851` |
+| article_sidecar.jsonl | 36,800,693 | `f19c6972e6d97419a6206c47fb695757f815e8b6ef62953d4ef8d498737afc7e` |
+
+最终回执 SHA256 为 `e73861130be4da1ee1a1eef772e4d52bbb5837126a265b6650aadebade8e99a6`。此前冻结的 200 条来源支持查询（dev/test=50/150）均与最终语料的来源 ID、标题和正文身份核验一致；查询文件 SHA256 为 `3b906bfc4841dd34f919f3b87a984a7902860348f0ce6ce40213b99b50632578`。已有 200 条 assistant 种子标注不代表完整检索池 qrels；五系统深度 20 的盲化池化及其余标签尚待完成。正式质量请求将检索到深度 100，并同时报告已标注覆盖率；有限池下的 Recall/MAP 不被表述为穷尽全语料的人工真值成绩。
+
+同一冻结 20k 语料已完成真实 BGE/512/FP32 文档向量缓存。独立作业申请 1 张 2080 Ti、4 CPU、4 GiB，共耗时 197.097 秒，包含模型/源码准入、编码、全量缓存校验与打包；本机再次完整核验 20,000 条映射、向量和输入哈希。收据 SHA256 为 `456b3843225b0ec7b5bc819314e1846def1b51e99607cc36289d78198f674ca0`，缓存标识为 `a8402c6d95714b150ad4570baa0a61a85b1429fd02f3e1e5bd19c69647ba4c5b`。A1 词法索引也已发布，Qdrant 建图、快照恢复、完整池化及正式质量评测仍为独立验收项。缓存和索引不进入 Git。
+
+以下为历史小批数据与工程冒烟，保留各自的来源和规模边界。
+
 
 2026-10-29 已使用仓库的 `evaluation.crawl_web` 对公开的中国政府网执行一次有界抓取：seed 为 `https://www.gov.cn/`，同域 HTTP(S) BFS，`max_documents=30`、`max_depth=1`、`max_bytes=500000`、请求间隔 0.2 秒，并要求 robots.txt 允许。抓取结果为 30 篇文档，corpus SHA256 为 `8e6cde8dfa0647deb9d55466064d951b445eb19f13740d349ef8398b86d5ab1b`；该语料和抓取收据保存在版本库外。
 
@@ -114,11 +128,11 @@ Qdrant 适配器和快照发布逻辑已在 `offline/vector_build.py`、`online/
 
 完整 2,000 queries 的语法预检发现 3 条显式约束（train/dev/local-holdout=0/1/2）。它们按当前 dense 契约预期返回特定 HTTP400；评测器提供显式、query SHA 绑定的 policy，仍发送全部请求，将准确匹配的预期拒绝记为空检索并单列覆盖率和延迟。默认仍严格失败，其他错误不能被吞掉；完整分母不会被共同支持子集分析替换。对应 policy 在质量运行前冻结于 Git 外，尚无正式请求或质量指标。
 
-新的自爬版本使用 `evaluation.crawl_articles`，目标为清洗去重后的 20k accepted unique articles，不再以 raw URL 计数。原 raw 采集已停止并完整保留为 superseded 证据（2,015 raw docs）。新版本导入原 frontier 的 11,703 个 URL（seed 文件 SHA256 `69c807888876cba583abe372826e900ac0b90ba561c42bf07128895ebdd85f4a`，全部 depth=0），绑定固定 `news-cn-body-v1` 规则、NFKC/空白精确去重、SimHash64 距离 <=3 且长度比 >=0.9 的近重复政策。原 HTTP bytes 先持久化到 SHA 寻址 gzip，再清洗并记录完整 sidecar；不因检索分数选择文章。只读抽样前五篇的原字节/decoded SHA、正文、标题及全部元数据重算一致；150 篇 snapshot 中未发现满足当前规则的残留近重复。采集仍在进行，抽样不是最终 20k 审核；尚未生成新版本 qrels。正文/缓存无再分发授权，均留在 Git 外。
+新的自爬版本使用 `evaluation.crawl_articles`，目标为清洗去重后的 20k accepted unique articles，不再以 raw URL 计数。原 raw 采集已停止并完整保留为 superseded 证据（2,015 raw docs）。新版本导入原 frontier 的 11,703 个 URL（seed 文件 SHA256 `69c807888876cba583abe372826e900ac0b90ba561c42bf07128895ebdd85f4a`，全部 depth=0），绑定固定 `news-cn-body-v1` 规则、NFKC/空白精确去重、SimHash64 距离 <=3 且长度比 >=0.9 的近重复政策。原 HTTP bytes 先持久化到 SHA 寻址 gzip，再清洗并记录完整 sidecar；不因检索分数选择文章。只读抽样前五篇的原字节/decoded SHA、正文、标题及全部元数据重算一致；150 篇 snapshot 中未发现满足当前规则的残留近重复。该轮抽样时采集仍在进行；最终 20k 语料随后于 2026-11-03 冻结，见上文。完整池化 qrels 仍待完成。正文/缓存无再分发授权，均留在 Git 外。
 
-该新版本已有 200 条来源支持的 assistant 查询草案：对 220 个来源独立阅读正文，初稿接受 206、拒绝 14；独立 assistant 回读及正文核对额外拒绝 1 条，再按预冻 source rank 取前 200，未使用检索结果或 qrels 选择。草案 JSONL SHA256 为 `3b906bfc4841dd34f919f3b87a984a7902860348f0ce6ce40213b99b50632578`，类型为 explanation/comparison/policy/event/fact=63/9/35/43/50，dev/test=50/150 的 query IDs 已冻结。它们不是 qrels、独立人工 gold 或已完成测试的查询；全部选中来源仍须绑定最终 20k 的 source_doc_id/title/text 身份，之后才能完成盲化多系统池化、assistant 标签及正式评测。设计 manifest 与来源证据均留在 Git 外。
+该新版本已有 200 条来源支持的 assistant 查询草案：对 220 个来源独立阅读正文，初稿接受 206、拒绝 14；独立 assistant 回读及正文核对额外拒绝 1 条，再按预冻 source rank 取前 200，未使用检索结果或 qrels 选择。草案 JSONL SHA256 为 `3b906bfc4841dd34f919f3b87a984a7902860348f0ce6ce40213b99b50632578`，类型为 explanation/comparison/policy/event/fact=63/9/35/43/50，dev/test=50/150 的 query IDs 已冻结。它们不是 qrels、独立人工 gold 或已完成测试的查询；全部选中来源已于 2026-11-03 核验最终 20k 的 source_doc_id/title/text 身份；盲化多系统池化、其余 assistant 标签及正式评测仍待完成。设计 manifest 与来源证据均留在 Git 外。
 
-当前代码批次核心 62/62、evaluation 74/74、checkpoint/stream/BGE/文档源/CLI/HNSW 专项 109/109，compile 和 diffcheck 通过，未改动的 Web 代码此前 Node 5/5 通过。规模路径的当前边界和可复现实验入口见 [`docs/RFC0004_SCALE.md`](../docs/RFC0004_SCALE.md)。文档源、CPU/GPU 数值及小批 HNSW 收据均不替代完整双索引和全规模四模式/paired bootstrap 评测。
+当前代码批次核心 62/62、evaluation 76/76、checkpoint/stream/BGE/文档源/CLI/HNSW 专项 109/109，compile 和 diffcheck 通过，未改动的 Web 代码此前 Node 5/5 通过。规模路径的当前边界和可复现实验入口见 [`docs/RFC0004_SCALE.md`](../docs/RFC0004_SCALE.md)。文档源、CPU/GPU 数值及小批 HNSW 收据均不替代完整双索引和全规模四模式/paired bootstrap 评测。
 
 ### REST 配置与存储检查的边界
 
@@ -135,3 +149,5 @@ Qdrant 适配器和快照发布逻辑已在 `offline/vector_build.py`、`online/
 源码和真实 SQLite 对照证实 compact 同连接的长生命周期 SELECT 阻止 WAL checkpoint；有界 keyset 分页并在写入/提交前关闭游标后，tiny WAL 峰值由 659,232 降至 32,992 bytes。旧 compiler 在新增回归中 4 项失败（database table is locked），修复后通过；相同 tiny 输入的 8 个公开产物逐字节相同，分页边界 fsync/commit 硬退出恢复保持字节一致。修复保持 WAL/FULL、原提交节奏、格式、字段校验和原生资源门禁。修复后以相同 2 CPU / 4 GiB 通过 100,000 文档原生复验。A1 构建 602.202 秒，compact 358.180 秒，cgroup 峰值 2,408,161,280 bytes，OOM 与 failcnt 均为 0。13 个静态文件读回 SHA256 与源一致，packed reader 两次重开。原始收据 SHA256 为 `6fc41aa4d19e3506ac0dc00f00faa4384ef3486cdd1664696a152692906c765be`。
 
 100,000 文档的语义 pilot 使用 1 张 2080 Ti、4 CPU、8 GiB 和固定 BGE revision。CUDA 编码 245.574 秒（407.209 docs/s），Qdrant 1.16 完成建图、三份静态交付物的 SHA256 读回和新实例恢复。16 条探针恢复前后的 ANN 与 exact top-200 各自一致，非空 segment 记录到实际 HNSW 搜索。cgroup 峰值 2,799,603,712 bytes，无 OOM。收据 SHA256 为 `edc2a955974b0457163654d9e88729a9c20841e0416eebe9f158f978eb91f59d`，快照 SHA256 为 `e9c6d8764bc39f8f0cf086c2a67325eba4ff0aafd3be834afcea79565611eacd`。该轮未使用 qrels。
+
+2026-11-03 另申请 2 CPU / 4 GiB 验证 100k A1 产物直接写共享卷、SQLite 留本机的布局，五个文件与已有原生私有盘基准逐字节一致。A1 构建 631.627 秒，cgroup 峰值 1,387,294,720 bytes，OOM/failcnt 均为 0；私有/共享目录采样峰值分别为 779,751,424 / 811,275,616 bytes。旧私有盘构建为 602.202 秒，两者不是随机交错的性能比较。收据 SHA256 为 `1bf2c4fd513e33b297eab85078070acf190d452f4840b51fc241c9c8543bb76e`。该次观测到的 cgroup CPU quota 相当于 4 核。试验只覆盖 A1，不能外推为全量或并发容量验收；物理后端仍未确认。

@@ -342,6 +342,9 @@ class DurableCrawl:
             raise
         return self.export()
 
+    def _prepare_receipt(self, receipt):
+        """Let subclasses publish required artifacts and add receipt fields."""
+
     def export(self):
         corpus = self.directory / "corpus.jsonl"
         temporary = self.directory / "corpus.jsonl.tmp"
@@ -363,6 +366,7 @@ class DurableCrawl:
             outcomes=dict(self.db.execute("SELECT outcome,COUNT(*) FROM attempts GROUP BY outcome")),
             binding=self.binding, corpus_sha256=digest.hexdigest(), pid=int(meta["pid"]),
             exported_at=self.clock())
+        self._prepare_receipt(receipt)
         temporary = self.directory / "receipt.json.tmp"
         with temporary.open("w", encoding="utf-8", newline="\n") as handle:
             handle.write(_json(receipt) + "\n")

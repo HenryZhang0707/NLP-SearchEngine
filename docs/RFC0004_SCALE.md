@@ -326,6 +326,28 @@ ordering, format and validation remain unchanged. The native 100k rerun under th
 including two packed-reader reopens and SHA256 readback of 13 static files.
 The 8M corpus still requires separate resource and reader acceptance.
 
+A 5,000-document native split-mount probe passed with unchanged A1 code:
+sequential artifacts were written to LeoFS while the WAL/FULL checkpoint stayed
+on private overlay storage. Hard exits after ingest fsync, during postings
+export and after publication rename all resumed; deliberately overlong tails
+were truncated and all five final file hashes matched the private-storage
+oracle. The probe requested 2 CPUs / 2 GiB and took 50.312 seconds including both builds,
+faults and verification. Its maximum child RSS was 24,588,288 bytes; exact
+cgroup peak memory was unavailable and is not inferred from RSS. Receipt SHA256:
+`2ec61371f03ea87f834238690e520816100e910e4de37a14877a0968b0da8f84`.
+This verifies filesystem semantics, not full-shard throughput or safe concurrent
+capacity. Existing jobs were kept intact. A subsequent 100,000-document native
+split-mount A1 build also matched all five private-baseline artifact hashes.
+It requested 2 CPUs / 4 GiB, took 631.627 seconds for A1, and recorded an exact
+cgroup peak of 1,387,294,720 bytes with no OOM or failcnt increase. Sampled
+private/shared owned peaks were 779,751,424 / 811,275,616 bytes. The earlier
+private A1 build took 602.202 seconds; the 1.049 ratio is descriptive because
+load and hardware placement were not randomized. Receipt SHA256:
+`1bf2c4fd513e33b297eab85078070acf190d452f4840b51fc241c9c8543bb76e`.
+This second probe covers A1 only; it does not establish a 506k or 8M peak,
+physical backing identity, or safe multi-worker capacity. Further scheduling
+requires fresh resource checks and separate admission of the proposed workload.
+
 The historical NFS check does not describe every private mount: static ROOT
 was subsequently observed as LeoFS. Qdrant runtime data uses isolated storage.
 Container `/tmp` reports overlay with physical backing UNKNOWN; that alone
@@ -335,7 +357,7 @@ a silently ignored JSON config is a failed setup, not an accepted downgrade.
 
 ## Remaining production gate
 
-The current code batch passes core 62/62, evaluation 74/74,
+The current code batch passes core 62/62, evaluation 76/76,
 checkpoint/stream/BGE/document-source/CLI/HNSW/artifact-ownership checks 109/109, Node 5/5,
 compilation and diff checks.
 Independent final review found no additional blocker. These checks do not

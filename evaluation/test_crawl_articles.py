@@ -2,9 +2,11 @@
 import gzip
 import hashlib
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from evaluation.crawl_articles import CleanArticleCrawl
 from evaluation.crawl_web import CrawlConfig, CrawlError
@@ -117,6 +119,41 @@ class CleanCrawlTests(unittest.TestCase):
             self.assertEqual(receipt['status'], 'TARGET_REACHED')
             self.assertEqual(receipt['attempts'], 3)
             self.assertEqual(receipt['accepted_unique_documents'], 1)
+
+    def test_each_receipt_publication_has_matching_corpus_and_sidecar(self):
+        receipt_path = self.path / 'receipt.json'
+        real_replace = os.replace
+        published = []
+
+        def observe_replace(source, target):
+            real_replace(source, target)
+            if target == receipt_path:
+                receipt = json.loads(receipt_path.read_bytes())
+                self.assertEqual(receipt.get('collection'), 'clean-news/v1')
+                self.assertEqual(receipt['accepted_unique_documents'], receipt['documents'])
+                for name, digest_key in [('corpus.jsonl', 'corpus_sha256'),
+                                         ('article_sidecar.jsonl', 'sidecar_sha256')]:
+                    digest = hashlib.sha256((self.path / name).read_bytes()).hexdigest()
+                    self.assertEqual(digest, receipt[digest_key])
+                published.append(receipt['status'])
+
+        with self.make(lambda u, c: response(article()), seeds=[A],
+                       config=CrawlConfig(max_documents=1)) as crawler:
+            with patch('evaluation.crawl_resume.os.replace', side_effect=observe_replace):
+                crawler.run()
+        self.assertEqual(published, ['RUNNING', 'TARGET_REACHED'])
+
+    def test_sidecar_write_failure_preserves_previous_receipt(self):
+        receipt_path = self.path / 'receipt.json'
+        with self.make(lambda u, c: response(article()), seeds=[A], export_every=2,
+                       config=CrawlConfig(max_documents=1)) as crawler:
+            crawler.export()
+            previous = receipt_path.read_bytes()
+            self.assertEqual(json.loads(previous)['status'], 'RUNNING')
+            with patch('evaluation.crawl_articles._atomic', side_effect=OSError('sidecar write failed')):
+                with self.assertRaisesRegex(OSError, 'sidecar write failed'):
+                    crawler.run()
+            self.assertEqual(receipt_path.read_bytes(), previous)
 
     def test_attempt_limit_does_not_treat_filtered_as_documents(self):
         pages = {ROOT: f'<a href="{A}">A</a>', A: article()}
