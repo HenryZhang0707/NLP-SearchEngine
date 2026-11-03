@@ -322,8 +322,9 @@ pinned WAL frames. Bounded keyset pages close that reader before writes/commits
 in both postings and terms export. The new regression fails on the old code
 and passes with the fix; all eight public tiny artifacts are byte-identical,
 including recovery at the tested fsync/commit page boundary. WAL/FULL, save
-ordering, format and validation remain unchanged. Full native100k with the
-same 4 GiB budget remains pending; no full admission is claimed.
+ordering, format and validation remain unchanged. The native 100k rerun under the same 4 GiB budget passed A1 and compact,
+including two packed-reader reopens and SHA256 readback of 13 static files.
+The 8M corpus still requires separate resource and reader acceptance.
 
 The historical NFS check does not describe every private mount: static ROOT
 was subsequently observed as LeoFS. Qdrant runtime data uses isolated storage.
@@ -358,3 +359,20 @@ evidence.
 
 Large corpora, model files, Qdrant collections/snapshots, generated indexes,
 runs and resource receipts belong outside Git.
+
+For parallel offline builds, freeze the raw corpus SHA256 and contiguous shard
+ranges before building. For each shard, independently hash its canonical A1
+documents with shard-local IDs. Build A1 and compact for each shard, then pass
+the ordered pairs to `python scripts/merge_indexes.py --plan PLAN.json --shard
+A1_0 COMPACT_0 --shard A1_1 COMPACT_1 --out BUNDLE --state-dir STATE`.
+The plan fields are `dataset`, `source_sha256`, `n_docs`, and `shards`.
+Each shard entry contains `start`, `stop`, `expected_docs_sha256`, and an
+optional `raw_sha256`. The output contains `lexical/` and `compact/`.
+Keep the input shards fixed while building or resuming.
+
+`python scripts/cache_vectors.py --help` exposes separate producer and consumer
+commands. Producers use distinct shard IDs and the same corpus hash, model
+specification, batch size, and cache directory. The cache directory requires
+exclusive creation and hard links. The consumer validates each sealed chunk
+and still uses the public Qdrant snapshot writer. Completed chunks can be
+reused after interruption. Inspect any incomplete claims before recovery.

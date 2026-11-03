@@ -27,7 +27,7 @@
 - [~] **RUNNING（本地 CPU）**：首个非检查点 8M 进程已异常终止，旧 journal-OFF DB 已确认损坏并保留。新 `offline.checkpoint_build` 用 WAL/FULL、文件长度/输入 offset 事务检查点恢复全量 lexical；compact、全文件 SHA256、数量、ID/offset/reader 验收仍待完成，启动不算交付。
 - [x] 构建检查点 hard-exit/发布/绑定及首次空库恢复回归通过；完整 official-dev 内部划分已固定为 train/dev/holdout=172/1020/808 queries，并保留来源及已观察过前缀查询的边界；HNSW 建图和显式搜索配置也已在正式质量运行前冻结，2,048 文档实际图/恢复已通过独立工程验收，全量仍待验收。
 - [x] 持久 raw 抓取、固定正文清洗、原响应字节缓存、精确/近重复和 sidecar 已实现；原 raw 任务以 2,015 篇状态停止并保留，新 `crawl_articles` 直接以有效唯一文章为目标运行，不复用旧 qrels。前五篇真实 capture/正文/metadata 重算一致，150 篇 snapshot 未发现规则内残留近重复。
-- [~] **RUNNING（本地网络采集）**：继续采集至清洗去重后 20k，冻结 corpus/sidecar/receipt 和 SHA256；已从独立正文阅读的 220 个来源中按预冻顺序选出 200 条 assistant 查询草案，并冻结 dev/test=50/150 的 query IDs。仍须绑定全部选中来源的最终正文身份，再做盲化多系统池化及明确 assistant provenance 的标签复核；查询草案不是 qrels 或已测试结果。
+- [~] **RUNNING（本地网络采集）**：继续采集至清洗去重后 20k，冻结 corpus/sidecar/receipt 和 SHA256；已从独立正文阅读的 220 个来源中按预冻顺序选出 200 条 assistant 查询草案，并冻结 dev/test=50/150 的 query IDs。仍须绑定全部选中来源的最终正文身份，再做盲化多系统池化及明确 assistant provenance 的标签复核；200 条种子候选已逐对标注并核验身份与证据位置（197 条等级 2，3 条等级 1），待最终语料与完整池确认后复用。
 - [x] 可恢复 `checkpoint_compact`、compact 自动 reader 接线及严格元数据校验已实现；相同真实 10k pilot 的六个数据文件字节、384,350 词项逻辑行和 28 篇抽样一致。源码审查发现首次空库启动窗口并补严格恢复；全量 compact 仍须等 lexical 发布。
 - [x] 通过仅驻留内存的非 GUI API 会话核对现有任务和剩余 CPU/RAM/型号配额；新隔离 CPU2/RAM2GiB/GPU0 源码预检在真实 Python3.10.14 / Torch2.3.0 环境通过核心、evaluation、56 项专项及编译，耗时 52.90 秒。未修改已有任务，不使用电脑控制；后续每次提交仍须刷新容量。
 - [x] 集群标准语料原始 SHA/大小/行数重新核验通过；固定模型六个官方文件完成本机下载、集群传输和回下载 SHA 验证。34 个依赖 wheel 经官方 PyPI hash/size 和原生 Linux 依赖闭包核验，离线安装成功；旧缓存缺文件、直接下载超时及安装阶段超时证据均保留。
@@ -42,7 +42,7 @@
 - [x] 独立 local-cache 2080Ti pilot 实测 1 GPU / 4 CPU / 4 GiB，`GPU_PILOT_PASS`：CPU/GPU 最大绝对差 `1.6391277e-7 < 1e-5`，2,048 篇全文 batch16/32/64 分别为 420.896/404.423/414.533 docs/s，进程峰值 RSS 1,015,775,232 bytes。flat cgroup 路径未证明 exact membership，不用其数值宣称任务峰值。历史 4090/2080Ti 调度任务及失败证据继续保留，不因新 pilot 通过而改动旧任务；此结果不是质量或 8M 吞吐验收。
 - [x] 独立 local-cache 真实 BGE/512/FP32 + Qdrant1.16 的 2,048 文档 HNSW pilot 通过：A/B exact count 均为 2,048、全部非空 segment indexed 且两次稳定观测；各 16 查询的非空 segment HNSW counter +16、plain/exact +0，空 segment 的 plain +16 单列；新进程/空存储恢复后 ANN/exact 各自 IDs、顺序、scores 一致（abs `1e-5`）。快照持久化在静态 ROOT，详见资源收据；历史模型初始化超时保留，未据新通过结果归因旧超时。
 - [x] 原生 10k lexical scratch repair 通过：2 CPU / 2 GiB、核心构建 31.215 秒（320.359 docs/s）、精确进程成员映射的 cgroup 峰值 858,669,056 bytes、无 OOM、两次重开全量 reader 通过；overlay physical backing 仍 UNKNOWN，不是物理 SSD 或全量准入。
-- [~] 原生 100k pilot 的 Unicode13 repair1 已完成 A1 构建与独立校验，但 compact 在原定 4 GiB cgroup 的 90% 门禁停止：进程 RSS 约 46 MB、私有 WAL 约 1.98 GB，无 OOM。已用真实 SQLite 复现同连接长读游标钉住 WAL，并将 compact 两处遍历改为有界分页且提交前关闭游标；旧代码新回归失败、修复后通过，8 个公开产物字节不变。完整同预算原生复验仍待完成，不放宽资源门禁，不登记 100k/full PASS。
+- [~] 原生 100k pilot 的 Unicode13 repair1 已完成 A1 构建与独立校验，但 compact 在原定 4 GiB cgroup 的 90% 门禁停止：进程 RSS 约 46 MB、私有 WAL 约 1.98 GB，无 OOM。已用真实 SQLite 复现同连接长读游标钉住 WAL，并将 compact 两处遍历改为有界分页且提交前关闭游标；旧代码新回归失败、修复后通过，8 个公开产物字节不变。修复后以同样的 2 CPU / 4 GiB 通过 100k A1、compact、两次 reader 重开及 13 文件静态交付，cgroup 峰值 2,408,161,280 bytes。全量 8M 验收单独进行。
 - [x] 预检完整 2,000 queries 无语法错误，其中 3 条显式约束预期被 dense 契约拒绝；新增默认严格、query SHA 绑定的显式 expected-unsupported policy 和可追溯请求日志，保留全部查询的指标分母、单列覆盖率和失败延迟，意外错误仍中止。正式 policy 留在 Git 外，尚未运行正式质量请求。
 - [x] 规模恢复/清洗批次已集中提交 `4e8ed60`、仅推送 fork，更新现有 PR #8 / Issue #6；后续文档源/HNSW 接线及完整规模结果继续积累，不为状态变化单独建 PR。
 
