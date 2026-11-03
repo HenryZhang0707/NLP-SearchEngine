@@ -35,6 +35,8 @@ DOC_FILES = ("lexical/docs.jsonl", "lexical/offsets.jsonl", "compact/docs.jsonl"
              "compact/lengths.bin")
 TERM_FILES = ("lexical/postings.jsonl", "compact/postings.bin")
 BUFFER_BYTES = 65536
+TERMS_EXPORT = "public-terms-export.sqlite"
+SQLITE_SIDECARS = ("-journal", "-wal", "-shm")
 CHECKPOINT_BYTES = 16 * 1024 * 1024
 # Public output transaction schedule is the native compiler's default, not the
 # merger's independently configurable private checkpoint interval.
@@ -427,7 +429,7 @@ def _metadata_bytes(value):
     return (json.dumps(value, ensure_ascii=False, indent=2) + "\n").replace("\n", os.linesep).encode("utf-8")
 
 
-def _finalize(database, state, stage, sources, lengths):
+def _finalize(database, state, stage, state_dir, sources, lengths):
     average = sum(lengths) / len(lengths)
     _durable_write(stage / "lexical/stats.json", _stats_parts(lengths, average))
     manifest = Manifest(dataset=state["binding"]["inputs"]["plan"]["dataset"], n_docs=len(lengths), avgdl=average,
@@ -438,11 +440,13 @@ def _finalize(database, state, stage, sources, lengths):
     # INSERT OR REPLACE and default 1000-term commit schedule. Private WAL
     # history never enters the bundle. An interrupted export restarts this one
     # derived SQLite file; it cannot mix private/export transaction histories.
-    term_path = stage / "compact/terms.sqlite"
-    if term_path.exists(): term_path.unlink()
-    for suffix in ("-journal", "-wal", "-shm"):
+    # Keep the journaled export on the checkpoint filesystem. The output
+    # filesystem only receives a closed SQLite file and is read immutably.
+    term_path = state_dir / TERMS_EXPORT
+    term_path.unlink(missing_ok=True)
+    for suffix in SQLITE_SIDECARS:
         sidecar = Path(str(term_path) + suffix)
-        if sidecar.exists(): sidecar.unlink()
+        sidecar.unlink(missing_ok=True)
     # Do not hold SELECT statements on the private writer connection across COMMIT.
     # This export is bounded, and finishes/ closes its cursor before saving state.
     with closing(sqlite3.connect(term_path)) as output:
@@ -459,7 +463,16 @@ def _finalize(database, state, stage, sources, lengths):
                     _hook("terms_export_chunk", state)
         output.commit()
     with term_path.open("r+b") as stream: os.fsync(stream.fileno())
+    published_terms = stage / "compact/terms.sqlite"
+    # FINALIZE can be restarted after a partial copy. The private stage is
+    # never visible to readers before verification and directory publication.
+    published_terms.unlink(missing_ok=True)
+    with term_path.open("rb") as stream:
+        _durable_write(published_terms, iter(lambda: stream.read(BUFFER_BYTES), b""))
     files = {name: sha256_of(stage / "compact" / name) for name in checkpoint_compact.ARTIFACTS}
+    if files["terms.sqlite"] != sha256_of(term_path):
+        raise ValueError("closed terms export copy checksum mismatch")
+    term_path.unlink()
     metadata = dict(compact_version=1, source_manifest=manifest.to_dict(), files=files, terms=state["terms_done"])
     _durable_write(stage / "compact/compact.json", [_metadata_bytes(metadata)])
     checkpoint_build._fsync_dir(stage / "lexical")
@@ -549,7 +562,8 @@ def merge_indexes(shards, target, *, state_dir, plan, checkpoint_docs=10000, che
                            ("checkpoint_compact", checkpoint_compact),
                            ("analyzer", analyzer), ("index_format", index_format))})
         db_path = state_dir / "merge-state.sqlite"
-        fresh = checkpoint_build._fresh_checkpoint(db_path, stage, target)
+        fresh = checkpoint_build._fresh_checkpoint(
+            db_path, stage, target, recovery_files={TERMS_EXPORT, *(TERMS_EXPORT + s for s in SQLITE_SIDECARS)})
         if fresh and target.exists(): raise ValueError("target exists; refusing overwrite")
         if stage.is_symlink() or (fresh and stage.exists()):
             raise ValueError("unexpected staging directory; refusing unsafe adoption")
@@ -593,7 +607,7 @@ def merge_indexes(shards, target, *, state_dir, plan, checkpoint_docs=10000, che
             checkpoint_build._fsync_dir(target.parent)
             if state["status"] == "DOCS": _documents(database, state, sources, lengths, stage, checkpoint_docs)
             if state["status"] == "TERMS": _terms(database, state, sources, lengths, stage, checkpoint_terms)
-            if state["status"] == "FINALIZE": _finalize(database, state, stage, sources, lengths)
+            if state["status"] == "FINALIZE": _finalize(database, state, stage, state_dir, sources, lengths)
             verified_this_call = False
             if state["status"] == "VERIFY":
                 state["artifact_hashes"] = _verify(stage, lengths)

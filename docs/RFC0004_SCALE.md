@@ -369,6 +369,11 @@ The plan fields are `dataset`, `source_sha256`, `n_docs`, and `shards`.
 Each shard entry contains `start`, `stop`, `expected_docs_sha256`, and an
 optional `raw_sha256`. The output contains `lexical/` and `compact/`.
 Keep the input shards fixed while building or resuming.
+Keep the checkpoint directory on a local filesystem. Both the checkpoint
+database and the active public terms export are written there. The output
+staging directory receives the closed SQLite file and verifies its SHA256.
+On a separate output volume, verify directory `fsync`, truncation, and
+exclusive atomic rename before allocating a full build.
 
 `python scripts/cache_vectors.py --help` exposes separate producer and consumer
 commands. Producers use distinct shard IDs and the same corpus hash, model

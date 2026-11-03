@@ -76,6 +76,24 @@ class MergeIndexesTests(unittest.TestCase):
         return merger.merge_indexes(self.shards, self.target, state_dir=self.state,
                                     plan=self.plan, checkpoint_docs=2, checkpoint_terms=2)
 
+    def test_terms_export_writes_only_in_private_state(self):
+        connect = sqlite3.connect
+        writable_paths = []
+
+        def record(database, *args, **kwargs):
+            if not kwargs.get("uri"):
+                writable_paths.append(Path(database))
+            return connect(database, *args, **kwargs)
+
+        with patch.object(merger.sqlite3, "connect", side_effect=record):
+            self.merge()
+        self.assertEqual(writable_paths, [
+            self.state.resolve() / "merge-state.sqlite",
+            self.state.resolve() / "public-terms-export.sqlite",
+        ])
+        self.assertFalse(writable_paths[-1].exists())
+        self.oracle()
+
     def oracle(self, rows=None):
         rows = self.rows if rows is None else rows
         source, packed = self.root / "monolithic", self.root / "monolithic-compact"

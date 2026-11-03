@@ -25,6 +25,7 @@
 - [x] 修复真实语料 `()` 的零 token 兼容问题并保留全部 ID/行序；增加可选事件流 compact、严格源哈希、分盘 SQLite scratch 和专项回归。
 - [x] 完成官方 shard 01 的 10k 资源 pilot 和磁盘补测；结果用于容量预估，未冒充正式评测或全量成本。
 - [~] **RUNNING（本地 CPU）**：首个非检查点 8M 进程已异常终止，旧 journal-OFF DB 已确认损坏并保留。新 `offline.checkpoint_build` 用 WAL/FULL、文件长度/输入 offset 事务检查点恢复全量 lexical；compact、全文件 SHA256、数量、ID/offset/reader 验收仍待完成，启动不算交付。
+- [~] **RUNNING（集群分片）**：已冻结四个连续范围的原始字节与独立文档 SHA256，前两个分片已进入 A1 构建。全量合并使用本地 SQLite 与可独占原子发布的输出卷，仍待四个分片、存储门禁与全文件验收。
 - [x] 构建检查点 hard-exit/发布/绑定及首次空库恢复回归通过；完整 official-dev 内部划分已固定为 train/dev/holdout=172/1020/808 queries，并保留来源及已观察过前缀查询的边界；HNSW 建图和显式搜索配置也已在正式质量运行前冻结，2,048 文档实际图/恢复已通过独立工程验收，全量仍待验收。
 - [x] 持久 raw 抓取、固定正文清洗、原响应字节缓存、精确/近重复和 sidecar 已实现；原 raw 任务以 2,015 篇状态停止并保留，新 `crawl_articles` 直接以有效唯一文章为目标运行，不复用旧 qrels。前五篇真实 capture/正文/metadata 重算一致，150 篇 snapshot 未发现规则内残留近重复。
 - [~] **RUNNING（本地网络采集）**：继续采集至清洗去重后 20k，冻结 corpus/sidecar/receipt 和 SHA256；已从独立正文阅读的 220 个来源中按预冻顺序选出 200 条 assistant 查询草案，并冻结 dev/test=50/150 的 query IDs。仍须绑定全部选中来源的最终正文身份，再做盲化多系统池化及明确 assistant provenance 的标签复核；200 条种子候选已逐对标注并核验身份与证据位置（197 条等级 2，3 条等级 1），待最终语料与完整池确认后复用。

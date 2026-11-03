@@ -71,7 +71,7 @@ def _fsync_dir(path: Path) -> None:
             os.close(descriptor)
 
 
-def _fresh_checkpoint(path: Path, stage: Path, target: Path) -> bool:
+def _fresh_checkpoint(path: Path, stage: Path, target: Path, *, recovery_files=()) -> bool:
     """Adopt only an empty SQLite bootstrap, never a damaged committed state.
 
     The initial DDL and checkpoint row commit together. Before that commit,
@@ -83,7 +83,7 @@ def _fresh_checkpoint(path: Path, stage: Path, target: Path) -> bool:
             raise ValueError("state-dir contains unknown files; refusing unsafe adoption")
         return True
     known = {"state.lock", path.name, *(path.name + suffix for suffix in ("-wal", "-shm", "-journal"))}
-    if any(p.name not in known or not p.is_file() for p in path.parent.iterdir()):
+    if any(p.name not in known.union(recovery_files) or not p.is_file() for p in path.parent.iterdir()):
         raise ValueError("state-dir contains unknown files; refusing unsafe adoption")
     try:
         with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as probe:
@@ -97,7 +97,7 @@ def _fresh_checkpoint(path: Path, stage: Path, target: Path) -> bool:
             empty = empty and probe.execute("PRAGMA page_count").fetchone()[0] <= 1
     except (sqlite3.DatabaseError, TypeError, ValueError) as error:
         raise ValueError("not a valid checkpoint database; no unsafe recovery") from error
-    if not empty:
+    if not empty or any(p.name in recovery_files for p in path.parent.iterdir()):
         raise ValueError("not an uncommitted empty checkpoint; no unsafe recovery")
     if stage.exists() or target.exists():
         raise ValueError("empty checkpoint has existing stage/target; artifacts are protected")
