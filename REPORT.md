@@ -77,13 +77,39 @@ python3 -m evaluation.evaluate \
 
 2026-11-02 更新：已在本地重建并核验 8,096,668 篇官方 corpus 和全部 dev queries/qrels，保持官方文档行序和来源。真实语料中的 `()` 文档暴露出旧规模路径错误；现已保留零 token 文档并用 exact analyzer oracle 验证。事件流 compact、原子数据准备、严格源哈希和分盘 SQLite scratch 已通过回归及 10k 资源 pilot。首个无检查点构建进程已异常终止，旧 SQLite 损坏证据保留；冻结源码上的 WAL/FULL 检查点构建正在运行全量 lexical，后续再接可恢复 compact。新转换器已在相同真实 10k pilot 上确认六个数据文件字节一致、384,350 词项逻辑行一致及 28 篇 reader 抽样；转换耗时/RAM 未被包装脚本保存，因此不填新的成本值。本段不将启动当作索引交付，也不新增全量检索质量或 HNSW 指标。
 
-默认分词器仍是可解释的 bigram 占位实现；公开 baseline 只有 dev 标注，真实分词对齐、Qdrant HNSW 参数和全量性能数字仍不能从本次前缀烟雾推断。集群上已经完成固定 BGE revision 的 CUDA 编码、20k 前缀上的四模式 HTTP 冒烟和 paired bootstrap；这些四模式结果使用 `memory-exact` 向量读取器，不能解释为 Qdrant HNSW 性能。后续独立 local-cache 2080Ti 数值/吞吐 pilot 与真实 BGE/512/FP32、Qdrant1.16 的 2,048 文档 HNSW/新实例恢复均通过；后者在恢复前后证明全部非空 segment indexed 及实际 HNSW counter 增长，但未使用 qrels，也未运行质量评测。快照与资源收据详见 [evaluation/RESOURCES.md](evaluation/RESOURCES.md)，不替代 8M 规模 HNSW、四模式质量或 paired bootstrap。原生 10k lexical scratch repair 已通过资源/发布/reader 准入；100k 的 Unicode13 修正版完成 A1 构建与独立校验，compact 随后因私有 WAL 增长触发原 4 GiB 内存门禁；长读游标阻止 checkpoint 的代码问题已复现并修复，保持 WAL/FULL、格式与校验，修复后通过同 4 GiB 预算的 100k 原生 A1 与 compact 复验，13 个静态文件读回校验通过。真实 BGE 与 Qdrant HNSW 的 100k 原生 pilot 也完成建图、快照和新实例恢复。100k 两条链路的收据只用于工程验收。2026-10-29 已将有界 `evaluation.crawl_web` 工作流移入当前分支，并从公开中国政府网抓取 30 篇、depth=2 的 393 篇、depth=3 的 799 篇和 depth=4 的 1,029 篇同域文档；随后从公开 sitemap 增加 108 篇页面，按 URL 合并为 1,137 篇语料；另完成新华网 100 篇跨站点未标注抓取试验，作为抓取器的补充收据。对 10 个查询的 100 条候选已按用户授权进行 assistant 语义复核并生成正式 qrels，标签来源明确为 assistant，不是独立人工 gold labels。2026-11-03，新的 `crawl_articles` 任务按固定正文规则及精确/近重复政策达到 20,000 篇 accepted unique articles，已核对最终 corpus、sidecar 和回执 SHA256；原响应字节 SHA/gzip 继续保留在仓库外。这完成了自爬语料规模与身份冻结；双索引构建、五系统池化及独立快照恢复也已通过下述验收，完整池化 qrels 和正式检索质量仍待完成。已从独立阅读的 220 个来源按预冻顺序选出 200 条来源支持的 assistant 查询草案，并冻结 dev/test=50/150 的 query IDs；200 个种子候选已完成 assistant 语义标注；全部 200 个查询的来源正文身份已与最终 20k 语料核验一致，五系统深度20池化形成8,281对候选，复用200条种子标注后，其余8,081对正按冻结规则进行盲化全文审阅。RM3 已作为确定性的本地伪相关反馈扩展接入；SLM 仍需要外部固定模型与离线缓存，返回 501。
+默认分词器仍是可解释的 bigram 占位实现；公开 baseline 只有 dev 标注，真实分词对齐、Qdrant HNSW 参数和全量性能数字仍不能从本次前缀烟雾推断。集群上已经完成固定 BGE revision 的 CUDA 编码、20k 前缀上的四模式 HTTP 冒烟和 paired bootstrap；这些四模式结果使用 `memory-exact` 向量读取器，不能解释为 Qdrant HNSW 性能。后续独立 local-cache 2080Ti 数值/吞吐 pilot 与真实 BGE/512/FP32、Qdrant1.16 的 2,048 文档 HNSW/新实例恢复均通过；后者在恢复前后证明全部非空 segment indexed 及实际 HNSW counter 增长，但未使用 qrels，也未运行质量评测。快照与资源收据详见 [evaluation/RESOURCES.md](evaluation/RESOURCES.md)，不替代 8M 规模 HNSW、四模式质量或 paired bootstrap。原生 10k lexical scratch repair 已通过资源/发布/reader 准入；100k 的 Unicode13 修正版完成 A1 构建与独立校验，compact 随后因私有 WAL 增长触发原 4 GiB 内存门禁；长读游标阻止 checkpoint 的代码问题已复现并修复，保持 WAL/FULL、格式与校验，修复后通过同 4 GiB 预算的 100k 原生 A1 与 compact 复验，13 个静态文件读回校验通过。真实 BGE 与 Qdrant HNSW 的 100k 原生 pilot 也完成建图、快照和新实例恢复。100k 两条链路的收据只用于工程验收。2026-10-29 已将有界 `evaluation.crawl_web` 工作流移入当前分支，并从公开中国政府网抓取 30 篇、depth=2 的 393 篇、depth=3 的 799 篇和 depth=4 的 1,029 篇同域文档；随后从公开 sitemap 增加 108 篇页面，按 URL 合并为 1,137 篇语料；另完成新华网 100 篇跨站点未标注抓取试验，作为抓取器的补充收据。对 10 个查询的 100 条候选已按用户授权进行 assistant 语义复核并生成正式 qrels，标签来源明确为 assistant，不是独立人工 gold labels。2026-11-03，新的 `crawl_articles` 任务按固定正文规则及精确/近重复政策达到 20,000 篇 accepted unique articles，已核对最终 corpus、sidecar 和回执 SHA256；原响应字节 SHA/gzip 继续保留在仓库外。双索引构建、五系统池化及独立快照恢复均已验收。从 220 个来源按预先固定的顺序选出 200 条有正文依据的 assistant 查询，并固定 dev/test 为 50/150。五系统深度 20 池化形成 8,281 对候选，其中 200 条种子按身份复用，另 8,081 条经盲化全文复核。正式工程 qrels 的开发集含 2,067 条判定，测试集含 6,214 条判定，标签保留 assistant 来源。RM3 已作为确定性的本地伪相关反馈扩展接入；SLM 仍需要外部固定模型与离线缓存，返回 501。
 
-自爬20k链路使用固定BGE的GPU文档向量、CPU查询编码、compact词法读取器与Qdrant 1.16 HNSW。独立空存储恢复后，16条预先固定查询的Top-20文档ID、顺序及分数完全一致，最大分数差为0；非空分段实际HNSW搜索计数增加16，plain/exact均不增加。完整快照、池化和恢复回执的SHA256见[evaluation/RESOURCES.md](evaluation/RESOURCES.md)。此结果证明构建与恢复链路，不是相关度结论；四模式深度100质量评测和paired bootstrap仍须等完整标签冻结后执行。
+自爬20k链路使用固定BGE的GPU文档向量、CPU查询编码、compact词法读取器与Qdrant 1.16 HNSW。独立空存储恢复后，16条预先固定查询的Top-20文档ID、顺序及分数完全一致，最大分数差为0；非空分段实际HNSW搜索计数增加16，plain/exact均不增加。完整快照、池化和恢复回执的SHA256见[evaluation/RESOURCES.md](evaluation/RESOURCES.md)。这 16 条查询用于验证快照恢复一致性。正式相关度评测使用独立固定的 150 条测试查询。
 
 在 1,137 篇 assistant-reviewed 语料上，BM25 lexical 的 nDCG@10/Recall@10/MRR@10/MAP@100 为 `0.950197/1.000000/1.000000/0.918422`，RM3 为 `0.945802/0.980000/1.000000/0.916014`。10,000 次 paired bootstrap（seed `20261029`，RM3−lexical）nDCG 差值为 `-0.004394`，95% CI 为 `[-0.020271, 0.008033]`。adaptive 在无向量后端时 5/10 查询发生 fallback；dense 请求按契约返回 503。该结果只用于验证自爬语料上的评测闭环，不代表 20k 或 8M 全规模质量。
 
-## 6. 2026-10-29 集群验收：路由比较与证据边界
+## 6. 自爬新闻测试集的四模式评测
+
+使用同一 20,000 篇新闻索引和冻结的 150 条测试查询，通过本地服务的公开 HTTP 接口 `POST /search` 对四组分别请求深度 100。四组按模式调用同一套冻结的词法索引和语义后端，后端使用固定 BGE revision、Qdrant 1.16 HNSW、候选池 `200`、RRF `c=60` 和 `hnsw_ef=256`。Adaptive 使用冻结的 `rules-v1`，词表覆盖率阈值 0.7，相对分差阈值 0.1。词法分支使用 BM25，四组均关闭查询扩展。
+
+| 模式 | nDCG@10 | Recall@10 | MRR@10 | MAP@100 | 平均 / p50 / p95（ms） | 向量尝试 / 成功 / 回退 |
+| --- | ---: | ---: | ---: | ---: | --- | --- |
+| Lexical | 0.916759 | 0.889736 | 0.966889 | 0.860244 | 705.79 / 635.48 / 1391.42 | 0 / 0 / 0 |
+| Dense | 0.751270 | 0.736250 | 0.845463 | 0.656654 | 357.29 / 287.39 / 616.68 | 150 / 150 / 0 |
+| 固定 Hybrid | 0.851093 | 0.828622 | 0.924167 | 0.781127 | 704.94 / 642.86 / 1267.19 | 150 / 150 / 0 |
+| Adaptive | 0.908248 | 0.873136 | 0.975556 | 0.851412 | 675.61 / 633.24 / 1212.74 | 32 / 32 / 0 |
+
+Router 对 118 条查询直接执行 lexical，对 32 条执行 hybrid。后者有 32 条的 Top-100 排名和分数与固定 hybrid 一致。在这批查询上，纯 lexical 的 nDCG、Recall 和 MAP 最高，Adaptive 的 MRR 最高。请求按固定臂顺序由单个客户端串行发往本机回环 HTTP，后台词法索引任务仍在运行，延迟只描述本次测量。
+
+按同一批查询做 10,000 次配对重采样，seed 为 `20261028`。差值为 Adaptive 减固定 Hybrid。
+
+| 指标 | Adaptive − 固定 Hybrid | 95% 配对区间 |
+| --- | ---: | --- |
+| nDCG@10 | +0.057155 | [+0.029345, +0.088803] |
+| Recall@10 | +0.044514 | [+0.015665, +0.076540] |
+| MRR@10 | +0.051389 | [+0.021111, +0.085833] |
+| MAP@100 | +0.070285 | [+0.039223, +0.105083] |
+
+四项配对区间均高于零。区间逐指标计算，未做多重比较校正。
+
+请求位置的已判定比例（@10/@100）为 Lexical 100.0%/30.0%；Dense 100.0%/28.1%；固定 Hybrid 100.0%/41.1%；Adaptive 100.0%/32.1%。未判定命中在指标计算中贡献零增益，池化 Recall/MAP 只覆盖已判定候选。该测试集的查询来自冻结的新闻来源，标签来自 assistant 全文复核。逐查询请求、TREC、回执及 SHA256 索引见 [资源记录](evaluation/RESOURCES.md)。
+
+## 7. 2026-10-29 集群验收：路由比较与证据边界
 
 本次验收固定使用官方 RocketQA DuReader baseline archive（8,096,668 passages、2,000 dev queries、9,839 dev qrels；archive SHA256 为 `b051d3d966f7b0288aed95a923fc3b706176767d8bdcff8aa8fe5fff84b20662`）。为避免把 v1 全量内存 builder 当成 8M 生产构建，只取 dev corpus 前 20,000 篇文档，seed `20261028` 得到 train/dev/test=3/7/9；该前缀 corpus SHA256 为 `7e2a20ca5f7a75ece81efffbb45f10983c90ebaf500f60a4a53f9c775a55bfc8`。官方资源与固定划分的完整哈希清单见 [evaluation/RESOURCES.md](evaluation/RESOURCES.md)。
 
@@ -102,6 +128,6 @@ python3 -m evaluation.evaluate \
 
 配对 bootstrap 的差值定义为后者减前者，样本数 10,000、seed `20261028`。lexical→hybrid 的 nDCG/Recall/MRR/MAP 差值及 95% CI 分别为 `+0.165719 [0.037037, 0.294400]`、`+0.333333 [0.000000, 0.666667]`、`+0.119577 [0.015873, 0.238095]`、`+0.104233 [0.011111, 0.222222]`；lexical→adaptive 分别为 `+0.087674 [0.000000, 0.207683]`、`+0.222222 [0.000000, 0.555556]`、`+0.048148 [0.000000, 0.122222]`、`+0.040212 [0.000000, 0.098413]`。只有 9 个 test queries，CI 不能外推到课程全量。
 
-Qdrant server 侧已完成真实小批验收：Qdrant `1.16.0` 服务端与 `qdrant-client==1.16.0` 由仓库自身 `QdrantSnapshotWriter` 创建 `rfc4_writer_20261029b` collection，写入 3 个 4 维 cosine 向量及完整 build metadata，HNSW 参数记录为 `m=16`、`ef_construct=100`。生成快照 SHA256 为 `899eb64518664a726612a3e6e3e9a13037c4160ae9342ba21f08468fb5c53ac0`；随后在空存储目录、独立服务端口用 `--snapshot` 恢复，服务端版本仍为 `1.16.0`，exact count=3，内部 ID 为 `[0, 1, 2]`，payload 外部 ID 为 `doc-a/doc-b/doc-c`，恢复 metadata 与 manifest 完全一致，仓库 `QdrantVectorIndex` 只读查询返回 `(0, doc-a), (2, doc-c), (1, doc-b)`。此前未归一化向量也被 `validate_vector` 正确拒绝。该证据满足真实小批 server snapshot/clean-restore/read-only 闭环，但不代表 8M 规模性能。课程目标版本的独立 test labels、团队自爬测试集和 8M 规模索引仍是后续工作，不能把本节前缀 smoke 写成正式课程成绩。
+Qdrant server 侧已完成真实小批验收：Qdrant `1.16.0` 服务端与 `qdrant-client==1.16.0` 由仓库自身 `QdrantSnapshotWriter` 创建 `rfc4_writer_20261029b` collection，写入 3 个 4 维 cosine 向量及完整 build metadata，HNSW 参数记录为 `m=16`、`ef_construct=100`。生成快照 SHA256 为 `899eb64518664a726612a3e6e3e9a13037c4160ae9342ba21f08468fb5c53ac0`；随后在空存储目录、独立服务端口用 `--snapshot` 恢复，服务端版本仍为 `1.16.0`，exact count=3，内部 ID 为 `[0, 1, 2]`，payload 外部 ID 为 `doc-a/doc-b/doc-c`，恢复 metadata 与 manifest 完全一致，仓库 `QdrantVectorIndex` 只读查询返回 `(0, doc-a), (2, doc-c), (1, doc-b)`。此前未归一化向量也被 `validate_vector` 正确拒绝。该证据满足真实小批 server snapshot/clean-restore/read-only 闭环，但不代表 8M 规模性能。公开资源仍缺少课程提案版本的独立 test labels，官方 8M 规模索引仍待验收。本节记录前缀工程冒烟。
 
-2026-11-04，全量 BGE 向量缓存独立内容验收完成，162 块覆盖全部 8,096,668 篇；最终收据、逐项校验范围和资源成本见 [evaluation/RESOURCES.md](evaluation/RESOURCES.md)。词法十分片中五片已完成生产端 A1/compact 发布校验，连续覆盖 5,566,459 篇；剩余分片和全量合并继续进行。上述完成项是构建与产物完整性证据，尚不能给出全量 Qdrant HNSW 四模式的质量、延迟或 paired bootstrap 结论。
+2026-11-04，全量 BGE 向量缓存独立内容验收完成，162 块覆盖全部 8,096,668 篇；最终收据、逐项校验范围和资源成本见 [evaluation/RESOURCES.md](evaluation/RESOURCES.md)。词法十分片中六片已完成生产端 A1/compact 发布校验，连续覆盖 6,072,501 篇。其余四片仍受私有存储放置限制，全量合并尚待验收。上述完成项是构建与产物完整性证据，尚不能给出全量 Qdrant HNSW 四模式的质量、延迟或 paired bootstrap 结论。

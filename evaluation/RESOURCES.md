@@ -66,7 +66,7 @@ RocketQA 脚本中的数据和 ERNIE 权重来自 `dataset-bj.cdn.bcebos.com`。
 
 Qdrant 适配器和快照发布逻辑已在 `offline/vector_build.py`、`online/vector_index.py` 中实现。没有可用 Qdrant 实例时，内存向量替身只能用于契约测试，不能作为 HNSW 性能结论。
 
-## 团队自爬测试集（20k 语料已冻结，完整池化 qrels 待完成）
+## 团队自爬新闻测试集
 
 2026-11-03，新华网 `clean-news/v1` 抓取任务达到 `TARGET_REACHED`，清洗及精确/近重复去重后共有 **20,000** 篇有效文章。该语料独立于官方 DuReader 前缀试验，采用同域、robots fail-closed、深度 6、每次请求间隔 1 秒和单响应 1,000,000 字节上限。语料与 sidecar 的最终 SHA256 已重新核验，原始响应缓存、数据和索引均不进入 Git。
 
@@ -75,7 +75,7 @@ Qdrant 适配器和快照发布逻辑已在 `offline/vector_build.py`、`online/
 | corpus.jsonl | 84,555,357 | `3f16eaeae59ab9c0cfc80c219b0f51b8a0aeb784cca4a2be4070c0161447b851` |
 | article_sidecar.jsonl | 36,800,693 | `f19c6972e6d97419a6206c47fb695757f815e8b6ef62953d4ef8d498737afc7e` |
 
-最终回执 SHA256 为 `e73861130be4da1ee1a1eef772e4d52bbb5837126a265b6650aadebade8e99a6`。此前冻结的 200 条来源支持查询（dev/test=50/150）均与最终语料的来源 ID、标题和正文身份核验一致；查询文件 SHA256 为 `3b906bfc4841dd34f919f3b87a984a7902860348f0ce6ce40213b99b50632578`。五系统深度 20 池化已完成，共 8,281 对候选，按身份复用 200 条 assistant 种子标注，另外 8,081 对正在盲化全文审阅；尚未形成完整 qrels。正式质量请求将检索到深度 100，并同时报告已标注覆盖率；有限池下的 Recall/MAP 不被表述为穷尽全语料的人工真值成绩。
+最终回执 SHA256 为 `e73861130be4da1ee1a1eef772e4d52bbb5837126a265b6650aadebade8e99a6`。此前冻结的 200 条来源支持查询（dev/test=50/150）均与最终语料的来源 ID、标题和正文身份核验一致；查询文件 SHA256 为 `3b906bfc4841dd34f919f3b87a984a7902860348f0ce6ce40213b99b50632578`。由 lexical、dense、固定 hybrid、adaptive 和 lexical+RM3 在深度 20 汇集候选，补入来源候选后共 8,281 对。按身份复用 200 条 assistant 种子判定，其余 8,081 对逐篇全文复核。标签来源为 `assistant_semantic_review_not_human_gold`。全池 0/1/2 级分别为 7,603/360/318 条，开发集 2,067 条，测试集 6,214 条。正式质量请求使用深度 100，Recall/MAP 按池中判定计算。
 
 同一冻结 20k 语料已完成真实 BGE/512/FP32 文档向量缓存。独立作业申请 1 张 2080 Ti、4 CPU、4 GiB，共耗时 197.097 秒，包含模型/源码准入、编码、全量缓存校验与打包；本机再次完整核验 20,000 条映射、向量和输入哈希。收据 SHA256 为 `456b3843225b0ec7b5bc819314e1846def1b51e99607cc36289d78198f674ca0`，缓存标识为 `a8402c6d95714b150ad4570baa0a61a85b1429fd02f3e1e5bd19c69647ba4c5b`。A1、compact 及 Qdrant HNSW 建图已完成，查询仍使用固定 CPU BGE。五个检索臂各完成 200 条查询；本地会话中断后逐字节复用已完整落盘的四臂，仅重跑未完整记录的 RM3，保留旧的部分结果。缓存、索引及运行数据均不进入 Git。
 
@@ -85,8 +85,15 @@ Qdrant 适配器和快照发布逻辑已在 `offline/vector_build.py`、`online/
 | --- | --- |
 | 五臂运行 manifest | `903973eef424189e508ba24934ed8da5bd195862fa72bb792d2bfe26e3293aa4` |
 | 8,281 对候选池 manifest | `c02c8c18a1f65ed0c306175c558ee683b4fecf46f9a1877cc7b13dd59b5bc3ca` |
+| 正式 qrels manifest | `fdcdc39b91388b7e48b58fbbbbfecab7206f756542ead1d49a6904912a1c5214` |
+| test.qrels.tsv | `4448466dc6cbe41569b755ce5f817f56e8b88e927ab13b7b7b6d06a465694850` |
 | 20k Qdrant 快照 | `143724e357d88a40ed5ec5f0d0a22f2f3c1e3769e8aa6d0cad35859100104036` |
 | 新进程恢复验证回执 | `61fd1279b3954cd1235439f35542a53df52be98a2db5bcbfefdba1deef9ab3f7` |
+| 正式测试 run-state（绑定四组请求、TREC、指标和四项区间） | `6f03d13cfd69e5984bcaf7e916d207179978962e136ecd8155af3ed65ba0eed9` |
+| 正式测试启动证明（绑定线上接口与运行配置） | `8157d0f5848f9c66068cdc59c5cbe94cf34c53362e05907e055e96757ca2cf26` |
+| 正式测试服务及 HNSW 恢复回执 | `9ba484730d033ed686331316b86fda623af1895da05f7b0a72b0ca7ca277dd11` |
+
+正式测试使用冻结的 `2362689098384529728f0bfdc9c20e7dbcf9227f` 源码和 HNSW recipe。每组保留 150 条成功请求及独立 TREC run。run-state 固定每组的请求、run、指标与区间 SHA256，逐查询输出和原文留在 Git 外。复算可用 [评测入口](README.md) 的 `evaluation.evaluate` 与 `evaluation.compare`，按深度 100 请求，使用 nDCG@10、Recall@10、MRR@10、MAP@100 和 seed `20261028` 的 10,000 次配对重采样。Adaptive 与固定 Hybrid 的详细指标和延迟见 [课程报告](../REPORT.md#6-自爬新闻测试集的四模式评测)。
 
 以下为历史小批数据与工程冒烟，保留各自的来源和规模边界。
 
@@ -137,9 +144,9 @@ Qdrant 适配器和快照发布逻辑已在 `offline/vector_build.py`、`online/
 
 完整 2,000 queries 的语法预检发现 3 条显式约束（train/dev/local-holdout=0/1/2）。它们按当前 dense 契约预期返回特定 HTTP400；评测器提供显式、query SHA 绑定的 policy，仍发送全部请求，将准确匹配的预期拒绝记为空检索并单列覆盖率和延迟。默认仍严格失败，其他错误不能被吞掉；完整分母不会被共同支持子集分析替换。对应 policy 在质量运行前冻结于 Git 外，尚无正式请求或质量指标。
 
-新的自爬版本使用 `evaluation.crawl_articles`，目标为清洗去重后的 20k accepted unique articles，不再以 raw URL 计数。原 raw 采集已停止并完整保留为 superseded 证据（2,015 raw docs）。新版本导入原 frontier 的 11,703 个 URL（seed 文件 SHA256 `69c807888876cba583abe372826e900ac0b90ba561c42bf07128895ebdd85f4a`，全部 depth=0），绑定固定 `news-cn-body-v1` 规则、NFKC/空白精确去重、SimHash64 距离 <=3 且长度比 >=0.9 的近重复政策。原 HTTP bytes 先持久化到 SHA 寻址 gzip，再清洗并记录完整 sidecar；不因检索分数选择文章。只读抽样前五篇的原字节/decoded SHA、正文、标题及全部元数据重算一致；150 篇 snapshot 中未发现满足当前规则的残留近重复。该轮抽样时采集仍在进行；最终 20k 语料随后于 2026-11-03 冻结，见上文。完整池化 qrels 仍待完成。正文/缓存无再分发授权，均留在 Git 外。
+新的自爬版本使用 `evaluation.crawl_articles`，目标为清洗去重后的 20k accepted unique articles，不再以 raw URL 计数。原 raw 采集已停止并完整保留为 superseded 证据（2,015 raw docs）。新版本导入原 frontier 的 11,703 个 URL（seed 文件 SHA256 `69c807888876cba583abe372826e900ac0b90ba561c42bf07128895ebdd85f4a`，全部 depth=0），绑定固定 `news-cn-body-v1` 规则、NFKC/空白精确去重、SimHash64 距离 <=3 且长度比 >=0.9 的近重复政策。原 HTTP bytes 先持久化到 SHA 寻址 gzip，再清洗并记录完整 sidecar；不因检索分数选择文章。只读抽样前五篇的原字节/decoded SHA、正文、标题及全部元数据重算一致；150 篇 snapshot 中未发现满足当前规则的残留近重复。该轮抽样时采集仍在进行；最终 20k 语料于 2026-11-03 冻结，完整池化 qrels 于 2026-11-04 冻结，见上文。正文/缓存无再分发授权，均留在 Git 外。
 
-该新版本已有 200 条来源支持的 assistant 查询草案：对 220 个来源独立阅读正文，初稿接受 206、拒绝 14；独立 assistant 回读及正文核对额外拒绝 1 条，再按预冻 source rank 取前 200，未使用检索结果或 qrels 选择。草案 JSONL SHA256 为 `3b906bfc4841dd34f919f3b87a984a7902860348f0ce6ce40213b99b50632578`，类型为 explanation/comparison/policy/event/fact=63/9/35/43/50，dev/test=50/150 的 query IDs 已冻结。它们不是 qrels、独立人工 gold 或已完成测试的查询；全部选中来源已于 2026-11-03 核验最终 20k 的 source_doc_id/title/text 身份；盲化多系统池化现已完成，其余 assistant 标签及正式评测仍待完成。设计 manifest 与来源证据均留在 Git 外。
+该新版本已有 200 条来源支持的 assistant 查询草案：对 220 个来源独立阅读正文，初稿接受 206、拒绝 14；独立 assistant 回读及正文核对额外拒绝 1 条，再按预冻 source rank 取前 200，未使用检索结果或 qrels 选择。草案 JSONL SHA256 为 `3b906bfc4841dd34f919f3b87a984a7902860348f0ce6ce40213b99b50632578`，类型为 explanation/comparison/policy/event/fact=63/9/35/43/50，dev/test=50/150 的 query IDs 已冻结。全部选中来源已于 2026-11-03 核验最终 20k 的 source_doc_id/title/text 身份。盲化多系统池化和 assistant 全文复核均已完成，150 个 test 查询已用于正式四模式评测，另 50 个保留为 dev。设计 manifest 与来源证据均留在 Git 外。
 
 当前代码批次核心 62/62、evaluation 76/76、checkpoint/stream/BGE/文档源/CLI/HNSW 专项 109/109，compile 和 diffcheck 通过，未改动的 Web 代码此前 Node 5/5 通过。规模路径的当前边界和可复现实验入口见 [`docs/RFC0004_SCALE.md`](../docs/RFC0004_SCALE.md)。文档源、CPU/GPU 数值及小批 HNSW 收据均不替代完整双索引和全规模四模式/paired bootstrap 评测。
 
@@ -173,6 +180,8 @@ Qdrant 适配器和快照发布逻辑已在 `offline/vector_build.py`、`online/
 
 2026-11-04 取得独立全量缓存复验最终收据：`FULL_CACHE_CONTENT_VERIFIED`，162 块连续覆盖 8,096,668 篇，16,581,976,064 bytes 的 FP32 向量及 905,715,706 bytes 映射。验证器完整检查逐块 SHA/大小、内部/外部 ID、`title + "\n" + text` 输入哈希、512 维有限值/L2 归一化、全语料 SHA/EOF，以及文件身份稳定性。2 CPU / 10 GiB / 0 GPU，固定 8 MiB/s 读取上限，耗时 7,164.775 秒；cgroup 内存峰值 7,571,202,048 bytes（含文件缓存），worker RSS 23,855,104 bytes，私有文件分配采样峰值 2,228,224 bytes，无 OOM/failcnt 增长。收据 SHA256 `3852ac87d489f2fb98f5060ed6dc2fc2776681ab3a727c6cf9c5c028218a0479`；本地审计核对完整区间、固定编码配置、源码 ZIP 与验证逻辑。该内容验收不重跑模型推理，不代表 HNSW 或检索质量完成。
 
-同日取回原两个大词法分片的最终生产收据，SHA256 分别为 `257b09e1abe357b61651ee9f22b808fac76d16ce3fe02835142112806843f9c9`、`13c0c62b39b2139f7f0466e99cee38f5243fe94fc37086fd76303817d139eae5`。各覆盖 2,024,167 篇，每份 13 个 A1/compact 文件经生产端复制哈希与目标读回验证后发布；本地确认其范围、docs 哈希、源码与冻结十分片计划一致。连同此前三个小分片，连续覆盖至第 5,566,459 篇。余下分片、全量合并和在线读取验收尚未完成；本轮收据审计没有再次独立读取远端全部 payload。
+全量 Qdrant 1.16 在快照前通过两次稳定图检查，exact count 和已索引数量均为 8,096,668。16 条固定查询分别执行 ANN 与 exact，每组在 32 个非空分段产生 512 次对应类型的搜索。快照阶段的采样峰值为 47,884,369,920 bytes，超过 48 GiB cgroup 的 90% 保护线，任务安全退出，未发布全量快照。终态回执 SHA256 为 `c3d250a4669eb053fa714665bd1339e89c481e08293ffe99bcabfc18999106d2`。后续同机文件恢复在真实 20k 快照上通过 16 条固定查询及 SHA256 校验，验收回执为 `d3904273e903b67ec0e04b2d4b75fbcdadef25808c787b533ee078bd73fecde3`。4 CPU / 88 GiB / 0 GPU 的全量恢复重试已通过初始内存门槛。全量快照恢复、发布和质量比较仍待验收。
+
+同日取回原两个大词法分片的最终生产收据，SHA256 分别为 `257b09e1abe357b61651ee9f22b808fac76d16ce3fe02835142112806843f9c9`、`13c0c62b39b2139f7f0466e99cee38f5243fe94fc37086fd76303817d139eae5`。各覆盖 2,024,167 篇，每份 13 个 A1/compact 文件经生产端复制哈希与目标读回验证后发布；本地确认其范围、docs 哈希、源码与冻结十分片计划一致。连同此前三个小分片，连续覆盖至第 5,566,459 篇。余下分片、全量合并和在线读取验收尚未完成；本轮收据审计没有再次独立读取远端全部 payload。 后续分片 05 再覆盖 506,042 篇，生产回执 SHA256 为 `261747163d59ac2e134037b88b693edc9e8ddec96749b6bfb10ddf52d3d852ae`。六片连续覆盖 6,072,501 篇，其余四片仍待满足私有存储入口门槛。
 
 全量 HNSW 首次独立启动在资源采样阶段退出，worker 未启动、未生成 collection；失败收据 SHA256 为 `7b03aa0f24f93cc80ac60996fe6f8a73d9f4d3a54a8686e3e7275d5f58894256`。审查发现外部运行包装脚本继承了 pilot 的至多 8 GiB 采样门槛，与请求 48 GiB、监督器要求精确 48 GiB 的配置矛盾。真实文件型 cgroup v1/v2 fixtures 复现旧脚本拒绝 48 GiB，新副本改为精确请求内存并继续拒绝 8/64 GiB、unlimited、缺失/畸形 OOM 数据，19 项专项通过。原收据只保留未分类 ValueError，因此不据此排除其他原生环境问题；修正版的全量运行、建图与恢复仍需实际验收。
