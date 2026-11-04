@@ -41,7 +41,7 @@ RFC-0004 的正式交付必须为这四个文件提供 64 位小写 SHA256；`ve
 
 Qdrant writer 将非空 `index_params` 作为真实 `HnswConfigDiff` 传给建库请求，并在快照前
 核对服务返回的 `config.hnsw_config`；不能只凭 metadata 声明参数已经生效。当前支持
-严格整数 `m >= 0`、`ef_construct >= 1`、`full_scan_threshold >= 0`、
+严格整数 `m >= 0`、`ef_construct >= 4`、`full_scan_threshold >= 10`、
 `max_indexing_threads >= 0`，以及严格布尔 `on_disk`。未知字段或类型转换会拒绝；
 空对象保留服务默认设置。搜索 beam 由在线服务的 `--hnsw-ef` 明确指定，正式实验
 同时记录建图和搜索参数；`exact=false` 本身不能证明 planner 实际走了 HNSW。

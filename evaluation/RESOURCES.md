@@ -75,9 +75,18 @@ Qdrant 适配器和快照发布逻辑已在 `offline/vector_build.py`、`online/
 | corpus.jsonl | 84,555,357 | `3f16eaeae59ab9c0cfc80c219b0f51b8a0aeb784cca4a2be4070c0161447b851` |
 | article_sidecar.jsonl | 36,800,693 | `f19c6972e6d97419a6206c47fb695757f815e8b6ef62953d4ef8d498737afc7e` |
 
-最终回执 SHA256 为 `e73861130be4da1ee1a1eef772e4d52bbb5837126a265b6650aadebade8e99a6`。此前冻结的 200 条来源支持查询（dev/test=50/150）均与最终语料的来源 ID、标题和正文身份核验一致；查询文件 SHA256 为 `3b906bfc4841dd34f919f3b87a984a7902860348f0ce6ce40213b99b50632578`。已有 200 条 assistant 种子标注不代表完整检索池 qrels；五系统深度 20 的盲化池化及其余标签尚待完成。正式质量请求将检索到深度 100，并同时报告已标注覆盖率；有限池下的 Recall/MAP 不被表述为穷尽全语料的人工真值成绩。
+最终回执 SHA256 为 `e73861130be4da1ee1a1eef772e4d52bbb5837126a265b6650aadebade8e99a6`。此前冻结的 200 条来源支持查询（dev/test=50/150）均与最终语料的来源 ID、标题和正文身份核验一致；查询文件 SHA256 为 `3b906bfc4841dd34f919f3b87a984a7902860348f0ce6ce40213b99b50632578`。五系统深度 20 池化已完成，共 8,281 对候选，按身份复用 200 条 assistant 种子标注，另外 8,081 对正在盲化全文审阅；尚未形成完整 qrels。正式质量请求将检索到深度 100，并同时报告已标注覆盖率；有限池下的 Recall/MAP 不被表述为穷尽全语料的人工真值成绩。
 
-同一冻结 20k 语料已完成真实 BGE/512/FP32 文档向量缓存。独立作业申请 1 张 2080 Ti、4 CPU、4 GiB，共耗时 197.097 秒，包含模型/源码准入、编码、全量缓存校验与打包；本机再次完整核验 20,000 条映射、向量和输入哈希。收据 SHA256 为 `456b3843225b0ec7b5bc819314e1846def1b51e99607cc36289d78198f674ca0`，缓存标识为 `a8402c6d95714b150ad4570baa0a61a85b1429fd02f3e1e5bd19c69647ba4c5b`。A1 词法索引也已发布，Qdrant 建图、快照恢复、完整池化及正式质量评测仍为独立验收项。缓存和索引不进入 Git。
+同一冻结 20k 语料已完成真实 BGE/512/FP32 文档向量缓存。独立作业申请 1 张 2080 Ti、4 CPU、4 GiB，共耗时 197.097 秒，包含模型/源码准入、编码、全量缓存校验与打包；本机再次完整核验 20,000 条映射、向量和输入哈希。收据 SHA256 为 `456b3843225b0ec7b5bc819314e1846def1b51e99607cc36289d78198f674ca0`，缓存标识为 `a8402c6d95714b150ad4570baa0a61a85b1429fd02f3e1e5bd19c69647ba4c5b`。A1、compact 及 Qdrant HNSW 建图已完成，查询仍使用固定 CPU BGE。五个检索臂各完成 200 条查询；本地会话中断后逐字节复用已完整落盘的四臂，仅重跑未完整记录的 RM3，保留旧的部分结果。缓存、索引及运行数据均不进入 Git。
+
+独立恢复验证从空存储、新 Qdrant 进程装载 97,468,928 字节快照。恢复后 exact count 和 indexed vectors 均为 20,000，两次图状态观测稳定；16 条预先固定查询的 Top-20 IDs、顺序和分数与池化 dense 基准完全一致，最大绝对差 0（预设容差 `1e-5`）。非空 segment 的 HNSW counter +16、plain/exact +0；空 segment 的 plain +16 单列。这里的计数单位是 segment searches，此验收证明真实 HNSW 与快照恢复一致性，未运行相关度质量或 bootstrap。
+
+| 外部验收产物 | SHA256 |
+| --- | --- |
+| 五臂运行 manifest | `903973eef424189e508ba24934ed8da5bd195862fa72bb792d2bfe26e3293aa4` |
+| 8,281 对候选池 manifest | `c02c8c18a1f65ed0c306175c558ee683b4fecf46f9a1877cc7b13dd59b5bc3ca` |
+| 20k Qdrant 快照 | `143724e357d88a40ed5ec5f0d0a22f2f3c1e3769e8aa6d0cad35859100104036` |
+| 新进程恢复验证回执 | `61fd1279b3954cd1235439f35542a53df52be98a2db5bcbfefdba1deef9ab3f7` |
 
 以下为历史小批数据与工程冒烟，保留各自的来源和规模边界。
 
@@ -130,7 +139,7 @@ Qdrant 适配器和快照发布逻辑已在 `offline/vector_build.py`、`online/
 
 新的自爬版本使用 `evaluation.crawl_articles`，目标为清洗去重后的 20k accepted unique articles，不再以 raw URL 计数。原 raw 采集已停止并完整保留为 superseded 证据（2,015 raw docs）。新版本导入原 frontier 的 11,703 个 URL（seed 文件 SHA256 `69c807888876cba583abe372826e900ac0b90ba561c42bf07128895ebdd85f4a`，全部 depth=0），绑定固定 `news-cn-body-v1` 规则、NFKC/空白精确去重、SimHash64 距离 <=3 且长度比 >=0.9 的近重复政策。原 HTTP bytes 先持久化到 SHA 寻址 gzip，再清洗并记录完整 sidecar；不因检索分数选择文章。只读抽样前五篇的原字节/decoded SHA、正文、标题及全部元数据重算一致；150 篇 snapshot 中未发现满足当前规则的残留近重复。该轮抽样时采集仍在进行；最终 20k 语料随后于 2026-11-03 冻结，见上文。完整池化 qrels 仍待完成。正文/缓存无再分发授权，均留在 Git 外。
 
-该新版本已有 200 条来源支持的 assistant 查询草案：对 220 个来源独立阅读正文，初稿接受 206、拒绝 14；独立 assistant 回读及正文核对额外拒绝 1 条，再按预冻 source rank 取前 200，未使用检索结果或 qrels 选择。草案 JSONL SHA256 为 `3b906bfc4841dd34f919f3b87a984a7902860348f0ce6ce40213b99b50632578`，类型为 explanation/comparison/policy/event/fact=63/9/35/43/50，dev/test=50/150 的 query IDs 已冻结。它们不是 qrels、独立人工 gold 或已完成测试的查询；全部选中来源已于 2026-11-03 核验最终 20k 的 source_doc_id/title/text 身份；盲化多系统池化、其余 assistant 标签及正式评测仍待完成。设计 manifest 与来源证据均留在 Git 外。
+该新版本已有 200 条来源支持的 assistant 查询草案：对 220 个来源独立阅读正文，初稿接受 206、拒绝 14；独立 assistant 回读及正文核对额外拒绝 1 条，再按预冻 source rank 取前 200，未使用检索结果或 qrels 选择。草案 JSONL SHA256 为 `3b906bfc4841dd34f919f3b87a984a7902860348f0ce6ce40213b99b50632578`，类型为 explanation/comparison/policy/event/fact=63/9/35/43/50，dev/test=50/150 的 query IDs 已冻结。它们不是 qrels、独立人工 gold 或已完成测试的查询；全部选中来源已于 2026-11-03 核验最终 20k 的 source_doc_id/title/text 身份；盲化多系统池化现已完成，其余 assistant 标签及正式评测仍待完成。设计 manifest 与来源证据均留在 Git 外。
 
 当前代码批次核心 62/62、evaluation 76/76、checkpoint/stream/BGE/文档源/CLI/HNSW 专项 109/109，compile 和 diffcheck 通过，未改动的 Web 代码此前 Node 5/5 通过。规模路径的当前边界和可复现实验入口见 [`docs/RFC0004_SCALE.md`](../docs/RFC0004_SCALE.md)。文档源、CPU/GPU 数值及小批 HNSW 收据均不替代完整双索引和全规模四模式/paired bootstrap 评测。
 
@@ -151,3 +160,19 @@ Qdrant 适配器和快照发布逻辑已在 `offline/vector_build.py`、`online/
 100,000 文档的语义 pilot 使用 1 张 2080 Ti、4 CPU、8 GiB 和固定 BGE revision。CUDA 编码 245.574 秒（407.209 docs/s），Qdrant 1.16 完成建图、三份静态交付物的 SHA256 读回和新实例恢复。16 条探针恢复前后的 ANN 与 exact top-200 各自一致，非空 segment 记录到实际 HNSW 搜索。cgroup 峰值 2,799,603,712 bytes，无 OOM。收据 SHA256 为 `edc2a955974b0457163654d9e88729a9c20841e0416eebe9f158f978eb91f59d`，快照 SHA256 为 `e9c6d8764bc39f8f0cf086c2a67325eba4ff0aafd3be834afcea79565611eacd`。该轮未使用 qrels。
 
 2026-11-03 另申请 2 CPU / 4 GiB 验证 100k A1 产物直接写共享卷、SQLite 留本机的布局，五个文件与已有原生私有盘基准逐字节一致。A1 构建 631.627 秒，cgroup 峰值 1,387,294,720 bytes，OOM/failcnt 均为 0；私有/共享目录采样峰值分别为 779,751,424 / 811,275,616 bytes。旧私有盘构建为 602.202 秒，两者不是随机交错的性能比较。收据 SHA256 为 `1bf2c4fd513e33b297eab85078070acf190d452f4840b51fc241c9c8543bb76e`。该次观测到的 cgroup CPU quota 相当于 4 核。试验只覆盖 A1，不能外推为全量或并发容量验收；物理后端仍未确认。
+
+同日，十分片计划中的首个 506,041 文档小分片完成 A1 与 compact 独立验收，13 个静态文件读回 SHA256 与源一致；两种格式的 docs 摘要均与预冻范围一致。请求资源为 2 CPU / 10 GiB / 0 GPU，实际 cgroup CPU quota 为 4 核；进程峰值 RSS 为 48,128,000 bytes，cgroup 峰值为 5,475,852,288 bytes，私有盘采样峰值为 3,178,532,864 bytes，OOM/failcnt 均为 0。A1、compact、compact 静态传输分别耗时 2902.918、1204.154、322.014 秒。产物收据 SHA256 为 `991bfb9218689e30b614a9f73a85f9addf261ad4f1c432894d6fcde5790c48a7`，资源回执为 `a6aa6b1c04876a9d17d35be2a7009a2f9333ecd578acacdb0d4e6e5087aac04c`。这是一份分片的工程证据，不能将进程 RSS 当作完整内存成本，也不能将单任务峰值当作并发或 8M 容量证明。
+
+官方全量 BGE 缓存的两份原生生产任务随后各报告 `chunks_ready`，`completed_count=81`、`reused_count=0`，存储清单中的 162 个完成标记齐全。该缓存覆盖 8,096,668 篇文档，固定 `BAAI/bge-small-zh-v1.5@7999e1d3359715c523056ef9478215996d62a620`、512 维 FP32 和原有文本/截断契约；缓存配置身份为 `dbcc76ab042f9d04a68fa7cbad4fbe4f0f798e2b363416ac6c214e5b6a77b53f`，不是所有向量文件拼接后的摘要。生产任务各请求 1×2080Ti、4 CPU、12 GiB，观测到实际 CPU quota 为 8 核，但进程 affinity 限制为最多 4 核。当时独立全内容复验尚未完成；后续最终验收见下文。全规模 HNSW/四模式评测仍未完成，不能只凭生产日志与标记计数报告最终验收通过。
+
+随后两个各 506,042 文档的小分片也完成 A1/compact 的 13 文件验收，三份连续小分片共覆盖 1,518,125 篇文档。新增两份产物收据 SHA256 分别为 `f29618536aa05d2495d55735301b4e56eb75c43239ecda594dba5cd4158fafa3`、`39b91bd3d77a4bc8990d8b3f2b0cf3e08f26ad578e80d6cc0f9412d11f336157`；私有盘采样峰值分别为 3,165,499,392 / 3,183,312,896 bytes，cgroup 峰值分别为 5,844,250,624 / 5,918,748,672 bytes，均无 OOM/failcnt 变化。两任务实际执行存在重叠，但这些收据没有测量其他训练任务的吞吐，不能声称并发没有性能影响。其余分片和全量合并仍未完成。
+
+独立全量向量复验采用 8 MiB/s 的只读流和原内容校验器。2 GiB 原生尝试在完成 38 块后达到 90% 内存保护线，峰值 1,936,510,976 bytes，1724.422 秒后退出；没有 OOM、failcnt 变化或已报告的内容错误。回执 SHA256 为 `e1526b37a2a259343553526fcace01fe131de129347a95fae364f642e27f088a`。此时尚未完成全语料 SHA256 和最终文件身份复查，38 块不能当作全量验收；需要按实测内存重新定容，再执行完整协议。
+
+20 万文档合并试验完成新增 10 万文档的 A1/compact 后，父进程的文件采样出现 `FileNotFoundError`。固定 CPython 3.10.14 的 `pathlib` 源码在 Linux Python 3.12 上复现了目录重命名竞争，修正版仅容忍遍历中消失的子目录，根目录丢失、权限及资源门禁仍拒绝，20 项本地回归通过。原生失败回执未记录具体路径，不能唯一确定原始系统调用。修正版原生尝试又在开工前因私有盘 115,506,016,256 bytes 低于并发预算要求的 165.5 GiB 被拒绝，未执行合并；回执 SHA256 为 `bfb5e8c810b73edb0a89919c56696998f0fb3e1d62d507e3719014c6f6252984`。后续须重新核对可用存储与并发预留，不把本地回归当成原生合并通过。
+
+2026-11-04 取得独立全量缓存复验最终收据：`FULL_CACHE_CONTENT_VERIFIED`，162 块连续覆盖 8,096,668 篇，16,581,976,064 bytes 的 FP32 向量及 905,715,706 bytes 映射。验证器完整检查逐块 SHA/大小、内部/外部 ID、`title + "\n" + text` 输入哈希、512 维有限值/L2 归一化、全语料 SHA/EOF，以及文件身份稳定性。2 CPU / 10 GiB / 0 GPU，固定 8 MiB/s 读取上限，耗时 7,164.775 秒；cgroup 内存峰值 7,571,202,048 bytes（含文件缓存），worker RSS 23,855,104 bytes，私有文件分配采样峰值 2,228,224 bytes，无 OOM/failcnt 增长。收据 SHA256 `3852ac87d489f2fb98f5060ed6dc2fc2776681ab3a727c6cf9c5c028218a0479`；本地审计核对完整区间、固定编码配置、源码 ZIP 与验证逻辑。该内容验收不重跑模型推理，不代表 HNSW 或检索质量完成。
+
+同日取回原两个大词法分片的最终生产收据，SHA256 分别为 `257b09e1abe357b61651ee9f22b808fac76d16ce3fe02835142112806843f9c9`、`13c0c62b39b2139f7f0466e99cee38f5243fe94fc37086fd76303817d139eae5`。各覆盖 2,024,167 篇，每份 13 个 A1/compact 文件经生产端复制哈希与目标读回验证后发布；本地确认其范围、docs 哈希、源码与冻结十分片计划一致。连同此前三个小分片，连续覆盖至第 5,566,459 篇。余下分片、全量合并和在线读取验收尚未完成；本轮收据审计没有再次独立读取远端全部 payload。
+
+全量 HNSW 首次独立启动在资源采样阶段退出，worker 未启动、未生成 collection；失败收据 SHA256 为 `7b03aa0f24f93cc80ac60996fe6f8a73d9f4d3a54a8686e3e7275d5f58894256`。审查发现外部运行包装脚本继承了 pilot 的至多 8 GiB 采样门槛，与请求 48 GiB、监督器要求精确 48 GiB 的配置矛盾。真实文件型 cgroup v1/v2 fixtures 复现旧脚本拒绝 48 GiB，新副本改为精确请求内存并继续拒绝 8/64 GiB、unlimited、缺失/畸形 OOM 数据，19 项专项通过。原收据只保留未分类 ValueError，因此不据此排除其他原生环境问题；修正版的全量运行、建图与恢复仍需实际验收。
