@@ -23,6 +23,7 @@ class DiskDocuments:
         if manifest.analyzer_hash != analyzer.config_hash():
             raise ValueError("document source analyzer mismatch")
         verify_files(root, manifest)
+        self._manifest = manifest
         self.n_docs = manifest.n_docs
         self._starts, self._lengths = array('Q'), array('Q')
         self._lock = threading.Lock()
@@ -53,6 +54,9 @@ class DiskDocuments:
                 or not isinstance(row.get('text'), str)):
             raise ValueError("invalid document source row")
         return Document(docid, row['doc_id'], row['title'], row['text'])
+
+    def manifest(self) -> dict:
+        return self._manifest.to_dict()
 
     def close(self):
         with self._lock:

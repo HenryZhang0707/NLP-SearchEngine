@@ -8,6 +8,7 @@ import os
 import sqlite3
 import tempfile
 from contextlib import contextmanager
+from copy import copy
 from dataclasses import replace
 from pathlib import Path
 
@@ -157,6 +158,12 @@ class QdrantSnapshotWriter:
         self.snapshot_dir = Path(snapshot_dir)
         self.batch_size = batch_size
         self.timeout = timeout
+
+    def with_snapshot_dir(self, snapshot_dir: Path) -> "QdrantSnapshotWriter":
+        """Scope a writer to a build directory without changing the caller's writer."""
+        writer = copy(self)
+        writer.snapshot_dir = Path(snapshot_dir)
+        return writer
 
     def replace(self, manifest: VectorManifest, records) -> VectorManifest:
         if self.batch_size <= 0:

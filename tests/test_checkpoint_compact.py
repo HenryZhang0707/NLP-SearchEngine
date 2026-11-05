@@ -188,6 +188,12 @@ c.compile_checkpoint(Path(sys.argv[1]), Path(sys.argv[2]), state_dir=Path(sys.ar
         class ObservedConnection(sqlite3.Connection):
             def commit(database):
                 super().commit()
+                # CPython 3.10 calls this override before executescript creates
+                # the schema. Observe durable checkpoints only after bootstrap.
+                with closing(database.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='checkpoint'")) as cursor:
+                    if cursor.fetchone() is None:
+                        return
                 with closing(database.execute("SELECT value FROM checkpoint WHERE id=1")) as cursor:
                     state = json.loads(cursor.fetchone()[0])
                 if state["status"] in ("POSTINGS", "TERMS_SQLITE") and state["postings_row"]:

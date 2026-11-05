@@ -2,14 +2,20 @@
 
 import json
 import tempfile
+from contextlib import redirect_stdout
 from dataclasses import replace
+from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 
-from contracts.index_format import verify_files, load_manifest
-from contracts.retrieval import EmbeddingSpec
+from contracts.index_format import verify_files, load_manifest, sha256_of
+from contracts.retrieval import EmbeddingSpec, VECTOR_MANIFEST
 from offline.build import build
 from offline.build_hybrid import build_hybrid
-from offline.validate import validate_build
+from offline.compact import compile_index
+from offline.disk_index import DiskIndex
+from offline.validate import main as validate_main, validate_artifacts, validate_build
+from offline.vector_build import build_vectors
 
 
 CORPUS = [
@@ -59,8 +65,9 @@ def test_hybrid_delivery_writes_provenance_report_and_validates():
         corpus = root / "corpus.jsonl"
         _corpus(corpus)
         build_dir = root / "build"
-        result = build_hybrid(corpus, build_dir, "delivery", Encoder(), Writer(),
-                              "delivery-v1", backend="memory-exact")
+        with patch.object(DiskIndex, "__init__", side_effect=AssertionError("vector building must not load postings")):
+            result = build_hybrid(corpus, build_dir, "delivery", Encoder(), Writer(),
+                                  "delivery-v1", backend="memory-exact")
         assert (build_dir / "build_provenance.json").is_file()
         assert (build_dir / "build_report.json").is_file()
         assert result["provenance"]["corpus"]["n_docs"] == 2
@@ -165,8 +172,6 @@ def test_vector_build_rolls_back_after_writer_returns_before_manifest_publish():
         build(corpus, index, "delivery")
         writer = PostPublishFailureWriter()
         try:
-            from offline.disk_index import DiskIndex
-            from offline.vector_build import build_vectors
             build_vectors(DiskIndex(index), Encoder(), writer, root / "vectors",
                           "delivery-v1", backend="memory-exact")
         except ValueError:
@@ -194,6 +199,64 @@ def test_validator_rejects_incomplete_report_artifacts():
             assert "必需产物" in str(error)
             return
         raise AssertionError("validator 接受了不完整的产物报告")
+
+
+def test_validate_separately_published_compact_and_vector_artifacts():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        corpus = root / "corpus.jsonl"
+        _corpus(corpus)
+        lexical, compact, vectors = (root / name for name in ("lexical", "compact", "vectors"))
+        build(corpus, lexical, "delivery")
+        compile_index(lexical, compact)
+
+        class SnapshotWriter(Writer):
+            def replace(self, manifest, records):
+                super().replace(manifest, records)
+                snapshot = vectors / "delivery.snapshot"
+                snapshot.write_bytes(b"synthetic snapshot for byte verification")
+                return replace(manifest, snapshot_files={snapshot.name: sha256_of(snapshot)})
+
+        manifest = build_vectors(DiskIndex(lexical), Encoder(), SnapshotWriter(),
+                                 vectors, "delivery-v1", backend="qdrant-hnsw")
+        checked = validate_artifacts(lexical, vectors)
+        assert checked["n_docs"] == 2
+        assert checked["corpus_sha256"] == manifest.corpus_sha256
+        assert checked["snapshot_sha256"] == manifest.snapshot_files
+
+        args = ["--lexical-index", str(compact), "--vector-artifacts", str(vectors)]
+        with redirect_stdout(StringIO()) as stdout:
+            assert validate_main(args) == 0
+        assert json.loads(stdout.getvalue()) == checked
+
+        compact_path = compact / "compact.json"
+        original_compact = compact_path.read_text(encoding="utf-8")
+        damaged_compact = json.loads(original_compact)
+        del damaged_compact["source_manifest"]
+        compact_path.write_text(json.dumps(damaged_compact), encoding="utf-8")
+        with redirect_stdout(StringIO()) as stdout:
+            assert validate_main(args) == 2
+        assert "源索引清单" in stdout.getvalue()
+        compact_path.write_text(original_compact, encoding="utf-8")
+
+        manifest_path = vectors / VECTOR_MANIFEST
+        for fields, expected in (
+            ({"n_docs": 3}, "n_docs"),
+            ({"corpus_sha256": "0" * 64}, "corpus_sha256"),
+            ({"snapshot_files": {}}, "快照 SHA256"),
+            ({"snapshot_files": {"../delivery.snapshot": "0" * 64}}, "快照只允许"),
+            ({"backend": "memory-exact"}, "qdrant-hnsw"),
+        ):
+            manifest_path.write_text(json.dumps({**manifest.to_dict(), **fields}), encoding="utf-8")
+            with redirect_stdout(StringIO()) as stdout:
+                assert validate_main(args) == 2
+            assert expected in stdout.getvalue()
+
+        manifest_path.write_text(json.dumps(manifest.to_dict()), encoding="utf-8")
+        (vectors / "delivery.snapshot").write_bytes(b"damaged snapshot")
+        with redirect_stdout(StringIO()) as stdout:
+            assert validate_main(args) == 2
+        assert "SHA256 不匹配" in stdout.getvalue()
 
 
 ALL_TESTS = [value for name, value in sorted(globals().items()) if name.startswith("test_")]
