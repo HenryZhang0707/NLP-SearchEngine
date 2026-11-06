@@ -1,85 +1,39 @@
-# 交付 TODO（2026-11-04）
-
-这个清单把已验证事实、可继续执行的工作和受外部资源阻塞的工作分开。开题报告中的数量和方向只作为团队假设；实际资源、脚本输出和标注状态以 `evaluation/RESOURCES.md` 及本清单为准。
+# 交付 TODO
 
 ## DONE
 
-- [x] BM25、TF-IDF、倒排/磁盘索引、布尔/短语/位置过滤、稳定 Top-K、高亮、分页和 HTTP v2 契约。
-- [x] Router、RRF、RM3、lexical/dense/hybrid/adaptive 四种模式、向量失败时的显式 503/fallback telemetry。
-- [x] 官方 RocketQA DuReader-Retrieval baseline archive 的哈希、分片、ID、dev 查询和 qrels 校验；确认它不是课程报告所写的 100001/2000/9839 快照，也没有官方 test labels。
-- [x] 集群上固定 prefix20k、真实 SentenceTransformer revision 和 qdrant-client local exact backend 的四模式工程冒烟及 query-level paired bootstrap；结果只代表 19 条有标注查询，不能外推为全量或 HNSW 结论。
-- [x] `evaluation.evaluate` 的完整 MAP@100 召回深度、路由 telemetry 与 `evaluation.compare` 的确定性 paired bootstrap。
-- [x] 公共演示站点 [search.shwstone.cn](https://search.shwstone.cn/) 的 lexical 搜索和 adaptive 缺向量时的明确 fallback；修复前端失败后清除旧路由/耗时观测的残留问题。
-- [x] 新增有边界的 `evaluation.crawl_web`：HTTP(S) only、robots-aware、同域、深度/文档数/响应大小/速率限制，以及人工标注后生成 queries/qrels 的校验入口。
-- [x] 执行一次可审计的公开站点抓取：gov.cn、30 篇文档、10 个查询候选池、97 条 provisional 建议；收据、文件哈希和审阅模板均保存在版本库外。
-- [x] 复跑同域 depth=2 的扩大抓取并记录实际结果：393 篇有效文档、corpus SHA256 `757e93bfc08f800827cff925864155032bbfe5d4be6cdcc5009b7b8996419531`、10 查询/100 条 provisional 候选；未把请求上限误报为实际文档数。
-- [x] 修复 HTTP 分块传输中断并完成 depth=3 重试：799 篇有效文档、corpus SHA256 `1f209cad5da40808b14f6249b886308e977f708dd222f2c9eaf984f3d5b9f258`；仍只有未标注模板，未形成正式 qrels。
-- [x] 完成 depth=4 有界重试：1,029 篇有效文档、corpus SHA256 `463ac4eff4fdc22047da362fdc22d47f0be6bf09c1587c3c8ba318b9e8164ff3`；生成 10 查询/100 条 provisional 候选和人工复核表，仍未形成正式 qrels。
-- [x] 用 SQLite 流式构建器和 compact reader 对 depth=4 的 1,029 篇语料完成规模路径冒烟；stream/compact 产物保存在版本库外，不能外推为 8M 验收。
-- [x] 从公开 sitemap 增加 108 篇页面并与 depth=4 语料按 URL 合并为 1,137 篇；在用户明确授权后完成 100 条候选的 assistant 语义复核，生成 10 个 queries、100 行正式 assistant qrels，并完成 BM25、RM3、adaptive fallback 和 paired bootstrap 工程评测；结果不等同独立人工 gold 或 20k/8M 成绩。
-- [x] 以相同 robots、同域、深度和速率约束对新华网完成 100 篇跨站点抓取试验；输出仅为未标注候选模板（corpus SHA256 `eafb1dee8ddc36a3d5c778883d8e379618d073014d742359623cb321db8394f5`），未将其误作正式 qrels 或质量结果。
+- 搜索引擎的核心契约已有回归覆盖，包括词法索引、布尔与位置过滤、稳定分页、HTTP API、Router/RRF/RM3，以及向量失败时的错误和 adaptive 回退。
+- **自爬语料**。清洗去重后冻结 20,000 篇，dev/test 为 50/150 个查询。8,281 条池化判定含 200 条已绑定身份的种子判定和 8,081 条 assistant 全文复核，来源随数据记录。A1、compact、真实 BGE 向量和 Qdrant 快照恢复已验收。
+- **自爬四模式**。150 条测试查询经公开 `/search` 契约各执行一次 lexical、dense、hybrid、adaptive，共 600 次请求。TREC、路由、延迟和配对 bootstrap 已核验，详见 [REPORT.md](REPORT.md) 与 [资源记录](evaluation/RESOURCES.md)。
+- **官方数据**。核验公开 RocketQA DuReader-Retrieval 资源，冻结 8,096,668 篇、2,000 条 official-dev 查询、9,839 条 qrels。内部划分 train/dev/holdout=172/1020/808，holdout 在正式质量评测前冻结。`prepare_dataset --queries-only` 已在 Windows 和固定原生运行时逐字节复建六份划分文件。
+- **官方全量词法**。十片合并原生终态 PASS，8,096,668 篇、8,578,589 个词项、13 个 A1/compact 文件、有序语料指纹及正常 `DiskIndex` 读取验收通过。原生收据链已独立复核；恢复耗时和历史失败边界见资源记录。
+- **官方全量向量**。固定 BGE 的 162 个向量块覆盖全部文档。Qdrant HNSW 的 8,096,668 点快照已在两个独立空实例恢复。16 条固定 ANN 查询的 Top-200 与原实例一致，exact 同分边界另经全量扫描校验。收据和资源边界见 [资源记录](evaluation/RESOURCES.md)。
+- **离线交付工具**。A1 和 compact 构建支持检查点，分片合并有顺序与哈希校验，`offline.validate` 可在原位核验单目录双索引或独立发布的 compact 与 Qdrant 快照。真实 Qdrant 上三文档检查通过，覆盖快照随整包发布、哈希和混合查询。失败后的清理与重试另有回归。
+- **成熟 BM25 对照**。固定 rank-bm25 0.2.2，对齐 analyzer、公式与参数后验证 16 条有效查询的分数及排名，并保留默认 IDF 的差异；复现命令和收据见资源记录。原生 Python 3.10.14 上的 146 项专项 unittest 已通过。
 
-## NEXT（需要继续做，但不应伪造结果）
+- **全量截断统计**。固定正式 tokenizer，8,096,668 篇中 620,314 篇（7.6613%）超过 512 tokens；全量字节身份和 162 个分块的聚合已独立核验。
+- **组员分支兼容性**。最新隔离候选 `e2be311` 整合本分支 `382a8cc`、PR #7 的 `2c42ce6` 和 PR #9 的 `e8876ea`，保留组员的计分加速与 Router 接口。Windows UTF8 与固定原生环境的核心均为 86/86，Windows Python3.13 的完整评测测试 90/90，固定 Python3.10 / Unicode13 / ijson 的专项 unittest 153/153；137 份源码编译及 diffcheck 通过。前端源与测试 SHA 未变，复用 Node 7/7。该候选只在本地验证，没有合回主工作树或上游，不替代 CE 或全量质量实验。
 
-- [x] 恢复并核验本地官方 archive，全量准备 8,096,668 篇文档、2,000 dev queries、9,839 qrels；数据准备改为原子发布，修正历史摘要误抄。
-- [x] 修复真实语料 `()` 的零 token 兼容问题并保留全部 ID/行序；增加可选事件流 compact、严格源哈希、分盘 SQLite scratch 和专项回归。
-- [x] 完成官方 shard 01 的 10k 资源 pilot 和磁盘补测；结果用于容量预估，未冒充正式评测或全量成本。
-- [~] **RUNNING（本地 CPU）**：WAL/FULL 检查点已提交 2,470,000 篇，ID/lengths 行数、输入 offset、输出文件边界和冻结 runtime 哈希一致。11 月 4 日确认主机发生过重启、旧进程已不存在；通过隐藏 Task Scheduler 的跨调用 heartbeat 后，以单实例、无自动重试、72 小时上限启动冻结 builder 的精确恢复命令，成功后顺序执行 compact。已只读确认首笔新事务 2,471,000；最终发布与 reader 另行验收，不把恢复当作交付；旧数据和损坏证据保留。
-- [~] **部分验收（集群分片）**：十分片计划中，六片已取得生产验收收据，连续覆盖 6,072,501 篇。每份 A1/compact 的 13 个文件均通过生产端复制哈希和目标读回校验。其余四片待满足私有存储入口门槛后构建，再验收全量合并与 reader。
-- [x] **DONE（官方全量向量缓存内容验收）**：固定 BGE revision 的 162 块覆盖全部 8,096,668 篇文档。独立 2 CPU / 10 GiB / 0 GPU 验证完成所有向量与映射 SHA、文档顺序/输入绑定、数值与归一化、完整 corpus SHA/EOF 和最终文件身份检查；耗时 7,164.775 秒，cgroup 峰值 7,571,202,048 bytes，无 OOM，收据 SHA256 `3852ac87d489f2fb98f5060ed6dc2fc2776681ab3a727c6cf9c5c028218a0479`。旧 2 GiB 内存保护失败保留。此项不包含全量 HNSW、快照恢复或四模式质量。
-- [x] 用独立 5,000 篇原生试验验证 A1 顺序产物写共享卷、SQLite 留本机的路径：摄入 fsync 后、postings 导出中、发布重命名后三处硬退出均恢复成功，五个成品哈希与本机 oracle 一致，耗时 50.31 秒。后续 100k 共享输出 A1 验证也通过五文件哈希一致性：构建 631.627 秒，cgroup 峰值 1,387,294,720 bytes，无 OOM；它仅覆盖 A1，扩大分片和并发仍须单独准入。
-- [x] 构建检查点 hard-exit/发布/绑定及首次空库恢复回归通过；完整 official-dev 内部划分已固定为 train/dev/holdout=172/1020/808 queries，并保留来源及已观察过前缀查询的边界；HNSW 建图和显式搜索配置也已在正式质量运行前冻结，2,048 文档实际图/恢复已通过独立工程验收，全量仍待验收。
-- [x] 持久 raw 抓取、固定正文清洗、原响应字节缓存、精确/近重复和 sidecar 已实现；原 raw 任务以 2,015 篇状态停止并保留，新 `crawl_articles` 直接以有效唯一文章为目标运行，不复用旧 qrels。前五篇真实 capture/正文/metadata 重算一致，150 篇 snapshot 未发现规则内残留近重复。
-- [x] 修复清洗抓取器提前发布缺少 sidecar 信息的终态回执：先完成语料和 sidecar，再一次性发布完整 receipt；sidecar 写入失败保留前一回执。两条回归在旧实现上失败、修复后通过。此前的采集任务保持冻结源码运行至完成；消费者仍核对所有 SHA256。
-- [x] 自爬清洗去重语料已达到 20,000 篇，最终 corpus/sidecar/receipt SHA256 已核验；200 条冻结查询的来源正文身份全部匹配，dev/test=50/150。五系统深度 20 候选池已完成：8,281 对，其中 200 条种子标注（197 条等级 2，3 条等级 1）按身份复用，另 8,081 对已完成盲化全文审阅，保留 assistant 标签来源。
-- [x] 自爬 20k 的 A1、compact、完整真实 BGE GPU 向量缓存和 Qdrant HNSW 已验收。新进程、空存储恢复后，16 条预先固定查询的 Top-20 IDs、顺序和分数全部一致，最大分数差 0；非空分段 HNSW 计数 +16、plain/exact +0。它证明恢复一致性，不证明检索质量。
-- [x] 自爬新闻正式工程 qrels 已冻结。完整候选池包含 8,081 条盲化全文复核和 200 条按身份复用的种子标注。50 个 dev 查询有 2,067 条判定，150 个 test 查询有 6,214 条判定。全部记录通过查询和文档身份、唯一性、等级与正例证据区间校验，标签来源为 assistant。
-- [x] 可恢复 `checkpoint_compact`、compact 自动 reader 接线及严格元数据校验已实现；相同真实 10k pilot 的六个数据文件字节、384,350 词项逻辑行和 28 篇抽样一致。源码审查发现首次空库启动窗口并补严格恢复；全量 compact 仍须等 lexical 发布。
-- [x] 通过仅驻留内存的非 GUI API 会话核对现有任务和剩余 CPU/RAM/型号配额；新隔离 CPU2/RAM2GiB/GPU0 源码预检在真实 Python3.10.14 / Torch2.3.0 环境通过核心、evaluation、56 项专项及编译，耗时 52.90 秒。未修改已有任务，不使用电脑控制；后续每次提交仍须刷新容量。
-- [x] 集群标准语料原始 SHA/大小/行数重新核验通过；固定模型六个官方文件完成本机下载、集群传输和回下载 SHA 验证。34 个依赖 wheel 经官方 PyPI hash/size 和原生 Linux 依赖闭包核验，离线安装成功；旧缓存缺文件、直接下载超时及安装阶段超时证据均保留。
-- [x] 共享固定 BGE 已通过显式本地路径接入 online server，含 inventory 验证、FP32/CLS/right 和清晰失败路径；无模型接线回归通过。
-- [x] 新增校验原始 SHA/文档数的 `CorpusDocuments`、最小共享 `DocumentSource` 和向量 CLI，允许冻结 corpus 的编码与词法构建并行；有序 fingerprint 算法和公共文件格式不变，输入先于模型校验，含 Windows 文件变化/关闭/并发及真实小语料对齐回归。
-- [x] 实际全扫 8,096,668 行冻结 corpus 的文档源准入通过：108.55 秒、峰值工作集 208.44 MiB，固定首/中/末 ID 可读且 reader 已关闭；未重复全扫。此结果不替代外部 ID 唯一性、完整双索引或语义质量验收。
-- [x] 显式 `--hnsw-ef` 接到 Qdrant `SearchParams(exact=false)`，默认行为兼容，非法/不适用配置在加载前拒绝；参数接线和 2,048 文档的真实图/搜索/快照恢复已分别验证；全规模资源与质量仍待验收。
-- [x] 修复 Qdrant writer 只保存 HNSW 参数 metadata、却未将参数传入真实建库请求的缺口；非空参数严格传入并在快照前核对服务实际配置，忽略/错类型/缺字段不发布。默认空配置与旧客户端替身保持兼容，7 项专项回归通过。
-- [x] 修复向量产物归属保护：SQLite 使用独占临时目录，snapshot/manifest 以不覆盖既有目标的 hard link 发布，拒绝跨平台非法快照文件名与截断下载；Qdrant 创建冲突、超时或显式拒绝不触发删除，已确认本次创建后才清理。15 项专项通过；不支持 hard link 的文件系统安全拒绝发布。
-- [x] 真实官方 Qdrant 1.16 REST 负例确认阈值 0 被 422 拒绝；校验器/CLI 提前拦截 ef_construct<4、full_scan_threshold<10，质量运行前另存阈值10的新冻结配置并保留旧值。后续独立 2,048 文档正向建库、图搜索和恢复通过；静态 ROOT 实测为 LeoFS，不能把历史 NFS 检查泛化到全部私有存储；`/tmp` overlay backing 未证明，仍不计全量存储准入。
-- [x] 固定 BGE 的真实 CPU 数值准入通过：Torch2.3.0 / Transformers4.46.3，FP32、CLS、right/512、长短文本、padding、两共享实例及重复编码；最大绝对差 `1.7753e-7 < 1e-5`，峰值 RSS 743,702,528 bytes，全部 dependency/model/source hashes 保留。它不是语义质量评测。
-- [x] 独立 local-cache 2080Ti pilot 实测 1 GPU / 4 CPU / 4 GiB，`GPU_PILOT_PASS`：CPU/GPU 最大绝对差 `1.6391277e-7 < 1e-5`，2,048 篇全文 batch16/32/64 分别为 420.896/404.423/414.533 docs/s，进程峰值 RSS 1,015,775,232 bytes。flat cgroup 路径未证明 exact membership，不用其数值宣称任务峰值。历史 4090/2080Ti 调度任务及失败证据继续保留，不因新 pilot 通过而改动旧任务；此结果不是质量或 8M 吞吐验收。
-- [x] 独立 local-cache 真实 BGE/512/FP32 + Qdrant1.16 的 2,048 文档 HNSW pilot 通过：A/B exact count 均为 2,048、全部非空 segment indexed 且两次稳定观测；各 16 查询的非空 segment HNSW counter +16、plain/exact +0，空 segment 的 plain +16 单列；新进程/空存储恢复后 ANN/exact 各自 IDs、顺序、scores 一致（abs `1e-5`）。快照持久化在静态 ROOT，详见资源收据；历史模型初始化超时保留，未据新通过结果归因旧超时。
-- [x] 原生 10k lexical scratch repair 通过：2 CPU / 2 GiB、核心构建 31.215 秒（320.359 docs/s）、精确进程成员映射的 cgroup 峰值 858,669,056 bytes、无 OOM、两次重开全量 reader 通过；overlay physical backing 仍 UNKNOWN，不是物理 SSD 或全量准入。
-- [~] 原生 100k pilot 的 Unicode13 repair1 已完成 A1 构建与独立校验，但 compact 在原定 4 GiB cgroup 的 90% 门禁停止：进程 RSS 约 46 MB、私有 WAL 约 1.98 GB，无 OOM。已用真实 SQLite 复现同连接长读游标钉住 WAL，并将 compact 两处遍历改为有界分页且提交前关闭游标；旧代码新回归失败、修复后通过，8 个公开产物字节不变。修复后以同样的 2 CPU / 4 GiB 通过 100k A1、compact、两次 reader 重开及 13 文件静态交付，cgroup 峰值 2,408,161,280 bytes。全量 8M 验收单独进行。
-- [x] 预检完整 2,000 queries 无语法错误，其中 3 条显式约束预期被 dense 契约拒绝；新增默认严格、query SHA 绑定的显式 expected-unsupported policy 和可追溯请求日志，保留全部查询的指标分母、单列覆盖率和失败延迟，意外错误仍中止。正式 policy 留在 Git 外，尚未运行正式质量请求。
-- [x] 规模恢复/清洗批次已集中提交 `4e8ed60`、仅推送 fork，更新现有 PR #8 / Issue #6；后续文档源/HNSW 接线及完整规模结果继续积累，不为状态变化单独建 PR。
+## RUNNING
 
-- [x] 标准语料使用已核验的官方 8,096,668 篇版本；全部 official-dev 查询的内部划分、ID 清单和 SHA256 已在全规模质量运行前冻结（train/dev/local-holdout=172/1020/808）。100001/2000/9839 只是团队提案假设，不作为教师指定快照；不声称拥有未公开的 official test labels。
-- [ ] 使用已冻结的 Router 阈值、候选池、RRF `c` 和模型配置，完成官方 8M 的 808 条内部留出查询四组实验。保存逐查询 TREC run、路由原因、向量触发/成功/fallback 及平均/p50/p95 延迟。
-- [ ] 对官方 8M 的四组结果运行 `evaluation.compare`，报告 adaptive − fixed hybrid 的逐查询配对差值和区间。保留冻结阈值。
-- [x] 公开站点抓取已从 gov.cn 历史小批推进到新华网清洗去重后的 20k 冻结语料。新语料、查询、正式池化 qrels 和 manifest 已通过同一语料身份校验，旧小批 qrels 单独保留。
-- [x] 自爬 20k 的 150 条冻结测试查询已完成四组深度 100 的 HTTP 评测。TREC、逐查询路由/延迟、池化判定覆盖率和 adaptive − fixed hybrid 的四项配对区间已校验。
-- [x] 纳入 SQLite 支持的 `offline.stream_build`、compact/packed reader、DiskDocuments 和临时 SQLite ID 校验，并以 tiny corpus conformance 验证；1,029 文档的 stream/compact 已完成，但全量 packed conformance 在本地超过 20 分钟无收据后停止，仍需进行有界验证、8M 预检、全量构建、峰值 RSS/磁盘/吞吐和快照收据。
-- [ ] 2,048 文档真实 HTTP Qdrant/HNSW 工程准入已通过；若要声称全规模服务性能，仍须记录完整规模的资源/磁盘/吞吐、失败率及四模式质量收据；小批 HNSW 与 local exact smoke 均不替代全规模验收。
-- [ ] 公共站点当前展示的是 tiny lexical 部署；向量模式必须在后端真正提供固定模型和向量库后再宣称可用。部署变更后重新做 `/health`、`/index/info`、四模式和错误路径检查。
+- [ ] 冻结 Router、候选池、RRF 和模型设置的 808 条内部 holdout 四模式 HTTP 评测越过全量文件、恢复及在线身份门禁，但四臂均因传输错误未封存。候选 ID/文档读取、词频计分和语料指纹读取的等价快路径已修复，并通过同环境 CPU 准入。新的固定 dev32 性能门禁→formal808 流程已冻结，30 秒超时与检索参数保持不变；仅在性能与运行预算准入通过后进入完整评测。保存逐查询 TREC、覆盖率、向量触发与回退、延迟、资源测量及 `evaluation.compare` 的配对区间。
+- [ ] 核对同组 PR 的合并顺序，保留 offline 与 Router 的测试。将抓取和清洗实现归入数据模块评审，在 RFC-0004 保留消费的数据摘要、来源和复现实验入口。全量验证和联合合并检查通过后集中更新既有评审。
 
-## BLOCKED / 证据边界
+## 证据边界
 
-- 官方公开 baseline 只有 dev 标注，课程目标快照和 test labels 尚未被公开资源证明存在；不能把 dev 或 prefix smoke 改名为 test/full-scale。
-- 本地电脑没有 NVIDIA GPU；真实 embedding/Qdrant 的集群运行产物不提交仓库，且不代表全量语义质量。
-- 网络爬取只负责构造候选 corpus；本次 qrels 的标签来源明确为 assistant 语义复核，用户已授权将其作为正式工程 qrels，但它不是独立人工 gold labels。脚本不会从网页标题自动制造真值。
-- 历史 IAB 导航/会话或另一入口空响应不能支持“集群不可用”或“配额不足”。本轮非 GUI API 任务查询和隔离 CPU 实际执行已成功；旧 SDK 路由不适配现平台。后续继续仅用 CLI/SSH/API，并在提交前核验资源，已有任务始终受保护。
+- 官方公开基线的判定来自 dev。808 条留出查询来自该集合。开题报告中的 100001/2000/9839 是团队提出的目标快照，来源见 [资源记录](evaluation/RESOURCES.md)。
+- 公开演示站点当前使用 tiny lexical 索引。部署更新后的验收单列 `/health`、`/index/info`、四模式和错误路径。
+- 自爬评测的判定来源为 assistant 全文复核，报告按工程评测解释。数据、模型、快照、索引与生成结果均保存在 Git 外。
 
-## 固定验证入口
-
-当前新增代码验证为核心 62/62、evaluation 76/76、checkpoint/stream/BGE/文档源/CLI/HNSW/产物保护专项 109/109，compile 和 diffcheck 通过；此前未变动的 Web 代码已通过 Node 5/5。这些是代码验证；全量文档源、真实 CPU/GPU 模型及小批 HNSW 已有独立工程收据，完整双索引与全规模四模式/paired bootstrap 仍待完成。
+## 复验入口
 
 ```bash
 python tests/run.py
+python -m unittest discover -s tests -p 'test_*.py'
 python -m unittest discover -s evaluation -p 'test_*.py'
-python -m unittest tests.test_checkpoint_build tests.test_checkpoint_compact \
-  tests.test_compact_stream tests.test_bge_serving tests.test_corpus_documents \
-  tests.test_build_vectors_cli tests.test_hnsw_search_config tests.test_hnsw_build_config \
-  tests.test_vector_artifact_ownership -v
 node --test tests/test_web.cjs
 python -m compileall .
 git diff --check
 ```
+
+规模构建、恢复、合并和产物校验命令见 [RFC-0004 规模构建](docs/RFC0004_SCALE.md)。

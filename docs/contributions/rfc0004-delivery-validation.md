@@ -1,7 +1,8 @@
 # RFC-0004：离线产物交付与校验补充
 
-本文件记录本分支补充的 RFC-0004 部分。它与 PR #7 的 streaming/compact/packed
-个人成果互补，不复制其实现，也不宣称单独完成 RFC-0004 的 20k 自爬或标准集全量验收。
+本文件记录 RFC-0004 的产物发布与校验入口。PR #7 与 PR #8 都包含部分
+streaming、compact 和 packed 代码。整合时沿用共同的索引格式和读取契约，
+以最终集成验证确认两条分支的改动。
 
 ## 已落地的交付语义
 
@@ -24,11 +25,40 @@
    中的完整必需产物集合、身份字段和产物哈希。它只依赖 offline/contracts，不导入 online。
 8. writer 返回成功后若本地 manifest 发布失败，Qdrant writer 通过 `rollback(manifest)`
    尝试删除本次 collection；原始发布异常优先保留。
+9. 混合构建会将 Qdrant 快照写入整包的暂存目录。使用实际 Qdrant 1.16.0、三篇
+   fixture 文档及确定性测试编码器验证了发布、快照哈希和混合查询。该检查覆盖
+   服务与发布流程，语义模型和全量恢复按独立流程验收。
+10. 复用 [PR #7](https://github.com/ShwStone/NLP-SearchEngine/pull/7) 的轻量文档读取接线，
+    编码与 provenance 生成通过带 `manifest()` 的 `DiskDocuments`，不额外物化
+    词法 postings。回归在禁止构造 `DiskIndex` 的条件下完成双索引构建，随后正常
+    校验交付目录；底层 A1 构建器的内存边界仍按下节说明。
+
+## 全量 native merge / reader 验收（2026-11-06）
+
+native supervisor、merge 和 reader 三份 receipt 均为 `PASS`，worker exit code
+为 0。全量 lexical/compact 合并产物包含 8,096,668 篇文档和 8,578,589 个词项，
+ordered corpus fingerprint 为
+`0ae8b1174d0ee8e55f269c3c6d8e5f12d7e9c79fcb72c3966e99de18c9061019`。
+冻结的 native 程序重新校验源文件与产物哈希、执行完整索引语义检查和顺序指纹检查，
+并通过公开 `DiskIndex` 入口读取内部 ID 0、4,048,334、8,096,667。
+
+root 已核对三份 receipt 的原始字节 SHA256 及绑定关系；没有独立下载并重哈希约
+107 GB 输入。supervisor、merge、reader receipt SHA256 依次为：
+
+- `bc9b425ccc15f1f87576e03c37d13b7ee6bae24b6445a3aebf6895070d5e2b59`
+- `1d4704da31373db5bbb6b441a5dc23f84fe1ea3792d95057c5528ec6bb95f0f3`
+- `aa008c41a3bf323e596147893d19b174db2c1b582207ed7609a8ff89756c01ad`
+
+请求资源为 2 CPUs / 10 GiB / 0 GPUs，supervisor wall time 为 40,563.54 秒，
+worker peak RSS 为 392,413,184 bytes，精确进程成员关系 cgroup peak 为
+2,201,608,192 bytes；该 cgroup 并非进程独占。最终 receipt 未记录 OOM 或 failcnt
+增加。旧失败与小规模 probe 保留其原有结论。本次通过的是全量 merge 与 reader
+工程验收。旧 808 query 四模式评测已实际运行，但因传输错误未形成完整 arm seal。等价快路径及同环境 CPU 门禁已通过，新的 dev32→formal808 流程已冻结；正式 8M 质量仍未完成。
 
 ## 尚未宣称的能力
 
-- 当前旧 v1 builder 仍会把 conformance oracle 放入内存；PR #7 的 SQLite/compact 方案
-  是独立的规模路线，合并前需解决接口兼容、峰值内存和完整回滚证据。
+- 旧 v1 builder 仍会把 conformance oracle 放入内存。规模构建使用带断点的 SQLite
+  构建、compact 转换和分片合并入口，见 `docs/RFC0004_SCALE.md`。
 - `offline.validate` 能验证已导出的快照文件完整性和本地双索引身份，但不能把没有
   干净 Qdrant 实例恢复日志的构建伪装成“已完成恢复验收”。真实恢复仍需在隔离实例中
   执行并记录 Qdrant/server/client 版本、collection metadata、exact count、ID 覆盖和
@@ -42,8 +72,10 @@
 
 ```bash
 python tests/run.py
+python -m unittest discover -s tests -p 'test_*.py'
 python -m unittest discover -s evaluation -p 'test_*.py'
 python -m offline.validate --build-dir /path/to/released-dual-index
+python -m offline.validate --lexical-index BUNDLE/compact --vector-artifacts QDRANT_DIR
 ```
 
 所有数据、模型、Qdrant collection、快照和生成 run 均保持在版本库之外。

@@ -42,6 +42,9 @@ tests/        标准库 runner；安装 pytest 后也可直接运行 pytest
 
 ## 快速开始：词法闭环与契约测试（无额外依赖）
 
+下方为 Bash 示例。Windows 可将 `python3` 换成已安装解释器对应的 `python`，
+将 `/tmp/...` 换成版本库外的绝对目录，并将带 `\` 换行的命令合并为一行。Windows PowerShell 的 `curl` 可能是 `Invoke-WebRequest` 别名，HTTP 请求请使用下方的 `Invoke-RestMethod` 示例。
+
 ```bash
 # 1. 构建词法索引（保留旧目录，不在框架更新中修改既有 fixtures）
 python3 -m offline.build --corpus fixtures/tiny_corpus.jsonl \
@@ -50,8 +53,10 @@ python3 -m offline.build --corpus fixtures/tiny_corpus.jsonl \
 # 2. 词法 conformance
 python3 -m contracts.conformance /tmp/nlp-tiny-bm25 fixtures/tiny_corpus.jsonl
 
-# 3. 全部测试：包含离线双索引、假向量、路由与真实本地 HTTP 请求
+# 3. 核心契约、评测器和额外 unittest（可选依赖缺失时相应专项会 skip）
 python3 tests/run.py
+python3 -m unittest discover -s evaluation -p 'test_*.py'
+python3 -m unittest discover -s tests -p 'test_*.py'
 # 可选：浏览器高亮逻辑的 Unicode/转义回归测试（Node.js 18+，无需 npm 依赖）
 node --test tests/test_web.cjs
 
@@ -62,6 +67,12 @@ curl -s -X POST localhost:8000/search -H 'Content-Type: application/json' \
     -d '{"query": "心肌梗死 症状", "mode": "lexical", "k": 5}'
 curl -s localhost:8000/index/info
 # 浏览器打开 http://127.0.0.1:8000/ 查看演示界面
+```
+
+Windows PowerShell 请求示例（服务已启动）：
+
+```powershell
+Invoke-RestMethod -Uri 'http://127.0.0.1:8000/search' -Method Post -ContentType 'application/json; charset=utf-8' -Body (@{query='心肌梗死 症状';mode='lexical';k=5} | ConvertTo-Json -Compress)
 ```
 
 默认只监听 `127.0.0.1`。需要从其他机器访问时，显式添加 `--host 0.0.0.0`，
@@ -207,12 +218,14 @@ python3 -m evaluation.evaluate \
 
 **已可用**：bigram 占位分词、词法构建/读取、BM25/TF-IDF、普通 OR 查询、布尔/短语过滤、Top-K/高亮/HTTP；双索引构建编排、Qdrant upsert/快照发布检查；规则 Router、RRF、四模式编排、降级和阶段耗时；可选 Sentence-Transformers/Qdrant 适配器；浏览器 UI、HTTP-only 评测器与标准库测试。
 
-**已完成的资源准备与受限实验**：已核验 RocketQA 官方 DuReader-Retrieval baseline archive，确认其包含
-8,096,668 个 passage、2,000 个 dev 查询和 9,839 条去重 qrels，并提供专用流式适配器、SHA256
-清单和 dev-only 边界；已在固定 BGE revision、20k 前缀和冻结 Router 参数上完成 GPU 编码、四模式
-HTTP 评测与 paired bootstrap，并完成真实 Qdrant 1.16.0 服务端的小批快照恢复验收。**仍待完成**：
-该公开 archive 没有官方 test labels，团队自爬并人工确认的测试集、8M 规模索引、Qdrant HNSW
-全量性能和正式课程规模实验仍需独立完成。数据、模型和索引产物不随仓库提交，仓库已提供校验、
-固定划分和区间计算入口。
+**资源与实验进度**：团队自爬语料已冻结 20,000 篇，完成 150 条测试查询的真实 BGE/Qdrant
+四模式 HTTP 评测和 paired bootstrap；池化判定的来源明确记录为 assistant 全文复核，
+不是独立人工 gold。官方 RocketQA 基线包已核验 8,096,668 个 passage、2,000 个 dev 查询、
+9,839 条去重 qrels；固定 BGE revision 的全量向量和 Qdrant 1.16.0 HNSW 快照已通过
+两次独立空实例恢复。词法全量合并已交付 8,578,589 个词项，13 个 A1/compact 文件及
+正常 `DiskIndex` 读取验收通过；冻结的 808 条内部 holdout 四模式评测待完成。该包没有
+官方 test labels，内部 holdout 不冒称官方 test。
+数据、模型、快照、索引和生成 run 均留在 Git 外；具体结果与边界见 [报告](REPORT.md)
+和 [资源记录](evaluation/RESOURCES.md)。公开演示站点当前仍使用 tiny lexical 索引。
 
 RM3 已实现为确定性的本地伪相关反馈扩展；SLM 仍需要外部固定模型与离线缓存，返回 501。扩展不改变显式布尔/短语约束。内存测试通过不代表真实语义质量或 HNSW 性能已经验收。

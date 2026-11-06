@@ -140,15 +140,18 @@ An existing run can be scored without a server:
 python3 -m evaluation.evaluate --qrels qrels.tsv --run runs/bm25.trec
 ```
 
-Before a full experiment, normalize and freeze an externally downloaded
-DuRetrieval release without committing the data:
+For a bounded JSONL corpus that fits in memory, normalize and freeze an
+external release without committing the data. Supply its actual expected counts:
 
 ```bash
 python3 -m evaluation.prepare_dataset \
   --corpus data/raw/corpus.jsonl --queries data/raw/queries.jsonl \
-  --qrels data/raw/qrels.tsv --out data/duretrieval \
-  --expected-docs 100001 --expected-queries 2000 --expected-qrels 9839
+  --qrels data/raw/qrels.tsv --out data/duretrieval
 ```
+
+Ordinary queries retain TSV output. Queries containing tabs, newlines or Unicode
+line separators automatically select escaped JSONL; explicit `--query-format tsv`
+rejects these inputs. All output files use LF, including on Windows.
 
 For the public RocketQA DuReader-Retrieval baseline archive, use the dedicated
 streaming adapter instead of treating the archive as generic JSONL. It writes
@@ -168,6 +171,23 @@ python3 -m evaluation.prepare_dureader \
   --archive-sha256 <archive-sha256> \
   --expected-queries 2000 --expected-qrels 9839
 ```
+
+After corpus validation, split just the prepared queries and qrels without
+loading or copying the 8M-document corpus. This uses the same SHA256 seed/query-ID
+assignment as the normalizer and reproduces the six frozen internal-split files:
+
+```bash
+python3 -m evaluation.prepare_dataset --queries-only \
+  --queries /data/prepared/duretrieval-official-dev/queries.dev.jsonl \
+  --qrels /data/prepared/duretrieval-official-dev/qrels.dev.tsv \
+  --out /data/prepared/official-internal-splits \
+  --seed 20261028 --dev-fraction 0.5 --test-fraction 0.4 \
+  --expected-queries 2000 --expected-qrels 9839
+```
+
+This entry validates query IDs, qrel query references, input counts and source
+hashes, then publishes a fresh directory. It does not validate corpus membership;
+its manifest explicitly records that boundary. Run the corpus adapter first.
 
 Compare two runs with a deterministic query-level paired bootstrap. The
 reported difference is `run-b - run-a`:

@@ -1,8 +1,10 @@
 # RFC-0004 scale path
 
 This document describes the optional scale support currently present in the
-repository. It is an engineering handoff and does not claim that the course
-corpus or the 8M-document build has completed.
+repository. The native full-corpus lexical merge and public compact-reader
+acceptance passed on 2026-11-06 for 8,096,668 documents. This is an engineering
+handoff. The previous four-mode quality attempt failed without sealed arms;
+no accepted full-scale retrieval-quality result exists yet.
 
 ## Validated pieces
 
@@ -75,32 +77,9 @@ it is not another retrieval-quality experiment. Full-scale throughput and memory
 remain unproven by this pilot. Planning uses a 50% disk margin plus 10 GiB of
 headroom per output/scratch volume.
 
-The local full-corpus job uses a frozen source copy, separate output/scratch
-volumes, and external heartbeat/phase receipts. It must finish the lexical stage
-before starting compact; neither an in-progress directory nor a launch receipt
-counts as a completed 8M artifact. The remaining reader acceptance and full-scale
-Qdrant/HNSW experiments are still required. Historical IAB task navigation
-reported `node-service` not ready; the latest IAB session/navigation also failed,
-and another entry returned an empty response. These observations are limited to
-those access attempts: a local terminal received HTTP 200 with a normal page
-title from one entry, and the user confirmed their own browser works. They do
-not establish cluster unavailability or insufficient quota. A memory-only API
-session subsequently authenticated, read existing jobs and remaining CPU/RAM/GPU
-quotas, and submitted an isolated CPU-only source preflight. It passed core,
-evaluation, 56 targeted tests and compilation in 52.90 seconds on Python 3.10.14
-and Torch 2.3.0, using 2 CPUs / 2 GiB host RAM / 0 GPUs. That preflight changed
-no existing cluster task and submitted no GPU job. The user prohibits computer-control
-access to the cluster because it takes over the keyboard/mouse; further access
-must use non-GUI CLI/SSH/API, with task/resource state verified before submission.
-
 ### Process-termination recovery correction
 
-The initial full-corpus process subsequently disappeared without a completion
-receipt. Its journal-OFF SQLite staging database failed a read-only query with
-`database disk image is malformed`. The old directories and launch state are
-preserved as failure evidence and are not accepted as resumable checkpoints.
-
-The new `offline.checkpoint_build` entry binds full input SHA256/size, dataset,
+`offline.checkpoint_build` binds full input SHA256/size, dataset,
 BM25, analyzer, runtime and code hashes. It uses an OS state lock and SQLite
 WAL/FULL. Each ingestion checkpoint fsyncs docs/offsets before committing rows,
 input byte offset, file lengths and document count in one transaction. Resume
@@ -120,11 +99,9 @@ Use the same command and frozen code to resume after verifying that its prior
 process is terminal. This is a new state format and cannot adopt old stream
 builder databases. The subprocess/fault tests cover hard exits around file
 fsync, SQL commit, partial term export, hashes and publication, with byte equality
-to the original stream builder. They establish process-crash recovery; Windows
-power-loss and disk-failure tolerance are not claimed. The restarted full-corpus
-job currently runs only the lexical stage; full-scale compact and reader acceptance
-remain subsequent work. The frozen runtime of an active job must not be replaced
-by later source fixes; resume it using its original binding. A reviewed bootstrap
+to the original stream builder. These checks establish process-crash recovery;
+Windows power-loss and disk-failure tolerance are not claimed. Resume with the
+original runtime and source revision. A reviewed bootstrap
 repair admits only a provably empty, never-committed SQLite database without an
 existing stage/target or unknown state files. Damaged or nonempty state remains
 protected and fails closed.
@@ -162,26 +139,31 @@ with both manifest formats is rejected, and the legacy checksum-disable argument
 cannot bypass compact checks. Source schema/statistics/checksum metadata and
 average length are also validated. This 10k acceptance is not an 8M receipt.
 
-As an external, non-versioned smoke receipt, the same path was run on the
-1,029-document depth-4 government-web crawl: `stream_build` completed in
-66.69 seconds with average document length 2,945.7, and `compact` completed in
-15.22 seconds with 178,504 terms. The resulting manifests and their hashes are
-recorded in `evaluation/RESOURCES.md`. This is evidence that the staged path is
-usable on a small external corpus; it is not an 8M peak-RSS, disk, throughput,
-or Qdrant HNSW receipt.
+## Native full-corpus merge and reader acceptance (2026-11-06)
 
-The depth-4 corpus was then merged by URL with 108 pages fetched from the
-site's public sitemap batch, producing 1,137 documents. The merged stream build
-completed in 74.19 seconds with average document length 2,797.2; compact
-conversion completed in 13.97 seconds with 186,263 terms. The merged manifest
-and compact hash are recorded in `evaluation/RESOURCES.md`. These measurements
-remain bounded engineering smoke evidence, not an 8M resource receipt.
+The native supervisor, merge and reader receipts all report `PASS`, with worker
+exit code 0. The merged lexical/compact bundle contains 8,096,668 documents and
+8,578,589 terms. Its ordered corpus fingerprint is
+`0ae8b1174d0ee8e55f269c3c6d8e5f12d7e9c79fcb72c3966e99de18c9061019`.
+The frozen native program rehashed inputs and outputs, completed full semantic
+index checks and the ordered fingerprint check, and probed internal IDs 0,
+4,048,334 and 8,096,667 through the public `DiskIndex` reader.
 
-A separate `contracts.conformance.check_reader` attempt against the 1,029-document
-packed artifact exceeded 20 minutes of local CPU time without producing a
-receipt and was stopped. The tiny packed-reader conformance remains green; the
-large conformance path is therefore unvalidated and must be bounded before it
-is used as a production gate.
+The root audit verified the exact receipt chain and all recorded bindings;
+it did not independently download and rehash the roughly 107 GB of inputs.
+Supervisor/merge/reader receipt SHA256 values are respectively:
+
+- `bc9b425ccc15f1f87576e03c37d13b7ee6bae24b6445a3aebf6895070d5e2b59`
+- `1d4704da31373db5bbb6b441a5dc23f84fe1ea3792d95057c5528ec6bb95f0f3`
+- `aa008c41a3bf323e596147893d19b174db2c1b582207ed7609a8ff89756c01ad`
+
+The request was 2 CPUs / 10 GiB / 0 GPUs. Supervisor wall time was 40,563.54
+seconds, worker peak RSS 392,413,184 bytes, and exact-membership cgroup peak
+2,201,608,192 bytes; the cgroup was not process-exclusive. The final receipt
+records no OOM or failcnt increase. These measurements admit this native merge
+and reader run. Earlier failed attempts and bounded pilots remain separate
+evidence. The previous 808-query four-mode attempt failed on transport errors
+without sealed arms. This merge acceptance establishes no retrieval-quality result.
 
 ## Pinned BGE serving gate
 
@@ -237,7 +219,7 @@ unchanged ordered fingerprint before publication. It creates no lexical files
 and does not relax final dual-index fingerprint matching.
 
 This document source has now passed a real full-input admission, independently
-of the unfinished lexical build: it scanned and parsed all 8,096,668 rows of the
+of the lexical build: it scanned and parsed all 8,096,668 rows of the
 7,425,979,008-byte frozen corpus, verified the expected raw SHA256, and read fixed
 internal IDs 0, 4,048,334 and 8,096,667. Construction took 108.55 seconds, with a
 process peak working set of 218,562,560 bytes (208.44 MiB), below the predeclared
@@ -324,7 +306,8 @@ and passes with the fix; all eight public tiny artifacts are byte-identical,
 including recovery at the tested fsync/commit page boundary. WAL/FULL, save
 ordering, format and validation remain unchanged. The native 100k rerun under the same 4 GiB budget passed A1 and compact,
 including two packed-reader reopens and SHA256 readback of 13 static files.
-The 8M corpus still requires separate resource and reader acceptance.
+That 100k result did not establish 8M acceptance; the later native full-corpus
+merge and reader acceptance is recorded above.
 
 A 5,000-document native split-mount probe passed with unchanged A1 code:
 sequential artifacts were written to LeoFS while the WAL/FULL checkpoint stayed
@@ -357,10 +340,11 @@ a silently ignored JSON config is a failed setup, not an accepted downgrade.
 
 ## Remaining production gate
 
-The current code batch passes core 62/62, evaluation 76/76,
-checkpoint/stream/BGE/document-source/CLI/HNSW/artifact-ownership checks 109/109, Node 5/5,
-compilation and diff checks.
-Independent final review found no additional blocker. These checks do not
+Source `382a8cc` passes core 69/69, evaluation 83/83 and native CPython
+3.10.14 / Unicode13 unittest discovery 153/153, compilation and diff checks.
+The same native cluster dependency environment separately passes core 69,
+evaluation 83 and scorer-equivalence 7 checks. Unchanged frontend code retains
+its earlier Node 7/7 result. These checks do not
 replace full-index acceptance or full-scale retrieval-quality experiments;
 real-model CPU/GPU and bounded HNSW/restore gates now have independent receipts.
 
@@ -368,8 +352,12 @@ The legacy `offline.build` path still materializes the conformance oracle in
 memory; use `offline.stream_build` when measuring a large lexical build. The
 optional compact conversion happens after a source build and therefore does
 not remove that source peak. `offline.vector_build.QdrantSnapshotWriter` now
-uses a temporary SQLite identity table; the 8M vector build still needs a
-complete resource receipt before it is called bounded. A Qdrant HNSW result
+uses a temporary SQLite identity table. The completed 8M vector cache and
+two clean Qdrant restores have separate resource receipts in
+`evaluation/RESOURCES.md`; native lexical merge and reader acceptance are
+recorded above. Equivalent runtime fast paths and native CPU checks have passed;
+the fixed dev32-to-formal808 protocol is frozen, with no accepted full-scale
+quality result yet. A Qdrant HNSW result
 must additionally include server version,
 collection metadata, exact point count, snapshot hash, clean-instance restore,
 peak RSS/disk, throughput and four-mode evaluator output.
@@ -396,6 +384,17 @@ database and the active public terms export are written there. The output
 staging directory receives the closed SQLite file and verifies its SHA256.
 On a separate output volume, verify directory `fsync`, truncation, and
 exclusive atomic rename before allocating a full build.
+
+Validate the merged compact index against the separately published Qdrant
+artifacts in place:
+
+```sh
+python -m offline.validate --lexical-index BUNDLE/compact --vector-artifacts QDRANT_DIR
+```
+
+This checks the lexical files, document count, ordered corpus fingerprint and
+snapshot SHA256. Validate the restored collection and four search modes against
+a running service separately.
 
 `python scripts/cache_vectors.py --help` exposes separate producer and consumer
 commands. Producers use distinct shard IDs and the same corpus hash, model
