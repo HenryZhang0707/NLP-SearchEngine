@@ -132,6 +132,6 @@ class PackedIndex(CompactIndex):
         with self._cache_lock:
             if self._pending:raise RuntimeError('stop requests before closing reader')
             if not self._closed:
-                self._blocks.clear();self._cached_bytes=0;self._term.cache_clear();self._db.close()
+                self._blocks.clear();self._cached_bytes=0;self._term.cache_clear();self._document_bytes.cache_clear();self._db.close()
                 for fd in self._files.values():os.close(fd)
                 self._closed=True

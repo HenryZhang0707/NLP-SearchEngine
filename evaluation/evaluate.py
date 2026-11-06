@@ -37,6 +37,10 @@ from urllib.request import Request, urlopen
 class EvaluationError(ValueError):
     """Input, transport, or response errors raised by the evaluator."""
 
+    def __init__(self, message: str, *, transport: dict | None = None):
+        super().__init__(message)
+        self.transport = transport
+
 
 class HTTPResponseError(EvaluationError):
     """A non-200 or invalid HTTP200 response with observed transport metadata."""
@@ -493,7 +497,14 @@ def _request_search(endpoint: str, query: str, *, k: int, mode: str, scorer: str
         raise HTTPResponseError(error.code, error_body,
                                 (time.perf_counter() - started) * 1000.0) from error
     except (URLError, TimeoutError, OSError) as error:
-        raise EvaluationError(f"请求搜索服务失败: {error}") from error
+        cause = error.reason if isinstance(error, URLError) else error
+        detail = {"kind": "timeout" if isinstance(cause, TimeoutError) else "transport",
+                  "cause_type": type(cause).__name__ if isinstance(cause, BaseException) else "URLError",
+                  "errno": getattr(cause, "errno", None) if type(getattr(cause, "errno", None)) is int else None,
+                  "elapsed_ms": (time.perf_counter() - started) * 1000.0}
+        # Exception text may contain endpoint credentials. Keep structured cause
+        # and elapsed time, without putting that text in logs or the CLI error.
+        raise EvaluationError("请求搜索服务失败", transport=detail) from None
     latency_ms = (time.perf_counter() - started) * 1000.0
     if status != 200:
         try:
@@ -668,6 +679,10 @@ def evaluate_http(endpoint: str, queries: Iterable[QueryRecord], qrels: Mapping[
         except Exception as error:
             state["unexpected_errors"] += 1
             outcome.update(status="UNEXPECTED_ERROR", error_type=type(error).__name__)
+            transport = getattr(error, "transport", None) if isinstance(error, EvaluationError) else None
+            if transport is not None:
+                outcome["latency_ms"] = transport["elapsed_ms"]
+                outcome["transport_error"] = dict(transport)
             save_state("OUTCOME", outcome)
             raise
         if expected_rejection:

@@ -164,11 +164,20 @@ class RetrievalConfig:
 def corpus_fingerprint(reader: DocumentSource) -> str:
     """独立于磁盘格式的语料快照标识；离线和在线用同一算法。"""
     digest = hashlib.sha256()
-    for docid in range(reader.n_docs):
-        doc = reader.doc(docid)
+    stream = getattr(reader, "iter_document_text", None)
+    text = getattr(reader, "document_text", None)
+    documents = (stream() if callable(stream) else
+                 ((text(docid) if callable(text) else reader.doc(docid)) for docid in range(reader.n_docs)))
+    count = 0
+    for docid, doc in enumerate(documents):
+        if docid >= reader.n_docs or type(doc.docid) is not int or doc.docid != docid:
+            raise ValueError("document source order mismatch")
+        count += 1
         row = [docid, doc.doc_id, doc.title, doc.text]
         digest.update((json.dumps(row, ensure_ascii=False, separators=(",", ":"))
                        + "\n").encode("utf-8"))
+    if count != reader.n_docs:
+        raise ValueError("document source count mismatch")
     return digest.hexdigest()
 
 

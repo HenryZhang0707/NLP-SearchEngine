@@ -25,6 +25,8 @@ from contracts.reader import Document
 
 PAIR = struct.Struct('<QQ')
 _PREAD_LOCK = threading.RLock()
+DOCUMENT_CACHE_ROWS = 256
+DOCUMENT_CACHE_ROW_BYTES = 64 * 1024
 
 
 def _pread(fd: int, size: int, offset: int) -> bytes:
@@ -174,10 +176,14 @@ class CompactIndex:
             raise ValueError('compact row index mismatch')
         binary_flag = getattr(os, 'O_BINARY', 0)
         self._files={name:os.open(self.root/name,os.O_RDONLY | binary_flag) for name in ('docs.jsonl','offsets.bin','postings.bin')}
+        self._document_path=(self.root/'docs.jsonl').absolute()
         self._db=sqlite3.connect((self.root/'terms.sqlite').resolve().as_uri()+'?mode=ro&immutable=1',uri=True,check_same_thread=False)
         self._lock=threading.RLock()
         self._term=lru_cache(maxsize=4096)(self._lookup)
         self.postings=lru_cache(maxsize=cache_terms)(self._postings)
+        # At most 16 MiB of serialized document payload plus bounded cache-key
+        # overhead. Oversized rows are read normally and never retained.
+        self._document_bytes=lru_cache(maxsize=DOCUMENT_CACHE_ROWS)(self._read_document_bytes)
         self._closed=False
 
     def _lookup(self,term):
@@ -201,12 +207,45 @@ class CompactIndex:
 
     def _document_row(self,docid):
         if type(docid) is not int or not 0<=docid<self.n_docs:raise IndexError('invalid docid')
+        if self._closed:raise ValueError('reader is closed')
         start,size=PAIR.unpack_from(self._doc_index,docid*PAIR.size)
-        return json.loads(_pread(self._files['docs.jsonl'],size,start))
+        raw=(self._document_bytes(start,size) if size<=DOCUMENT_CACHE_ROW_BYTES
+             else self._read_document_bytes(start,size))
+        return json.loads(raw)
+
+    def _read_document_bytes(self,start,size):
+        return _pread(self._files['docs.jsonl'],size,start)
 
     def external_doc_id(self,docid):
         """Validate vector identity without materializing token-offset pairs."""
         return self._document_row(docid)['doc_id']
+
+    def document_text(self,docid):
+        """Original fields for rendering, without reading unused token offsets."""
+        row=self._document_row(docid)
+        return Document(docid,row['doc_id'],row['title'],row['text'])
+
+    def iter_document_text(self):
+        """Stream all original fields in order without per-row offset reads."""
+        if self._closed:raise ValueError('reader is closed')
+        def identity(info):return info.st_dev,info.st_ino,info.st_size,info.st_mtime_ns
+        expected=identity(os.fstat(self._files['docs.jsonl']))
+        count=0;byte_start=0
+        with self._document_path.open('rb') as stream:
+            if identity(os.fstat(stream.fileno()))!=expected:raise ValueError('document source changed')
+            for docid,line in enumerate(stream):
+                if docid>=self.n_docs or PAIR.unpack_from(self._doc_index,docid*PAIR.size)!=(byte_start,len(line)):
+                    raise ValueError('document byte index mismatch')
+                byte_start+=len(line)
+                row=json.loads(line)
+                if (docid>=self.n_docs or not isinstance(row,dict) or type(row.get('docid')) is not int
+                        or row['docid']!=docid or not isinstance(row.get('doc_id'),str) or not row['doc_id']
+                        or not isinstance(row.get('title'),str) or not isinstance(row.get('text'),str)):
+                    raise ValueError('invalid ordered document row')
+                count+=1
+                yield Document(docid,row['doc_id'],row['title'],row['text'])
+            if count!=self.n_docs or identity(os.fstat(stream.fileno()))!=expected:
+                raise ValueError('document source count or identity changed')
 
     def doc(self,docid):
         row=self._document_row(docid)
@@ -224,7 +263,7 @@ class CompactIndex:
 
     def close(self):
         if not self._closed:
-            self._term.cache_clear();self.postings.cache_clear();self._db.close()
+            self._term.cache_clear();self.postings.cache_clear();self._document_bytes.cache_clear();self._db.close()
             for fd in self._files.values():os.close(fd)
             self._closed=True
 

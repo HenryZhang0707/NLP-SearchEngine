@@ -206,3 +206,17 @@ engine = SearchEngine(reader, encoder=query_encoder, vectors=vector_reader,
 零依赖 runner 检查本仓库 schema 使用的响应子集，不是完整 JSON Schema 引擎。UI 和评测器可用标准 JSON Schema 验证器直接消费 api.py 的两个 schema。
 
 真实模型权重、DuRetrieval 全量语料/qrels 和 Qdrant 服务不随仓库提供。已记录的受限前缀结果是工程冒烟；当前没有正式全规模语义质量或 HNSW 性能结论，资源和准入进展见 `evaluation/RESOURCES.md`。RM3 是确定性的本地伪相关反馈扩展；SLM 仍需要外部固定模型与离线缓存并返回 501，二者都不改变显式约束，也不会自动混入四组主实验。
+
+### 可选只读加速接口
+
+`IndexReader.doc()` 仍返回完整 offsets，conformance 和显式位置语义不变。实现可以额外提供
+`external_doc_id(docid)`、`document_text(docid)`、`iter_document_text()` 与
+`term_frequencies(term)`；在线层在存在可调用实现时使用它们，否则保留原接口。
+纯正文接口的内部/外部 ID、title 和 text 必须与 `doc()` 完全一致，只省略不消费的 offsets；
+词频对的顺序必须与 postings 相同。顺序正文流必须覆盖全部文档并绑定 `docs.idx` 的
+每行字节窗口，不能只对物理 JSONL 行计算身份。语料指纹的 canonical JSON 与 SHA256 算法不变。
+
+compact reader 对不超过 64 KiB 的原始文档行最多缓存 256 条，序列化 payload 上限为
+16 MiB，另有有界的缓存键开销；大行正常读取但不保留。它不缓存可变的解析对象，也不把
+该缓存上限解释为进程总 RSS。普通 OR 计分不再重复构建候选并集，显式空集和 AND 交集仍过滤。
+稳定 Top-K 仍按分数降序、内部 docid 升序，分页、Router 与 RRF 使用同一前缀。
