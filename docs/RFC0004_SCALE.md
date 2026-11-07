@@ -3,8 +3,9 @@
 This document describes the optional scale support currently present in the
 repository. The native full-corpus lexical merge and public compact-reader
 acceptance passed on 2026-11-06 for 8,096,668 documents. This is an engineering
-handoff. The previous four-mode quality attempt failed without sealed arms;
-no accepted full-scale retrieval-quality result exists yet.
+handoff. The final four-mode 808-query HTTP evaluation and four paired-bootstrap
+intervals passed independent recomputation on 2026-11-07. Full results and
+evidence boundaries are in REPORT.md section 8 and evaluation/RESOURCES.md.
 
 ## Validated pieces
 
@@ -162,8 +163,10 @@ seconds, worker peak RSS 392,413,184 bytes, and exact-membership cgroup peak
 2,201,608,192 bytes; the cgroup was not process-exclusive. The final receipt
 records no OOM or failcnt increase. These measurements admit this native merge
 and reader run. Earlier failed attempts and bounded pilots remain separate
-evidence. The previous 808-query four-mode attempt failed on transport errors
-without sealed arms. This merge acceptance establishes no retrieval-quality result.
+evidence. An early 808-query attempt failed on transport errors without sealed
+arms; the later deadline-limited attempt sealed lexical, and the completed
+recovery reused only that byte-identical arm. Merge acceptance itself establishes
+no relevance result; the separately recomputed final evaluation is linked below.
 
 ## Pinned BGE serving gate
 
@@ -287,7 +290,8 @@ Worker/supervisor times are 656.764/667.318 seconds, `COMPLETE`, exit 0, no time
 Constructor time 314.718 seconds does not localize the historical wait; the
 90.98-second document encoding is CPU engineering throughput for this pilot.
 Receipt hashes and full limits are in `evaluation/RESOURCES.md`; qrels and
-quality evaluation were not used, and 8M/four-mode/paired-bootstrap gates remain.
+quality evaluation were not used at that pilot stage. Later full8M and
+four-mode/paired-bootstrap completion has separate receipts below.
 
 A separate 10k full-builder probe initially stopped before its worker because
 cgroup accounting paths were unresolved; its 43.44s is not build-throughput
@@ -338,13 +342,13 @@ does not prove physical SSD, durable storage or admit an 8M build.
 YAML configuration discovery and non-default port/config checks are mandatory;
 a silently ignored JSON config is a failed setup, not an accepted downgrade.
 
-## Remaining production gate
+## Production evidence and current limits
 
 Source `382a8cc` passes core 69/69, evaluation 83/83 and native CPython
 3.10.14 / Unicode13 unittest discovery 153/153, compilation and diff checks.
 The same native cluster dependency environment separately passes core 69,
-evaluation 83 and scorer-equivalence 7 checks. Unchanged frontend code retains
-its earlier Node 7/7 result. These checks do not
+evaluation 83 and scorer-equivalence 7 checks. Unchanged frontend code was
+rechecked on 2026-11-07 with Node 7/7 passing. These checks do not
 replace full-index acceptance or full-scale retrieval-quality experiments;
 real-model CPU/GPU and bounded HNSW/restore gates now have independent receipts.
 
@@ -356,11 +360,16 @@ uses a temporary SQLite identity table. The completed 8M vector cache and
 two clean Qdrant restores have separate resource receipts in
 `evaluation/RESOURCES.md`; native lexical merge and reader acceptance are
 recorded above. Equivalent runtime fast paths and native CPU checks have passed;
-the fixed dev32-to-formal808 protocol is frozen, with no accepted full-scale
-quality result yet. A Qdrant HNSW result
-must additionally include server version,
-collection metadata, exact point count, snapshot hash, clean-instance restore,
-peak RSS/disk, throughput and four-mode evaluator output.
+the fixed dev32-to-formal808 protocol completed all arms, with independent
+recomputation of TREC quality, requests, routing, per-arm latency and all four
+10,000-sample paired-bootstrap intervals. Dense has two predeclared constraint
+refusals scored as empty rankings in the full 808-query denominator; other
+requests succeeded. Dense led all four quality metrics; rules-v1 Adaptive
+underperformed fixed Hybrid despite 213 fewer vector attempts. Preserve this
+negative result. Lexical came from a sealed prior epoch, so latency is descriptive
+per arm, not a causal speedup comparison. Full receipt hashes, resource costs,
+artifact handoff paths and reproduction commands are in
+[evaluation/RESOURCES.md](../evaluation/RESOURCES.md#官方全量四模式最终验收).
 
 The tiny `scripts/smoke_offline.py` command only imports a snapshot into the
 same isolated Qdrant process after deleting its collection. It is a dependency

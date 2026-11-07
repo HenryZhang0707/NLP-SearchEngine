@@ -62,7 +62,7 @@ python -m evaluation.prepare_dureader \
 
 为了验证工程闭环，公开的 [C-MTEB 快照镜像](https://github.com/Lsogod/everything-ent-hybrid-rag/tree/main/data/knowledge/datasets) 可在当前网络中取得，但它只有 5000 篇文档、100 条查询和 425 条 qrels。它适合冒烟评测，不能当作所选官方版本的全量数据；本地冒烟结果也不能写成最终成绩。
 
-RocketQA 脚本中的数据和 ERNIE 权重来自 `dataset-bj.cdn.bcebos.com`。数据包已完成哈希和结构核验。集群完成了 BGE CUDA 编码和受限前缀四模式实验，随后取得固定模型的 SHA、CPU 准入和全量 HNSW 快照回执。全量词法合并和正常 reader 已取得原生 PASS；双索引质量评测仍待完成。构建 BM25、向量索引和四组实验时，模型 revision、维度、前缀、截断规则和 Qdrant HNSW 参数须随结果记录。 [评测说明](README.md)
+RocketQA 脚本中的数据和 ERNIE 权重来自 `dataset-bj.cdn.bcebos.com`。数据包已完成哈希和结构核验。集群完成了 BGE CUDA 编码和受限前缀四模式实验，随后取得固定模型的 SHA、CPU 准入和全量 HNSW 快照回执。全量词法合并和正常 reader 已取得原生 PASS；双索引完整四模式质量与配对区间已通过独立复算，见本文“官方全量四模式最终验收”。构建 BM25、向量索引和四组实验时，模型 revision、维度、前缀、截断规则和 Qdrant HNSW 参数须随结果记录。 [评测说明](README.md)
 
 Qdrant 适配器和快照发布逻辑已在 `offline/vector_build.py`、`online/vector_index.py` 中实现。没有可用 Qdrant 实例时，内存向量替身只能用于契约测试，不能作为 HNSW 性能结论。
 
@@ -170,9 +170,9 @@ Qdrant 适配器和快照发布逻辑已在 `offline/vector_build.py`、`online/
 
 同日，十分片计划中的首个 506,041 文档小分片完成 A1 与 compact 独立验收，13 个静态文件读回 SHA256 与源一致；两种格式的 docs 摘要均与预冻范围一致。请求资源为 2 CPU / 10 GiB / 0 GPU，实际 cgroup CPU quota 为 4 核；进程峰值 RSS 为 48,128,000 bytes，cgroup 峰值为 5,475,852,288 bytes，私有盘采样峰值为 3,178,532,864 bytes，OOM/failcnt 均为 0。A1、compact、compact 静态传输分别耗时 2902.918、1204.154、322.014 秒。产物收据 SHA256 为 `991bfb9218689e30b614a9f73a85f9addf261ad4f1c432894d6fcde5790c48a7`，资源回执为 `a6aa6b1c04876a9d17d35be2a7009a2f9333ecd578acacdb0d4e6e5087aac04c`。这是一份分片的工程证据，不能将进程 RSS 当作完整内存成本，也不能将单任务峰值当作并发或 8M 容量证明。
 
-官方全量 BGE 缓存的两份原生生产任务随后各报告 `chunks_ready`，`completed_count=81`、`reused_count=0`，存储清单中的 162 个完成标记齐全。该缓存覆盖 8,096,668 篇文档，固定 `BAAI/bge-small-zh-v1.5@7999e1d3359715c523056ef9478215996d62a620`、512 维 FP32 和原有文本/截断契约；缓存配置身份为 `dbcc76ab042f9d04a68fa7cbad4fbe4f0f798e2b363416ac6c214e5b6a77b53f`，不是所有向量文件拼接后的摘要。生产任务各请求 1×2080Ti、4 CPU、12 GiB，观测到实际 CPU quota 为 8 核，但进程 affinity 限制为最多 4 核。当时独立全内容复验尚未完成；后续最终验收见下文。全规模 HNSW/四模式评测仍未完成，不能只凭生产日志与标记计数报告最终验收通过。
+官方全量 BGE 缓存的两份原生生产任务随后各报告 `chunks_ready`，`completed_count=81`、`reused_count=0`，存储清单中的 162 个完成标记齐全。该缓存覆盖 8,096,668 篇文档，固定 `BAAI/bge-small-zh-v1.5@7999e1d3359715c523056ef9478215996d62a620`、512 维 FP32 和原有文本/截断契约；缓存配置身份为 `dbcc76ab042f9d04a68fa7cbad4fbe4f0f798e2b363416ac6c214e5b6a77b53f`，不是所有向量文件拼接后的摘要。生产任务各请求 1×2080Ti、4 CPU、12 GiB，观测到实际 CPU quota 为 8 核，但进程 affinity 限制为最多 4 核。当时独立全内容复验尚未完成；后续最终验收见下文。当时全规模 HNSW/四模式评测尚未完成，不能只凭生产日志与标记计数报告最终验收通过；后续终态见下文。
 
-随后两个各 506,042 文档的小分片也完成 A1/compact 的 13 文件验收，三份连续小分片共覆盖 1,518,125 篇文档。新增两份产物收据 SHA256 分别为 `f29618536aa05d2495d55735301b4e56eb75c43239ecda594dba5cd4158fafa3`、`39b91bd3d77a4bc8990d8b3f2b0cf3e08f26ad578e80d6cc0f9412d11f336157`；私有盘采样峰值分别为 3,165,499,392 / 3,183,312,896 bytes，cgroup 峰值分别为 5,844,250,624 / 5,918,748,672 bytes，均无 OOM/failcnt 变化。两任务实际执行存在重叠，但这些收据没有测量其他训练任务的吞吐，不能声称并发没有性能影响。其余分片和全量合并仍未完成。
+随后两个各 506,042 文档的小分片也完成 A1/compact 的 13 文件验收，三份连续小分片共覆盖 1,518,125 篇文档。新增两份产物收据 SHA256 分别为 `f29618536aa05d2495d55735301b4e56eb75c43239ecda594dba5cd4158fafa3`、`39b91bd3d77a4bc8990d8b3f2b0cf3e08f26ad578e80d6cc0f9412d11f336157`；私有盘采样峰值分别为 3,165,499,392 / 3,183,312,896 bytes，cgroup 峰值分别为 5,844,250,624 / 5,918,748,672 bytes，均无 OOM/failcnt 变化。两任务实际执行存在重叠，但这些收据没有测量其他训练任务的吞吐，不能声称并发没有性能影响。当时其余分片和全量合并尚未完成；后续终态见下文。
 
 独立全量向量复验采用 8 MiB/s 的只读流和原内容校验器。2 GiB 原生尝试在完成 38 块后达到 90% 内存保护线，峰值 1,936,510,976 bytes，1724.422 秒后退出；没有 OOM、failcnt 变化或已报告的内容错误。回执 SHA256 为 `e1526b37a2a259343553526fcace01fe131de129347a95fae364f642e27f088a`。此时尚未完成全语料 SHA256 和最终文件身份复查，38 块不能当作全量验收；需要按实测内存重新定容，再执行完整协议。
 
@@ -188,7 +188,7 @@ Qdrant 适配器和快照发布逻辑已在 `offline/vector_build.py`、`online/
 
 全量 HNSW 最终保留快照为 18,477,460,992 bytes，SHA256 `2df5c889386db365e4d72d089f90bfb736c8a6a24d5bede4a10f727d9f0976e0`。初次恢复的 16 条 ANN Top-200 一致，但 7 条 exact 的原始同分返回顺序或第 200 名边界不同，原失败回执 `a5f5db6af6ce527a4bc02b883454255295934340e74059287b986604d341013c` 保留。
 
-后续 4 CPU / 72 GiB / 0 GPU 的独立验收复用同一快照，顺序恢复到两个空实例。两个实例各在两次稳定观测中报告 green、optimizer OK、exact count=8,096,668。各 16 条 ANN 的 Top-200 ID 和顺序与原实例一致，分数按冻结的绝对容差 `1e-5` 检查，非空分段各增加 512 次 HNSW 搜索。exact 诊断各增加 512 次对应的 exact 搜索。另对全部 162 块做 FP64 归一化余弦扫描，交叉核对截断同分组完整性及原生分数，最大绝对差约 `1.93e-7`。两次恢复均通过精确排序与投影验证。采样 cgroup 峰值为 38,968,786,944 bytes。原生回执 SHA256 为 `a79d9aa0cc8de004a1d0c15621b086f9a8d900dcc23bb097573ccfcc653d16b2`，独立核验摘要 SHA256 为 `d7b4389350c680d24cddc8bd3a72fa79c82f7f12d021e5d4c8ff67083ea1f243`。该流程只使用机械探针。官方相关度、查询延迟和四模式配对区间在双索引就绪后评测。
+后续 4 CPU / 72 GiB / 0 GPU 的独立验收复用同一快照，顺序恢复到两个空实例。两个实例各在两次稳定观测中报告 green、optimizer OK、exact count=8,096,668。各 16 条 ANN 的 Top-200 ID 和顺序与原实例一致，分数按冻结的绝对容差 `1e-5` 检查，非空分段各增加 512 次 HNSW 搜索。exact 诊断各增加 512 次对应的 exact 搜索。另对全部 162 块做 FP64 归一化余弦扫描，交叉核对截断同分组完整性及原生分数，最大绝对差约 `1.93e-7`。两次恢复均通过精确排序与投影验证。采样 cgroup 峰值为 38,968,786,944 bytes。原生回执 SHA256 为 `a79d9aa0cc8de004a1d0c15621b086f9a8d900dcc23bb097573ccfcc653d16b2`，独立核验摘要 SHA256 为 `d7b4389350c680d24cddc8bd3a72fa79c82f7f12d021e5d4c8ff67083ea1f243`。该流程只使用机械探针。该机械恢复验收当时不含相关度；双索引就绪后的四模式质量、逐臂延迟与配对区间终态见本文末段。
 
 2026-11-05，分片 07、08、09 的原生发布回执均通过，十片连续覆盖全部 8,096,668 篇。三份新增回执 SHA256 依次为 `1c6313753dd620afb97b3c55d594b13555ccfb2bd2e2df3785fc7e5212b56a28`、`9e583cc67d7c8e34b17449020e1ee4d669a1413bca54a42a7c6a569f322e3a2d`、`99a80f688ff1e42861a9696fcb4906a670bce3d954dc8064fa7ee43390681c54`。每片 13 个 A1/compact 文件均按固定摘要校验。实际 LeoFS 上的 512 文档合并探针还核对了 13 个参照文件，并通过 READY 边界硬退出恢复，回执 SHA256 为 `e68e802e7a1d0c99468e8ae761ba5afb504745af7aacb24532bf76ae4c4f930c`。首次全量合并因旧目录映射在输入阶段退出，失败回执 `57cfb9fdeaa6b5d53e5ed851b6b4c19d62e4107aa36081e0815677f25e2db273` 保留；修正后的十个目录都独立回读了收据。该探针只提供合并工程前置证据；后续全量合并与公开 reader 终态见下文，正式质量结果须独立运行。
 
@@ -209,8 +209,89 @@ python scripts/check_bm25_reference.py --out /tmp/fresh-bm25-reference-check
 
 2026-11-06 独立取回并绑定原生全量合并的三份未改写收据：监督器 SHA256 `bc9b425ccc15f1f87576e03c37d13b7ee6bae24b6445a3aebf6895070d5e2b59`、合并 `1d4704da31373db5bbb6b441a5dc23f84fe1ea3792d95057c5528ec6bb95f0f3`、公开 reader `aa008c41a3bf323e596147893d19b174db2c1b582207ed7609a8ff89756c01ad`。终态 PASS、worker exit 0，十片顺序和 13 个产物清单与配置 `7e19c0c97d442df2f188125f9730c1f5fbf4333d7b7edf05b32ec038def6b99e` 绑定。最终有 8,096,668 documents、8,578,589 terms，有序 corpus fingerprint 为 `0ae8b1174d0ee8e55f269c3c6d8e5f12d7e9c79fcb72c3966e99de18c9061019`，两个格式的 docs.jsonl 哈希相同。公开 `DiskIndex` 对内部 ID 0、4,048,334、8,096,667 的读取与预先绑定的外部 ID 一致。
 
-本次恢复运行 wall time 为 40,563.541 秒，校验输入总字节数 107,064,297,777；cgroup 内核峰值为 2,201,608,192 bytes，worker RSS 峰值为 392,413,184 bytes，无 OOM 或 failcnt 增长。cgroup 包含文件缓存，不解释为进程独占 RAM；该 wall time 不包含此前分片、旧失败和已完成的原始断点。根审查验证收据、配置、源码、十片顺序、完整文件清单、计数、fingerprint 和 public reader 的绑定，没有另行下载约 107 GB 输入重新哈希。此前失败收据和恢复证据继续保留。该原生 PASS 完成全量 lexical 交付工程验收，808-query HTTP 四模式质量仍须独立完成。
+本次恢复运行 wall time 为 40,563.541 秒，校验输入总字节数 107,064,297,777；cgroup 内核峰值为 2,201,608,192 bytes，worker RSS 峰值为 392,413,184 bytes，无 OOM 或 failcnt 增长。cgroup 包含文件缓存，不解释为进程独占 RAM；该 wall time 不包含此前分片、旧失败和已完成的原始断点。根审查验证收据、配置、源码、十片顺序、完整文件清单、计数、fingerprint 和 public reader 的绑定，没有另行下载约 107 GB 输入重新哈希。此前失败收据和恢复证据继续保留。该原生 PASS 完成全量 lexical 交付工程验收；后续 808-query HTTP 四模式质量的独立终态见本文末段。
 
 早期失败边界另行保留：无检查点的 journal-OFF SQLite 全量 staging 在进程终止后出现 `database disk image is malformed`，原数据库不被接纳为可恢复断点；后续路径使用源身份绑定的 WAL/FULL 与明确提交边界。另一次对 1,029 篇 packed 产物运行通用 conformance 超过 20 分钟后停止，未生成成功收据。tiny conformance、全量文件/语义校验和公开 reader 探针各有独立范围，后来的合并 PASS 不将旧通用 conformance 追认为通过，也不证明断电或磁盘故障恢复。
 
-源码 `382a8cc` 增加保持计分与稳定排序语义的词频、外部 ID、正文读取和有序指纹快路径；旧失败请求和部分输出保留，30 秒 HTTP 超时未放宽。核心 69/69、evaluation 83/83、固定 Python3.10.14 / Unicode13 专项 153/153 通过。同一集群模型依赖环境以 2 CPU / 2 GiB / 0 GPU 完成核心 69、评测 83、计分一致性 7 项复验，wall time 17.602 秒，无 OOM/failcnt 增长；原生收据 SHA256 为 `ac15719f68fc26c64c8819e02acebf184bc6ac160fe1c076725bcbedb067ff69`。新的固定 dev32→formal808 流程先验证 32 次 HTTP200、零回退、每次不超过 20 秒及预计正式请求时间不超过 18,000 秒，再在同一服务 epoch 运行完整评测。该准入只测运行性能，不读取 dev qrels 或调优质量参数；目前没有可接受的正式 8M 质量结果。
+2026-11-06 在另一个 2 CPU / 2 GiB / 0 GPU 的只读元数据任务中，逐项测量最终发布目录的 13 个 regular 文件，前后两轮 inode/dev/size/mtime 均稳定；该任务不读取大文件体，不改动运行中的评测或产物。文件 SHA 逐项对应已固定的 producer receipt，并非此次重新计算。原生体积收据 SHA256 为 `3c9f31b1bdaf03b433ce8f65c861edc2888fd786efdbce5d1c040b4d63afd4a8`，测量源码 SHA256 为 `613a2d584b8fb154e0bf90a821200de760368f89453580a0a689bdc04c8bf017`。
+
+| 最终产物 | 文件数 | apparent bytes | GiB（2^30 bytes） |
+| --- | ---: | ---: | ---: |
+| A1 lexical | 5 | 65,243,179,664 | 60.762446 |
+| compact | 8 | 41,554,639,647 | 38.700774 |
+| 两套格式合计 | 13 | 106,797,819,311 | 99.463220 |
+
+这是 13 个文件 `stat.st_size` 的合计，两份 `docs.jsonl` 按各自路径计入；不是去除共享块后的物理独占空间，也不包含输入分片、向量缓存、快照和模型。上文的 107,064,297,777 bytes 是合并输入总量，不能当作此输出体积；目录采样峰值也不能替代最终文件大小。
+
+源码 `382a8cc` 增加保持计分与稳定排序语义的词频、外部 ID、正文读取和有序指纹快路径；旧失败请求和部分输出保留，30 秒 HTTP 超时未放宽。核心 69/69、evaluation 83/83、固定 Python3.10.14 / Unicode13 专项 153/153 通过。同一集群模型依赖环境以 2 CPU / 2 GiB / 0 GPU 完成核心 69、评测 83、计分一致性 7 项复验，wall time 17.602 秒，无 OOM/failcnt 增长；原生收据 SHA256 为 `ac15719f68fc26c64c8819e02acebf184bc6ac160fe1c076725bcbedb067ff69`。新的固定 dev32→formal808 流程先验证 32 次 HTTP200、零回退、每次不超过 20 秒及预计正式请求时间不超过 18,000 秒，再在同一服务 epoch 运行完整评测。该准入只测运行性能，不读取 dev qrels 或调优质量参数；该性能准入阶段尚无可接受的正式 8M 质量结果；后续终态见本文末段。
+
+2026-11-06 上述正式流程通过 dev32 后，词法 808 查询整臂已封存；随后因 `supervisor_deadline_reached` 结束，监督器原始收据 SHA256 为 `11c59d1e159399e7fc8e7464723b39992b90d4ca5aa0cc5acaea57248100d828`。wall time 21,609.622 秒，worker group 已关闭。Dense 日志保留 689 次尝试、688 次 HTTP200、0 次预期拒绝、0 次已记录异常，以及一条未完成请求；它没有完整 seal，不能算作正式 Dense 结果，也不复用该部分。该轮峰值 cgroup 为 25,809,977,344 bytes；收据的 `private_bytes=19,625,379,883` 实际对应 `/tmp` 自有 scratch，`static_bytes=19,283,634` 对应共享 stage 目录。scratch 文件系统为 overlay，物理 backing 未验证，不据此称作 SSD 测量。
+
+同一源码归档、bundle、数据、模型和检索设置的恢复任务现已终态 PASS，按原有完整臂校验合同核验并复用词法 seal，补齐其余三臂。总时限调整为 57,600 秒，CPU4 / RAM48GiB、30 秒单请求超时和内存/磁盘门禁不变；监督器源码仅改动新 stage、旧终态 SHA、总时限及其上限。原生终态 schema、完整臂来源、原 epoch 与字节相等检查的控制层 fixture 在固定 Python3.10.14 上 26/26 通过；这些是恢复工具验证，不是完整四模式质量结果。四臂完整 808 查询、原始 TREC/请求日志、指标和 10,000 次 paired bootstrap 已于 2026-11-07 通过独立复算；跨服务 epoch 的延迟按臂保留。
+
+## 官方全量四模式最终验收
+
+2026-11-07，完整 8,096,668 篇双索引、808 条固定内部留出查询和 4,054 条 qrels 的四模式 HTTP 评测通过 `PASS_ROOT_RECOMPUTED_ALL_ARMS_AND_BOOTSTRAP`。正式源码为 `382a8cc356c814d55e0f3fbe73b1a6a5e31296f7`。取回 34 份当前文件及旧词法臂来源证据；所有可信 seal/摘要逐字节匹配，下载端曾出现的空 HTTP200 响应被拒绝而未作为结果保存。Python3.10.14 / Unicode13 独立复算全部四臂质量、请求覆盖、路由、有效请求延迟，以及 seed `20261028`、10,000 次重采样的四项 paired bootstrap。完整结果和解释见 [报告第 8 节](../REPORT.md#8-官方全量-808-查询四模式评测2026-11-07-完成复核)。
+
+| 模式 | nDCG@10 | Recall@10 | MRR@10 | MAP@100 | 向量尝试 / 成功 / 回退 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| lexical | 0.126475 | 0.152901 | 0.195561 | 0.089223 | 0 / 0 / 0 |
+| dense | 0.255994 | 0.285620 | 0.385472 | 0.194676 | 806 / 806 / 0 |
+| hybrid | 0.209705 | 0.244810 | 0.321067 | 0.158736 | 808 / 808 / 0 |
+| adaptive | 0.187638 | 0.217471 | 0.290920 | 0.140833 | 595 / 595 / 0 |
+
+| 指标 | Adaptive − Hybrid | 95% percentile 区间 |
+| --- | ---: | --- |
+| ndcg | -0.022068 | [-0.028850, -0.015632] |
+| recall | -0.027339 | [-0.035531, -0.019674] |
+| mrr | -0.030147 | [-0.041505, -0.019787] |
+| map | -0.017903 | [-0.023487, -0.012448] |
+
+四臂各使用全部 808 条查询；Dense 为 806 次 HTTP200 与 2 次冻结的显式约束400拒绝（空排名计入质量），其余三臂各 808 次 HTTP200，均无异常。Adaptive 向量尝试/成功/回退为 595/595/0，比 Hybrid 少触发 213 次但四项质量均下降。参数是既有开发设置在正式质量前冻结，不声称在完整 dev 上优化；不因负结果调整 held-out 阈值。官方标注来源为 dev，含历史已观察查询；自爬标签为 assistant 全文复核，不是独立人工 gold。
+
+原生任务本轮 supervisor wall=18,725.252 秒，4 CPU / 48 GiB / 0 GPU，worker exit0、group closed。采样 cgroup peak=26,491,912,192 bytes，包含子进程和文件缓存；scratch `private_bytes=19,597,561,394`、共享 stage `static_bytes=41,562,731` 均是目录表观字节，不是物理独占空间。监督器耗时不包括旧任务的词法整臂、失败与此前构建，也不是从零总成本。原 21,609.622 秒时限失败及未封存 Dense 输出继续保留，不改写为成功。固定 dev32 预计时间低估了正式执行耗时，仅属于准入预测。
+
+Lexical seal 对应旧 epoch `56f6a8a0407643d8855e479de6c7a56f`，其余三臂对应新 epoch `5f429cef31434f20b77ab7c855269e57`；`latency_comparability=per_arm_only_mixed_epochs`。逐臂延迟见报告，Dense 仅计 806 个有效响应，其余各 808。固定顺序、缓存、跨 epoch 和单次运行不支持因果加速比或多次重复的稳定性结论。
+
+| 文件 / 证据 | SHA256 |
+| --- | --- |
+| 原生终态监督器 | `25ab6ed8b92695ebe178396fb175b67627fd94b2fa3b3b65fa9e75fdb650547c` |
+| 独立复算结果 | `106f5d3928473d7676fbb8978bd3948c6c0c539b9c204a26a96aacf5078326cd` |
+| 冻结源码 source.zip | `95bae9c94c766b4eaac532b06e67313fc1a6c0cd8c2d6788b8c65f420ee50ee8` |
+| 运行 bundle | `d25e44ba9f003346bc32d697d4a5fd5d3f89878c65ef1ece1c83a363a5c473bb` |
+| 运行协议 | `90f5c629b72571cf3aa067d35450913b3b9bc95dbfa67ec5b0b05d90e485ffaa` |
+| lexical.checkpoint.json | `a78c3b94b7991a4870f80bd585c090c3eff633215fb492dbe5aaf71c275f14f8` |
+| lexical.trec | `29f47dfd80cec8eb694736572f263cd5f558b6959bc3ee8065325f58498ec2f4` |
+| dense.checkpoint.json | `6e03ef97b93268de399367efa89fd63fc60b900ce6ef5a0ba59093f57ec5ad65` |
+| dense.trec | `b81a885b80b936193619b6ccc3a3974f0c1fa814cc2e724e7e9e7dbe928d6d91` |
+| hybrid.checkpoint.json | `52c581fc802f83c13051658440d80d70644a96567f2ea976d9976aec7c811238` |
+| hybrid.trec | `7470e96c8f09f5a5e14ae20168283466b640fe9cc76c398de5b5482ac9bcf9ad` |
+| adaptive.checkpoint.json | `b9c083f51382b62cc51aeb6c8c37289228f82cc886803c0373522210a0d6b830` |
+| adaptive.trec | `26d5954065ba72c454d6ad6174e6482b1d5b3db6f39d2d6b709ae35f60cd36c4` |
+| paired-adaptive-minus-hybrid.ndcg.json | `0b043a6188cd8bbe612af783d35c24c99dd41fcedc34f1808663e23f130577ab` |
+| paired-adaptive-minus-hybrid.recall.json | `80c9e22e9fb05ef2e7726fdd6147e7c032a672d0c53cca925015f1cf9ff18e86` |
+| paired-adaptive-minus-hybrid.mrr.json | `22c106782b0d7fbfb2808d5c699652438f410f536c920aa957d8d458d9c23373` |
+| paired-adaptive-minus-hybrid.map.json | `6cfbacb9942e80a9bc902e7740129bdab03be96dc7a364dc050851ac8fc4e12f` |
+
+以下位置均相对于授权的私有产物根目录，不包含真实集群连接信息；向组员交付时使用该目录的受控只读副本，勿用临时 scratch 冒充持久产物：
+
+- A1/compact：`rfc4stage20261105fullmergedirect2/published/{lexical,compact}`；13 文件与体积/producer hashes 的对应见上文。
+- Qdrant 持久快照：`rfc4stage20261104hnswfullc/durable-a`；18,477,460,992 bytes，SHA256 `2df5c889386db365e4d72d089f90bfb736c8a6a24d5bede4a10f727d9f0976e0`。版本化 manifest 与外部 ID 映射必须一并交付，禁止替换在线旧 collection。
+- 本轮评测：`rfc4stage20261106officialquality4/quality-service/quality`，含四份 TREC、metrics、requests、线性 events journal、checkpoint 与四项 paired JSON；旧 lexical seal 来源为 `rfc4stage20261106officialquality3`。
+- 本机已取回的完整证据位于项目外 `holdout-execution-ready-20261105/runtime-v2-20261106/collected-native-quality4`；其 `root-verified-results.json`、`collection-manifest.json` 和 `prior/` 支持离线审查。冻结查询/qrels、模型合同与 evaluator 源归档在同级复核输入目录，与上述摘要绑定。
+
+使用与正式环境相同的 Python3.10.14 / Unicode13，在项目源码 `382a8cc` 上对受控结果副本复算（`QRELS` 指完整808-query冻结 test qrels，`RESULTS` 指四臂结果目录）：
+
+```bash
+python -m evaluation.evaluate --qrels "$QRELS" --run "$RESULTS/lexical.trec" --include-per-query
+python -m evaluation.evaluate --qrels "$QRELS" --run "$RESULTS/dense.trec" --include-per-query
+python -m evaluation.evaluate --qrels "$QRELS" --run "$RESULTS/hybrid.trec" --include-per-query
+python -m evaluation.evaluate --qrels "$QRELS" --run "$RESULTS/adaptive.trec" --include-per-query
+for metric in ndcg recall mrr map; do
+  python -m evaluation.compare --qrels "$QRELS" \
+    --run-a "$RESULTS/hybrid.trec" --run-b "$RESULTS/adaptive.trec" \
+    --metric "$metric" --k 10 --map-k 100 --samples 10000 --seed 20261028
+done
+```
+
+该 TREC 离线入口重算质量与区间；请求覆盖/400 policy、路由、epoch、journal 和延迟必须同时核对已封存的请求证据，不能从 TREC 行数推断。最新 Windows Python3.13 复验核心69/69、evaluation83/83、Node7/7、compileall 与 diffcheck 通过；同环境原生69/83/7及固定 Linux153 的源码身份未改变。数据、模型、索引、快照、runs、原始收据及任何凭据不提交 Git。

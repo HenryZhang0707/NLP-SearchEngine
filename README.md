@@ -223,7 +223,9 @@ python3 -m evaluation.evaluate \
 不是独立人工 gold。官方 RocketQA 基线包已核验 8,096,668 个 passage、2,000 个 dev 查询、
 9,839 条去重 qrels；固定 BGE revision 的全量向量和 Qdrant 1.16.0 HNSW 快照已通过
 两次独立空实例恢复。词法全量合并已交付 8,578,589 个词项，13 个 A1/compact 文件及
-正常 `DiskIndex` 读取验收通过；冻结的 808 条内部 holdout 四模式评测待完成。该包没有
+正常 `DiskIndex` 读取验收通过；冻结的 808 条内部 holdout 四模式 HTTP 评测及四项
+paired bootstrap 已完成并独立复算。Dense 四项质量最高，当前规则 Adaptive 在该集上
+低于固定 Hybrid；完整结果见报告第 8 节。该包没有
 官方 test labels，内部 holdout 不冒称官方 test。
 数据、模型、快照、索引和生成 run 均留在 Git 外；具体结果与边界见 [报告](REPORT.md)
 和 [资源记录](evaluation/RESOURCES.md)。公开演示站点当前仍使用 tiny lexical 索引。

@@ -53,7 +53,7 @@ root 已核对三份 receipt 的原始字节 SHA256 及绑定关系；没有独�
 worker peak RSS 为 392,413,184 bytes，精确进程成员关系 cgroup peak 为
 2,201,608,192 bytes；该 cgroup 并非进程独占。最终 receipt 未记录 OOM 或 failcnt
 增加。旧失败与小规模 probe 保留其原有结论。本次通过的是全量 merge 与 reader
-工程验收。旧 808 query 四模式评测已实际运行，但因传输错误未形成完整 arm seal。等价快路径及同环境 CPU 门禁已通过，新的 dev32→formal808 流程已冻结；正式 8M 质量仍未完成。
+工程验收。早期 808 query 任务因传输错误未形成完整 arm seal；后续时限终止任务封存 lexical，恢复轮只复用该完整臂，补齐其余三臂并关闭 worker group。2026-11-07 已独立复算全部 808 查询、4,054 qrels 的四臂指标、请求/路由/逐臂延迟及四项 10,000 次 paired bootstrap，详见 [REPORT 第 8 节](../../REPORT.md#8-官方全量-808-查询四模式评测2026-11-07-完成复核) 与 [资源证据](../../evaluation/RESOURCES.md#官方全量四模式最终验收)。Dense 四项质量最高，当前规则 Adaptive 相对固定 Hybrid 的四项区间均为负。跨 epoch 延迟只作逐臂描述；这次正式全量结果不改写旧失败。
 
 ## 尚未宣称的能力
 
