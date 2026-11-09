@@ -3,8 +3,10 @@
 This module deliberately stops before relevance judgments.  Crawled pages are
 an input corpus; queries and qrels must be supplied or reviewed by a person.
 The default crawler is same-domain, HTTP(S)-only, robots-aware, size-bounded,
-and deterministic (FIFO traversal with normalized URLs).  It never writes
-credentials, cookies, or response headers to the output corpus.
+and deterministic (FIFO traversal with normalized URLs). It rejects all HTTP
+redirects before following them, including robots redirects. Robots and page
+requests share the timeout, byte limit, user agent and minimum start interval.
+It never writes credentials, cookies, or response headers to the output corpus.
 
 Examples::
 
@@ -24,6 +26,7 @@ from __future__ import annotations
 import argparse
 from http.client import HTTPException
 import json
+import math
 import re
 import sys
 import time
@@ -34,7 +37,7 @@ from pathlib import Path
 from typing import Callable, Iterable, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urljoin, urlsplit, urlunsplit
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 from urllib.robotparser import RobotFileParser
 
 
@@ -60,8 +63,9 @@ class CrawlConfig:
             raise CrawlError("max_depth 必须是非负整数")
         if type(self.max_bytes) is not int or self.max_bytes <= 0:
             raise CrawlError("max_bytes 必须是正整数")
-        if self.timeout <= 0 or self.delay_seconds < 0:
-            raise CrawlError("timeout 必须为正数，delay_seconds 必须为非负数")
+        if (not math.isfinite(self.timeout) or self.timeout <= 0
+                or not math.isfinite(self.delay_seconds) or self.delay_seconds < 0):
+            raise CrawlError("timeout 必须为有限正数，delay_seconds 必须为有限非负数")
         if not self.user_agent or any(ch in self.user_agent for ch in "\r\n"):
             raise CrawlError("user_agent 无效")
 
@@ -160,13 +164,25 @@ class _PageParser(HTMLParser):
                 " ".join(self.text_parts).strip(), tuple(links))
 
 
+class _NoRedirects(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # Even same-origin redirects could bypass the target's robots policy.
+        return None
+
+
+def _open_url(request: Request, *, timeout: float):
+    return build_opener(_NoRedirects()).open(request, timeout=timeout)
+
+
 def _read_url(url: str, config: CrawlConfig) -> tuple[str, str]:
-    request = Request(url, headers={"User-Agent": config.user_agent, "Accept": "text/html"})
+    url = normalize_url(url)
+    request = Request(url, headers={"User-Agent": config.user_agent,
+                                    "Accept": "text/html, application/xhtml+xml, text/plain"})
     try:
-        with urlopen(request, timeout=config.timeout) as response:
+        with _open_url(request, timeout=config.timeout) as response:
             final_url = normalize_url(response.geturl())
-            if urlsplit(final_url).netloc.lower() != urlsplit(url).netloc.lower():
-                raise CrawlError("拒绝跨主机重定向")
+            if final_url != url:
+                raise CrawlError("拒绝重定向")
             content_type = response.headers.get_content_type()
             chunks: list[bytes] = []
             total = 0
@@ -180,6 +196,8 @@ def _read_url(url: str, config: CrawlConfig) -> tuple[str, str]:
                 raise CrawlError(f"响应超过 max_bytes: {url}")
             charset = response.headers.get_content_charset() or "utf-8"
     except (HTTPError, URLError, HTTPException, TimeoutError, OSError) as error:
+        if isinstance(error, HTTPError):
+            error.close()
         raise CrawlError(f"抓取失败 {url}: {error}") from error
     try:
         return content_type, b"".join(chunks).decode(charset, errors="replace")
@@ -187,8 +205,23 @@ def _read_url(url: str, config: CrawlConfig) -> tuple[str, str]:
         raise CrawlError(f"无法解码响应 {url}") from error
 
 
-def _robots_checker(config: CrawlConfig) -> Callable[[str], bool]:
+def _paced_fetch(config: CrawlConfig, fetch: Callable) -> Callable:
+    next_request = 0.0
+
+    def read(url: str, settings: CrawlConfig) -> tuple[str, str]:
+        nonlocal next_request
+        wait = next_request - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+        next_request = time.monotonic() + config.delay_seconds
+        return fetch(url, settings)
+
+    return read
+
+
+def _robots_checker(config: CrawlConfig, *, fetch: Callable | None = None) -> Callable[[str], bool]:
     cache: dict[str, RobotFileParser | None] = {}
+    fetch = fetch or _paced_fetch(config, _read_url)
 
     def allowed(url: str) -> bool:
         parts = urlsplit(url)
@@ -196,10 +229,18 @@ def _robots_checker(config: CrawlConfig) -> Callable[[str], bool]:
         if origin not in cache:
             parser = RobotFileParser(f"{origin}/robots.txt")
             try:
-                parser.read()
-            except (HTTPError, URLError, HTTPException, TimeoutError, OSError):
-                cache[origin] = None
+                _content_type, body = fetch(parser.url, config)
+            except CrawlError as error:
+                cause = error.__cause__
+                if isinstance(cause, HTTPError) and 400 <= cause.code < 500:
+                    # Preserve RobotFileParser's HTTP policy, notably 403/404.
+                    parser.disallow_all = cause.code in (401, 403)
+                    parser.allow_all = not parser.disallow_all
+                    cache[origin] = parser
+                else:
+                    cache[origin] = None
             else:
+                parser.parse(body.splitlines())
                 cache[origin] = parser
         parser = cache[origin]
         if parser is None:
@@ -219,8 +260,8 @@ def crawl(seed_urls: Iterable[str], config: CrawlConfig | None = None,
     if not seeds:
         raise CrawlError("至少需要一个 seed URL")
     allowed_hosts = {urlsplit(url).netloc.lower() for url in seeds}
-    fetch = fetch or _read_url
-    robots_allowed = robots_allowed or _robots_checker(config)
+    fetch = _paced_fetch(config, fetch or _read_url)
+    robots_allowed = robots_allowed or _robots_checker(config, fetch=fetch)
     queue: deque[tuple[str, int]] = deque((url, 0) for url in seeds)
     queued = set(url for url, _ in queue)
     pages: list[CrawledPage] = []
@@ -254,8 +295,6 @@ def crawl(seed_urls: Iterable[str], config: CrawlConfig | None = None,
                 continue
             queued.add(link)
             queue.append((link, depth + 1))
-        if config.delay_seconds:
-            time.sleep(config.delay_seconds)
     return pages
 
 

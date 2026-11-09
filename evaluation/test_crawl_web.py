@@ -77,7 +77,7 @@ class CrawlWebTests(unittest.TestCase):
             def read(self, _size):
                 raise IncompleteRead(b"partial", 1)
 
-        with patch("evaluation.crawl_web.urlopen", return_value=BrokenResponse()):
+        with patch("evaluation.crawl_web._open_url", return_value=BrokenResponse()):
             with self.assertRaises(CrawlError):
                 _read_url("https://example.org/", CrawlConfig(delay_seconds=0))
 
