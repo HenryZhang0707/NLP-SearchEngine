@@ -7,6 +7,7 @@
 - [RFC-0004 离线产物交付补充](docs/contributions/rfc0004-delivery-validation.md)
 - [RFC-0004 接收机实测与合并修正](docs/contributions/rfc0004-receiver-acceptance.md)
 - [在线服务部署与验收](docs/online-serving.md)
+- [RFC-0003 在线服务验收记录](docs/contributions/rfc0003-online-acceptance.md)
 - [开题汇报 PDF](slides/proposal.pdf) / [Typst 源文件](slides/proposal.typ)
 - [实施计划与历史讨论](PLAN.md)
 
