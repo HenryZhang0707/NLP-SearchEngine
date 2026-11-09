@@ -14,7 +14,8 @@
 
 ``--lexical-only`` 描述未部署 vector 块的词法 profile：它期望 503/回退，
 而不是语义模式成功。``--query`` 必须是目标语料上确实有词法命中的查询，
-``--oov-query`` 用于构造词法零命中的语义救援场景。
+``--oov-query`` 用于构造词法零命中的语义救援场景。每条检查只靠 ``assert`` 判定，
+因此在启用优化（``python -O`` / ``PYTHONOPTIMIZE``）的解释器下直接拒绝运行。
 """
 
 import argparse
@@ -187,10 +188,13 @@ def _index_identity(probe):
     assert identity["analyzer_hash"] == body["analyzer"]["config_hash"]
     assert isinstance(identity["analyzer_hash"], str) and identity["analyzer_hash"]
     bm25 = identity["bm25"]
-    assert set(bm25) >= {"k1", "b", "idf"}, sorted(bm25)
-    assert type(bm25["k1"]) in (int, float) and math.isfinite(bm25["k1"]) and bm25["k1"] > 0
-    assert type(bm25["b"]) in (int, float) and math.isfinite(bm25["b"]) and 0 <= bm25["b"] <= 1
-    assert isinstance(bm25["idf"], str) and bm25["idf"]
+    # 产物没有声明 BM25 参数时（旧版/极简词法索引）只接受 null，不补造数值。
+    assert bm25 is None or isinstance(bm25, dict), bm25
+    if bm25 is not None:
+        assert set(bm25) >= {"k1", "b", "idf"}, sorted(bm25)
+        assert type(bm25["k1"]) in (int, float) and math.isfinite(bm25["k1"]) and bm25["k1"] > 0
+        assert type(bm25["b"]) in (int, float) and math.isfinite(bm25["b"]) and 0 <= bm25["b"] <= 1
+        assert isinstance(bm25["idf"], str) and bm25["idf"]
 
     assert retrieval["search_config"] == {"candidate_k": expectation.candidate_k,
                                           "rrf_c": expectation.rrf_c}
@@ -439,6 +443,9 @@ def build_parser():
 def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
+    if not __debug__:
+        # 断言是每条检查的唯一判据：-O/PYTHONOPTIMIZE 会把失败变成静默 PASS。
+        parser.error("必须在未启用优化（python -O / PYTHONOPTIMIZE）的解释器下运行")
     if args.lexical_only and args.phase == "recovered":
         parser.error("--lexical-only 与 --phase recovered 矛盾：词法 profile 没有可恢复的语义后端")
     if not args.lexical_only:

@@ -241,10 +241,16 @@ def make_handler(engine: SearchEngine, static_root: Path | None = None, *,
                 raise _BodyError(400, "invalid Content-Length",
                                  "invalid_request_framing")
             raw_length = lengths[0].strip()
-            if not raw_length or not raw_length.isdigit():
+            # ``str.isdigit`` admits non-ASCII digits that ``int`` rejects, and
+            # ``int`` refuses very long digit strings; bound the conversion by
+            # the decimal width of the limit itself.
+            if not raw_length or not raw_length.isascii() or not raw_length.isdigit():
                 raise _BodyError(400, "invalid Content-Length",
                                  "invalid_request_framing")
-            length = int(raw_length)
+            digits = raw_length.lstrip("0") or "0"
+            if len(digits) > len(str(body_limit)):
+                raise _BodyError(413, "request body too large", "payload_too_large")
+            length = int(digits)
             if length > body_limit:
                 raise _BodyError(413, "request body too large", "payload_too_large")
             try:
@@ -258,7 +264,14 @@ def make_handler(engine: SearchEngine, static_root: Path | None = None, *,
             if len(data) != length:
                 raise _BodyError(400, "incomplete request body", "invalid_request")
             try:
-                return json.loads(data) if data else {}
+                text = data.decode("utf-8")
+            except UnicodeDecodeError as error:
+                # Invalid UTF-8 is a client error, not a dropped connection or
+                # a thread traceback; the raw bytes are never echoed.
+                raise _BodyError(400, "request body is not valid JSON",
+                                 "invalid_request") from error
+            try:
+                return json.loads(text) if text else {}
             except json.JSONDecodeError as error:
                 raise _BodyError(400, "request body is not valid JSON",
                                  "invalid_request") from error
@@ -591,6 +604,7 @@ def main(argv=None):
 
     manifest = reader.manifest()
     actual_dataset = manifest.get("dataset") if isinstance(manifest, dict) else None
+    info = engine.info()
     serving_state = {
         "schema_version": SCHEMA_VERSION,
         "profile": actual_dataset,
@@ -625,6 +639,12 @@ def main(argv=None):
         "index": str(index_path),
         "vector": vector_record,
         "embedding": embedding_record if vectors is not None else None,
+        # Same identity echo as /index/info: index/vector identity, search
+        # parameters and the policy the engine actually loaded.
+        "index_identity": info.get("index_identity"),
+        "vector_identity": info.get("vector_identity"),
+        "search_config": info.get("search_config"),
+        "policy": info.get("policy"),
     })
     print(f"索引已加载（{engine.reader.n_docs} 篇），监听 {actual_host}:{actual_port}",
           flush=True)

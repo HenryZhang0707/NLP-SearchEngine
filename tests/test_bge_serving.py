@@ -35,6 +35,9 @@ class BGEServingTests(unittest.TestCase):
                      ("DiskIndex", "SearchEngine", "QdrantVectorIndex", "ThreadingHTTPServer",
                       "SentenceTransformerEncoder")}
             mocks["ThreadingHTTPServer"].return_value.server_address = ("127.0.0.1", 8000)
+            mocks["SearchEngine"].return_value.info.return_value = {
+                "index_identity": None, "vector_identity": None,
+                "search_config": None, "policy": None}
             stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
             server.main(["--index", "unused-index", *args])
             return mocks

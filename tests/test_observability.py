@@ -259,6 +259,48 @@ class HttpServingTests(unittest.TestCase):
         self.assertEqual([record["status"] for record in records], [400, 400, 400, 400, 413])
         self.assertEqual(records[-1]["reason"], "payload_too_large")
 
+    def test_invalid_utf8_body_is_sanitized_400_without_dropping_the_connection(self):
+        calls = []
+        real_search = self.engine.search
+        self.engine.search = lambda request: calls.append(request) or real_search(request)
+        status, data = self.raw_request(
+            b"POST /search HTTP/1.1\r\nHost: x\r\nContent-Length: 1\r\n\r\n\xff")
+        self.assertEqual(status, 400)
+        self.assertIn(b"request body is not valid JSON", data)
+        self.assertEqual(calls, [])
+        record = self.wait_for_records(1)[-1]
+        self.assertEqual(record["status"], 400)
+        self.assertEqual(record["reason"], "invalid_request")
+        # 同一个服务进程仍然可用，没有把异常升到连接/线程层。
+        self.assertEqual(self.get("/health")[0], 200)
+        self.assertEqual(self.post({"query": "water"})[0], 200)
+        self.assertEqual(len(calls), 1)
+        self.assertNotIn("UnicodeDecodeError", self.sink.getvalue())
+
+    def test_content_length_digits_are_strict_ascii_and_bounded(self):
+        calls = []
+        real_search = self.engine.search
+        self.engine.search = lambda request: calls.append(request) or real_search(request)
+        cases = [
+            # Latin-1 上标数字：str.isdigit() 为真但 int() 拒绝。
+            (b"POST /search HTTP/1.1\r\nHost: x\r\nContent-Length: \xb2\r\n\r\n", 400),
+            # 超过 int() 十进制转换上限（4300 位）：必须在解析前按超大体积拒绝。
+            (b"POST /search HTTP/1.1\r\nHost: x\r\nContent-Length: "
+             + b"9" * 5000 + b"\r\n\r\n", 413),
+            # 前导零不应把有界转换变成 413：真实值 1，按 1 字节读取后判非法 JSON。
+            (b"POST /search HTTP/1.1\r\nHost: x\r\nContent-Length: "
+             + b"0" * 100 + b"1\r\n\r\n{", 400),
+        ]
+        for request, expected in cases:
+            with self.subTest(expected=expected, length=request.split(b"\r\n")[2][:40]):
+                status, _ = self.raw_request(request)
+                self.assertEqual(status, expected)
+        self.assertEqual(calls, [])
+        records = self.wait_for_records(len(cases))
+        self.assertEqual([record["status"] for record in records], [400, 413, 400])
+        self.assertEqual(records[1]["reason"], "payload_too_large")
+        self.assertEqual(self.get("/health")[0], 200)
+
     def test_socket_read_timeout_returns_408_and_closes(self):
         with socket.create_connection(("127.0.0.1", self.server.server_port),
                                       timeout=3) as sock:

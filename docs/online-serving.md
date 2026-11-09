@@ -82,8 +82,8 @@ python3 -m venv .venv-serving
 | `schema_version` | 是 | 只能是 `1` |
 | `dataset` | 是 | 必须与词法 manifest 的 `dataset` 完全一致（见第 2 节） |
 | `index` | 是 | 词法产物目录（普通或 compact A1 产物） |
-| `vector` | 否 | 省略即纯词法 profile：dense/hybrid 返回 503，adaptive 显式回退。块内 `url`、`manifest` 必填；`hnsw_ef`、`timeout_s` 可选，示例固定为 256/30.0，实际生效值看 `/index/info` 的 `search` 回显 |
-| `embedding` | 否 | 不能脱离 `vector` 单独出现。`model_path` 省略时使用仓库通用 pinned 编码器（需本地已有对应 revision）；`device` 只在给出 `model_path` 时有意义（默认 `cpu`） |
+| `vector` | 否 | 省略即纯词法 profile：dense/hybrid 返回 503，adaptive 显式回退。块内 `url`、`manifest` 必填；`hnsw_ef`、`timeout_s` 可选，示例固定为 256/30.0，实际生效值看 `/index/info` 的 `search` 回显。省略 `hnsw_ef` 时服务不传 Qdrant `SearchParams`，回显为 `null`（不代填 256），所以验收脚本要求向量 profile 显式给出 `--expect-hnsw-ef` |
+| `embedding` | 否 | 整个块可省略：只给 `vector` 时用仓库通用 pinned 编码器（需本地已有对应 revision），等价于只省略 `model_path`；反过来 `embedding` 不能脱离 `vector` 单独出现。`device` 只在给出 `model_path` 时有意义（默认 `cpu`） |
 | `retrieval` | 否 | `candidate_k` 默认 200、`rrf_c` 默认 60.0；非 lexical 必须 `offset+k <= candidate_k` |
 | `serve` | 否 | `host` 默认 `127.0.0.1`，`port` 默认 8000，`max_body_bytes` 默认 65536，`request_timeout_s` 默认 10.0 |
 | `policy` | 否 | `factory` 默认 `rule`；其他值必须是受信本地 `module:factory` 导入路径，工厂收到配置后返回带 `policy_version` 的 Router 对象 |
@@ -93,8 +93,10 @@ python3 -m venv .venv-serving
 加载规则（启动即拒绝，不做静默修正）：
 
 - 未知字段、错误类型、非有限数值（NaN/Infinity）、空路径一律报错；不做单位或类型转换。
-- **所有路径相对配置文件所在目录**解析，不是相对当前工作目录，也不做 shell/环境变量插值
-  （`$VAR`、`~` 都按字面字符处理并因此报错）。配置里不要写机器绝对路径或凭据。
+- **所有路径相对配置文件所在目录**解析，不是相对当前工作目录。不做 shell/环境变量插值：
+  `$VAR`、`~` 都按字面字符拼成路径，通常会在启动加载产物时因路径不存在而失败（这是启动加载
+  报错，不是加载器按字符模式无条件拒绝）。绝对路径是允许的：仓库内模板只写相对路径，
+  私有部署配置（仓库外）可以写本机绝对路径，但配置本身仍不得包含凭据。
 - `vector.url` 是 Qdrant 的 `http(s)` 服务地址；带 userinfo、query 或 fragment 的 URL 直接拒绝，
   报错不回显这些片段（避免把凭据写进日志或异常）。默认只监听回环地址；显式配置
   非回环 `host` 时会打印明确警告。
@@ -170,8 +172,8 @@ systemd 或容器，进程管理、日志轮转和资源上限都属于部署方
 | 项 | 默认值 | 说明 |
 |---|---|---|
 | `max_body_bytes` | 65536 | 请求体上限；超限请求在解析前被拒绝（4xx），不进入检索 |
-| `request_timeout_s` | 10.0 | 单个请求的 socket 读写超时 |
-| `vector.timeout_s` | 30.0 | Qdrant 客户端超时；应大于查询编码的常规耗时 |
+| `request_timeout_s` | 10.0 | socket I/O 超时（单次 body 读/连接读）；不是整请求 deadline，编码与检索耗时不受它约束 |
+| `vector.timeout_s` | 30.0 | 只是 Qdrant 客户端 HTTP I/O 超时；**不覆盖**本地查询编码（BGE 前向）的耗时，两者需分别评估 |
 
 本仓库不承诺编码器硬 deadline，也不提供并发限流/排队框架：服务仍是
 `ThreadingHTTPServer` 单进程多线程，容量结论需要独立压测。真实 BGE 编码是 CPU/GPU 同步调用，
@@ -226,7 +228,7 @@ down 阶段的 503/`vector_unavailable`/显式 fallback，以及 recovered 阶�
 - 退出码 `0` 表示全部检查通过，`1` 表示至少一项失败；证据 JSON 里 `checks`/`events`/`failures`
   逐项可查，`scope` 明确写了"不是质量基准"。
 - 向量 profile 要求显式 `--expect-hnsw-ef`：先固定搜索 beam（示例为 256）再验收；
-  省略 beam 的部署没有可断言的值，无法给出 HNSW 搜索参数证据。
+  省略 beam 的部署 `search.hnsw_ef` 回显为 `null`，没有可断言的值，无法给出 HNSW 搜索参数证据。
 - 纯词法 profile 用 `--lexical-only`：脚本不再要求 collection/`hnsw_ef` 期望，改为核对
   dense/hybrid 的 503 与 adaptive 回退；`--lexical-only` 与 `--phase recovered` 互斥。
 - 脚本只读、可重复执行；它不启动/停止服务或后端，也不写入数据库。阶段切换由操作者完成。
@@ -237,6 +239,19 @@ down 阶段的 503/`vector_unavailable`/显式 fallback，以及 recovered 阶�
 
 ```bash
 python3 -B -m unittest tests.test_online_acceptance -v
+```
+
+探针的每条检查只靠 `assert` 判定，所以在启用优化（`python -O` / `PYTHONOPTIMIZE`）的
+解释器下会直接拒绝运行，而不是把失败的核对静默报成 PASS。
+
+新服务的回归入口：`python3 tests/run.py` 是默认核心 runner（已收录函数式
+`tests/test_router_seam.py`）；`unittest` 类形式的新增用例用发现命令运行：
+
+```bash
+python3 -B -m unittest discover -s tests -p 'test_*.py'
+# 或只跑服务相关子集：
+python3 -B -m unittest tests.test_serving_config tests.test_observability \
+  tests.test_online_acceptance
 ```
 
 ## 9. 故障排查

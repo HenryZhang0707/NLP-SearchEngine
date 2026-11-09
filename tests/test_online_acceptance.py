@@ -51,7 +51,8 @@ class FakeState:
                  lexical_up=True, adaptive_falls_back=True, unavailable_status=503,
                  accept_invalid_requests=False, serve_traversal=False,
                  identity_dataset=None, identity_n_docs=None, identity_corpus_sha256=None,
-                 identity_analyzer_hash="fake-analyzer-hash"):
+                 identity_analyzer_hash="fake-analyzer-hash",
+                 identity_bm25={"k1": 1.2, "b": 0.75, "idf": "log1p-lucene"}):
         self.dataset = dataset
         self.n_docs = n_docs
         self.corpus_sha256 = corpus_sha256
@@ -72,15 +73,18 @@ class FakeState:
         self.identity_corpus_sha256 = (corpus_sha256 if identity_corpus_sha256 is None
                                        else identity_corpus_sha256)
         self.analyzer_hash = identity_analyzer_hash
+        self.identity_bm25 = identity_bm25
 
     def manifest(self):
-        return {
+        manifest = {
             "schema_version": 1,
             "dataset": self.dataset,
             "n_docs": self.n_docs,
             "analyzer": {"name": "bigram", "config_hash": self.analyzer_hash},
-            "bm25": {"k1": 1.2, "b": 0.75, "idf": "log1p-lucene"},
         }
+        if self.identity_bm25 is not None:
+            manifest["bm25"] = self.identity_bm25
+        return manifest
 
     def vector_manifest(self):
         if not self.vector_configured:
@@ -119,7 +123,7 @@ class FakeState:
                 "schema_version": 1,
                 "analyzer_hash": self.analyzer_hash,
                 "corpus_sha256": self.identity_corpus_sha256,
-                "bm25": {"k1": 1.2, "b": 0.75, "idf": "log1p-lucene"},
+                "bm25": self.identity_bm25,
             },
             "vector_identity": vector_identity,
             "search_config": {"candidate_k": self.candidate_k, "rrf_c": self.rrf_c},
@@ -438,6 +442,25 @@ class OnlineAcceptanceTest(unittest.TestCase):
         self.assertNotIn("vector_identity", names)
         self.assertIn("dense_unavailable_503", names)
 
+    def test_lexical_only_profile_tolerates_null_bm25(self):
+        # 旧版/极简词法产物不声明 BM25 参数：回显 null 是合法身份，不能补造数值。
+        service = self.service(vector_configured=False, backend_up=False,
+                               identity_bm25=None)
+        status, evidence = self.run_probe(service.endpoint, lexical_only=True)
+        self.assertEqual(status, 0, evidence["failures"])
+        self.assertIn("index_identity", {check["name"] for check in evidence["checks"]})
+
+    def test_present_bm25_params_are_still_validated(self):
+        for bm25 in ({"k1": 0, "b": 0.75, "idf": "log1p-lucene"},
+                     {"k1": 1.2, "b": 2.0, "idf": "log1p-lucene"},
+                     {"k1": 1.2, "b": 0.75}):
+            with self.subTest(bm25=bm25):
+                service = self.service(vector_configured=False, backend_up=False,
+                                       identity_bm25=bm25)
+                status, evidence = self.run_probe(service.endpoint, lexical_only=True)
+                self.assertEqual(status, 1)
+                self.assertIn("index_identity", self.failure_names(evidence))
+
     def test_vector_profile_rejects_missing_vector_identity(self):
         service = self.service(vector_configured=False, backend_up=False)
         status, evidence = self.run_probe(service.endpoint)
@@ -515,6 +538,18 @@ class ProbeIsolationTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("--endpoint", result.stdout)
         self.assertIn("--phase", result.stdout)
+
+    def test_optimized_interpreter_is_refused_instead_of_passing(self):
+        # -O 剥离 assert；探针必须拒绝运行，而不是把失败服务报成 PASS。
+        result = subprocess.run(
+            [sys.executable, "-B", "-O",
+             str(ROOT / "scripts" / "online_acceptance.py"),
+             "--endpoint", "http://127.0.0.1:1", "--out", "/dev/null",
+             "--lexical-only", "--expect-dataset", DATASET,
+             "--expect-n-docs", str(N_DOCS), "--query", QUERY],
+            capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 2, result.stdout)
+        self.assertIn("优化", result.stderr)
 
 
 class ExampleServingConfigTest(unittest.TestCase):

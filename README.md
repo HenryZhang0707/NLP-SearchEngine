@@ -159,7 +159,8 @@ python3 -m online.server --index /path/to/compact \
 
 版本化部署改用单个 profile 文件：`python3 -m online.server --config /path/to/news20k.json`，
 示例见 `deploy/config/`。`--config` 与上面所有 index/vector/retrieval/host/port flag 互斥，
-`dataset` 必须与产物 manifest 完全一致；配置路径相对配置文件解析、不做环境变量插值。
+`dataset` 必须与产物 manifest 完全一致；配置路径相对配置文件解析（私有部署配置也可写绝对路径）、
+不做环境变量插值。
 就绪语义、日志隐私、前台启动与三阶段 HTTP 验收见[在线服务部署与验收](docs/online-serving.md)。
 
 向量构建可以直接读取冻结的标准 corpus，与词法构建并行；必须显式提供原始文件的

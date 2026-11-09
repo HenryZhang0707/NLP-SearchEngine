@@ -86,6 +86,9 @@ class HNSWSearchConfigTests(unittest.TestCase):
                 "DiskIndex", "SearchEngine", "QdrantVectorIndex", "ThreadingHTTPServer",
                 "SentenceTransformerEncoder")}
             mocks["ThreadingHTTPServer"].return_value.server_address = ("127.0.0.1", 8000)
+            mocks["SearchEngine"].return_value.info.return_value = {
+                "index_identity": None, "vector_identity": None,
+                "search_config": None, "policy": None}
             stack.enter_context(redirect_stdout(io.StringIO()))
             yield ["--index", "unused", "--vector-url", "http://unused.invalid",
                    "--vector-manifest", str(path)], mocks

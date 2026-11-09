@@ -56,6 +56,22 @@ def _manifest(dataset="fixture"):
     )
 
 
+def _engine_info(dataset="fixture"):
+    """CLI 测试把 SearchEngine 换成 mock，这里提供真实 engine 会回显的身份块。"""
+    return {
+        "index_identity": {"dataset": dataset, "n_docs": 2, "schema_version": 1,
+                           "analyzer_hash": "-", "corpus_sha256": "a" * 64,
+                           "bm25": {"k1": 1.2, "b": 0.75, "idf": "log1p-lucene"}},
+        "vector_identity": {"corpus_sha256": "a" * 64, "n_docs": 2,
+                            "collection": "fixture-v1", "backend": "qdrant-hnsw",
+                            "search": {"hnsw_ef": 256, "exact": False,
+                                       "timeout_s": 12.5}},
+        "search_config": {"candidate_k": 120, "rrf_c": 25.0},
+        "policy": {"name": "rule", "policy_version": "rules-v1",
+                   "requires_statistics": False},
+    }
+
+
 class ServingConfigLoaderTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -294,7 +310,9 @@ class ServingCliTests(unittest.TestCase):
                  "analyzer": {"config_hash": "-"}}
                 if disk_manifest is None else disk_manifest)
             mocks["ThreadingHTTPServer"].return_value.server_address = ("127.0.0.1", 8123)
-            stack.enter_context(patch.object(server, "_emit_startup"))
+            mocks["SearchEngine"].return_value.info.return_value = _engine_info(dataset)
+            mocks["_emit_startup"] = stack.enter_context(
+                patch.object(server, "_emit_startup"))
             stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
             yield mocks
 
@@ -353,6 +371,21 @@ class ServingCliTests(unittest.TestCase):
                              ("127.0.0.1", 8123))
             handler = mocks["ThreadingHTTPServer"].call_args.args[1]
             self.assertEqual(handler.timeout, 3.0)
+
+    def test_startup_log_echoes_engine_identity_policy_and_search_config(self):
+        with self.cli() as mocks, patch("adapters.embedding.BGEEncoder"):
+            server.main(["--config", str(self.config_path)])
+            record = mocks["_emit_startup"].call_args.args[0]
+        expected = _engine_info()
+        self.assertEqual(record["event"], "startup")
+        self.assertEqual(record["dataset"], "fixture")
+        for name in ("index_identity", "vector_identity", "search_config", "policy"):
+            self.assertEqual(record[name], expected[name])
+        self.assertEqual(record["policy_version"], "rules-v1")
+        # 启动日志只带身份/配置，不带 query/请求体/凭据。
+        text = json.dumps(record, ensure_ascii=False)
+        for forbidden in ("query", "Authorization", "password"):
+            self.assertNotIn(forbidden, text)
 
     def test_config_uses_router_factory_selector_and_profile_defaults(self):
         value = {"schema_version": 1, "dataset": "fixture", "index": "../index",

@@ -206,7 +206,7 @@ engine = SearchEngine(reader, encoder=query_encoder, vectors=vector_reader,
 
 | 字段 | 内容 | 约束 |
 |---|---|---|
-| `index_identity` | `{dataset, n_docs, schema_version, analyzer_hash, corpus_sha256, bm25}` | `corpus_sha256` 复用启动时已对齐核验的向量指纹；纯词法部署可为 `null`，不为此额外做全量扫描。`bm25` 只回显产物中实际已知的 `k1`/`b`/`idf`，不补造实验参数 |
+| `index_identity` | `{dataset, n_docs, schema_version, analyzer_hash, corpus_sha256, bm25}` | `corpus_sha256` 复用启动时已对齐核验的向量指纹；纯词法部署可为 `null`，不为此额外做全量扫描。`bm25` 只回显产物中实际已知的 `k1`/`b`/`idf`，产物未声明时为 `null`，不补造实验参数 |
 | `vector_identity` | `null`，或 `VectorManifest.to_dict()` 再加 `search={hnsw_ef, exact, timeout_s}` | 内存精确替身回显 `hnsw_ef=null, exact=true, timeout_s=null`。`exact=false` 只表示允许 ANN，不证明本次查询实际走了 HNSW |
 | `search_config` | `{candidate_k, rrf_c}` | 与 `config` 中同名服务级参数一致 |
 | `policy` | `{name, policy_version, requires_statistics}` | `policy_version` 必须是实际生效策略的版本，不能是用配置默认值拼出的标签；`requires_statistics` 为布尔值 |
@@ -216,7 +216,7 @@ engine = SearchEngine(reader, encoder=query_encoder, vectors=vector_reader,
 
 - `vector_ready` 是**启动时**“已配置且身份对齐”的结论，不是后端实时健康，也不是高可用承诺。
 - `GET /health` 仍只报告词法服务 liveness，不能当语义就绪探针。
-- 启动校验包括：配置 schema/相对路径与 dataset 完全匹配、向量 manifest 的 `EmbeddingSpec`/`n_docs`/`corpus_sha256` 与词法侧对齐、collection 持久化构建元数据与真实维度/Cosine 距离/`count(exact=True)`、BGE 本地模型 SHA256 清单。**不**在每次启动重算快照 SHA256，该门禁属于 `offline.validate` 的发布检查。
+- 启动校验包括：配置 schema/路径（相对配置目录或绝对路径）与 dataset 完全匹配、向量 manifest 的 `EmbeddingSpec`/`n_docs`/`corpus_sha256` 与词法侧对齐、collection 持久化构建元数据与真实维度/Cosine 距离/`count(exact=True)`、BGE 本地模型 SHA256 清单。**不**在每次启动重算快照 SHA256，该门禁属于 `offline.validate` 的发布检查。
 - 运行期后端失联时：dense/hybrid 返回 503 `vector_unavailable`，adaptive 显式 `fallback=true`；
   后端恢复后无需重启服务。`search_config`、`policy` 和 `serving` 都是只读回显，客户端不能据此推断后端实时状态。
 
