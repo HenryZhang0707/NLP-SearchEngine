@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "dataset": "rfc4-clean-news-20k",
+  "index": "../artifacts/news20k/compact",
+  "vector": {
+    "url": "http://127.0.0.1:6333",
+    "manifest": "../artifacts/news20k/vector/vector_manifest.json",
+    "hnsw_ef": 256,
+    "timeout_s": 30.0
+  },
+  "embedding": {
+    "model_path": "../models/bge-small-zh-v1.5-7999e1d3",
+    "device": "cpu"
+  },
+  "retrieval": {
+    "candidate_k": 200,
+    "rrf_c": 60.0
+  },
+  "serve": {
+    "host": "127.0.0.1",
+    "port": 8000,
+    "max_body_bytes": 65536,
+    "request_timeout_s": 10.0
+  },
+  "policy": {
+    "factory": "rule"
+  }
+}
