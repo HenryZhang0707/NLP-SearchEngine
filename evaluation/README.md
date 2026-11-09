@@ -204,6 +204,23 @@ Run the evaluator tests with:
 python3 -m unittest discover -s evaluation -p 'test_*.py'
 ```
 
+## Simple bounded crawler
+
+The legacy `evaluation.crawl_web` entry rejects all HTTP redirects before any
+redirected request, including same-origin and robots redirects. Robots and page
+fetches share the configured socket timeout, byte limit, User-Agent and minimum
+request-start interval; errors, non-HTML responses and leaves do not bypass pacing.
+Robots failures are denied unless explicitly opted into `allow_robots_failure`;
+HTTP 401/403 still deny and the existing 404 policy is retained. This is not a
+complete SSRF sandbox. Use restricted egress for untrusted targets and prefer the
+persistent workflows below for formal collection.
+
+The merge hardening changes `crawl_web.py`'s source hash, which participates in
+persistent crawl bindings even though its HTML parser is unchanged. Resume an
+existing state only with its originally recorded commit/source archive, not the
+new code. Do not relax source-identity checks or alter frozen corpus/index IDs.
+See [receiver acceptance and fixes](../docs/contributions/rfc0004-receiver-acceptance.md).
+
 ## Durable collection of unlabelled web candidates
 
 For a long crawl, use the persistent FIFO workflow rather than keeping the

@@ -9,8 +9,12 @@ evidence boundaries are in REPORT.md section 8 and evaluation/RESOURCES.md.
 
 ## Validated pieces
 
-- `offline.prepare` validates a JSONL corpus, rejects duplicate external IDs,
-  writes a normalized corpus and an ID map, and records source/analyzer hashes.
+- `offline.prepare` prepares an **unfrozen** JSONL corpus, rejects duplicate
+  external IDs and preserves nonempty zero-token text. It rewrites normalized
+  JSONL and an ID map; `--invalid skip` can filter other invalid records. Never
+  run it after corpus/ID freeze. Validate published artifacts in place with
+  `offline.validate`; receiver evidence and merge fixes are recorded in
+  [receiver acceptance](contributions/rfc0004-receiver-acceptance.md).
 - `offline.stream_build` uses SQLite-backed uniqueness, length, and posting
   storage and streams the unchanged v1 JSONL output. It removes the legacy
   builder's full Python conformance oracle from the lexical build path.

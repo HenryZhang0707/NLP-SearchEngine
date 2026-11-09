@@ -5,6 +5,7 @@
 - [设计与分工](DESIGN.md)
 - [跨组 API 契约](contracts/RETRIEVAL.md)
 - [RFC-0004 离线产物交付补充](docs/contributions/rfc0004-delivery-validation.md)
+- [RFC-0004 接收机实测与合并修正](docs/contributions/rfc0004-receiver-acceptance.md)
 - [开题汇报 PDF](slides/proposal.pdf) / [Typst 源文件](slides/proposal.typ)
 - [实施计划与历史讨论](PLAN.md)
 
