@@ -1,4 +1,8 @@
-"""Deterministic corpus preflight. Never reads queries/qrels to select docs."""
+"""Normalize an unfrozen corpus; never use this filtering step after ID freeze.
+
+Nonempty zero-token text is valid. Published inputs/artifacts must instead be
+checked in place without rewriting, skipping records or changing their order.
+"""
 
 import json
 from pathlib import Path
@@ -39,7 +43,6 @@ def prepare(corpus, out, *, invalid='error'):
                         seen.add(row['doc_id'])
                         if not isinstance(row.get('text'),str) or not isinstance(row.get('title',''),str):reason='invalid_text_or_title'
                         elif not row['text'].strip():reason='empty_body'
-                        elif not analyzer.analyze(row['text']):reason='zero_analyzer_tokens'
                 if reason:
                     if invalid=='error':raise ValueError(f'corpus line {line_number}: {reason}')
                     excluded+=1
@@ -62,7 +65,7 @@ def prepare(corpus, out, *, invalid='error'):
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(description="Validate a frozen corpus without reading qrels")
+    parser = argparse.ArgumentParser(description="Normalize an unfrozen corpus; do not rewrite frozen inputs")
     parser.add_argument("--corpus", required=True, type=Path)
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--invalid", choices=("error", "skip"), default="error")

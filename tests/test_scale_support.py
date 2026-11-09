@@ -49,6 +49,52 @@ def test_prepare_compact_and_packed_readers_preserve_contract():
             assert documents.doc(0).doc_id == "d0"
 
 
+def test_prepare_preserves_tokenless_documents_in_both_policies():
+    punct = {"doc_id": "punct", "title": "", "text": " () \n"}
+    for rows in ([punct, *CORPUS], [punct]):
+        for policy in ("error", "skip"):
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                corpus = root / "corpus.jsonl"
+                original = "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows)
+                corpus.write_text(original, encoding="utf-8")
+                target = root / "prepared"
+                report = prepare(corpus, target, invalid=policy)
+                assert report["accepted"] == report["source_records"] == len(rows)
+                assert report["excluded"] == 0
+                assert [json.loads(line) for line in (target / "corpus.jsonl").read_text(encoding="utf-8").splitlines()] == rows
+                assert [json.loads(line) for line in (target / "id_map.jsonl").read_text(encoding="utf-8").splitlines()] == [
+                    {"docid": i, "doc_id": row["doc_id"], "source_line": i + 1}
+                    for i, row in enumerate(rows)]
+                assert (target / "excluded.jsonl").read_bytes() == b""
+                assert corpus.read_text(encoding="utf-8") == original
+
+
+def test_prepare_still_rejects_empty_bodies_and_duplicate_ids():
+    empty = {"doc_id": "empty", "title": "", "text": " "}
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        corpus = root / "corpus.jsonl"
+        corpus.write_text(json.dumps(empty) + "\n", encoding="utf-8")
+        try:
+            prepare(corpus, root / "empty")
+        except ValueError as error:
+            assert "empty_body" in str(error)
+        else:
+            raise AssertionError("empty body accepted")
+        assert not (root / "empty").exists()
+        corpus.write_text("".join(json.dumps(row) + "\n" for row in [*CORPUS, CORPUS[0]]), encoding="utf-8")
+        for policy in ("error", "skip"):
+            target = root / policy
+            try:
+                prepare(corpus, target, invalid=policy)
+            except ValueError as error:
+                assert "duplicate doc_id" in str(error)
+            else:
+                raise AssertionError("duplicate external ID accepted")
+            assert not target.exists()
+
+
 def test_stream_builder_is_deterministic_and_conformant():
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
