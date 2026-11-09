@@ -6,6 +6,7 @@
 import math
 import time
 from dataclasses import asdict
+from heapq import nsmallest
 
 from contracts import analyzer
 from contracts.api import ApiError, ResultItem, RoutingInfo, SearchRequest, SearchResponse
@@ -61,10 +62,13 @@ class SearchEngine:
             hits = self.vectors.search(vector, self.config.candidate_k)
             if len(hits) > self.config.candidate_k or len({h.docid for h in hits}) != len(hits):
                 raise ValueError("向量结果数量超限或 docid 重复")
+            external_id = getattr(self.reader, "external_doc_id", None)
             for hit in hits:
                 if type(hit.docid) is not int or not 0 <= hit.docid < self.reader.n_docs:
                     raise ValueError("向量结果包含未知 docid")
-                if self.reader.doc(hit.docid).doc_id != hit.doc_id:
+                doc_id = (external_id(hit.docid) if callable(external_id)
+                          else self.reader.doc(hit.docid).doc_id)
+                if doc_id != hit.doc_id:
                     raise ValueError("向量结果外部 doc_id 与倒排索引不一致")
                 if not math.isfinite(hit.score) or not -1.0001 <= hit.score <= 1.0001:
                     raise ValueError("向量结果不是合法 cosine 分数")
@@ -106,7 +110,8 @@ class SearchEngine:
                 # positive BM25 contribution. Keep those hard-filtered docs
                 # with deterministic zero scores instead of dropping them.
                 scores = {docid: scores.get(docid, 0.0) for docid in candidate_docs}
-            ranked = sorted(scores.items(), key=lambda row: (-row[1], row[0]))
+            limit = req.offset + req.k if req.mode == "lexical" else self.config.candidate_k
+            ranked = nsmallest(limit, scores.items(), key=lambda row: (-row[1], row[0]))
             timings["lexical"] = (time.perf_counter() - start) * 1000
         if req.mode != "lexical":
             ranked = ranked[:self.config.candidate_k]
@@ -150,8 +155,11 @@ class SearchEngine:
                     executed, score_kind = "hybrid", "rrf"
 
         results = []
+        document_text = getattr(self.reader, "document_text", None)
         for rank, (docid, score) in enumerate(ranked[req.offset:req.offset + req.k], req.offset + 1):
-            doc = self.reader.doc(docid)
+            # Rendering re-analyzes the original text; it does not consume the
+            # stored token-offset table required by the conformance doc() API.
+            doc = document_text(docid) if callable(document_text) else self.reader.doc(docid)
             results.append(ResultItem(
                 doc_id=doc.doc_id, rank=rank, score=score, title=doc.title,
                 snippet=doc.text[:SNIPPET_LEN], highlights=build_highlights(doc, set(terms)),

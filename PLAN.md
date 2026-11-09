@@ -11,7 +11,20 @@
 
 工作边界：**离线负责 BM25 构建和向量数据库构建；在线负责查询编码、Router、向量召回与 RRF 融合**。不训练模型、不生成答案。两侧只共享 contracts/；在线只读离线产物。
 
-当前真实模型和 Qdrant 适配器已作为可选依赖接入，但本环境没有模型权重、DuRetrieval 全量数据或 Qdrant 实例，因此不宣称已完成真实语义质量和 HNSW 性能验收。默认运行 `python3 tests/run.py` 与 `python3 -m unittest evaluation.test_evaluate` 验证框架；有真实数据后再运行 HTTP evaluator 和四组实验。运行 `typst compile slides/proposal.typ slides/proposal.pdf` 可更新汇报。
+## 当前 TODO / 状态（2026-11-02）
+
+本轮已恢复并原子准备完整官方 8,096,668 篇 corpus、2,000 dev queries 和 9,839 qrels。零 token 保留、原子准备、事件流 compact、分盘 scratch、WAL/FULL lexical/compact 检查点及 reader 自动接线均有回归；同一真实 10k pilot 的 compact 数据与词项已核对一致。首个非检查点进程异常终止及坏 DB 保留，新的全量 lexical 在冻结源码上运行。新自爬版本直接计数清洗去重文章并缓存原字节/sidecar，替代 raw URL 任务；20k 冻结、多系统池化和新 qrels 待完成。完整 official-dev 内部划分已固定，HNSW 搜索参数和全量质量运行尚未完成。本轮集群访问仅观察到 IAB 导航/会话失败及另一入口空响应；本地终端对一个入口取得 HTTP 200 且标题正常，用户确认自己的浏览器可用，不能据此宣称集群不可用或配额不足。用户禁止电脑控制访问集群，后续仅使用非 GUI CLI/SSH/API；已有任务未修改。具体状态及完整验证入口以 [TODO.md](TODO.md) 和 [规模说明](docs/RFC0004_SCALE.md) 为准；GitHub 集中更新现有 PR #8。
+
+- [x] **代码与契约闸门**：A1 staging/原子发布、严格文件 SHA256、双索引指纹对齐、Qdrant 批量消费/精确计数/失败清理、快照 `.part` 发布、provenance/report 和 `offline.validate` 已在 PR #8 提交；此前本地核心 56/56、evaluation 27/27、Web 5/5。当前代码批次核心 62/62、evaluation 65/65、checkpoint/stream/BGE 专项 56/56、Node 5/5，compile 和 diffcheck 通过；独立最终审查无新增阻塞，不代表全量实验完成。
+- [x] **分工澄清**：RFC-0002 负责爬虫/清洗/qrels，RFC-0003 负责在线接线，RFC-0001 负责 Router 研究；本分支已审计并纳入独立的 stream/compact/packed/BGE 支持，但不把它们写成 8M 验收结果。
+- [x] **真实小批闭环（集群）**：已在 A800 上完成固定 BGE revision 的 CUDA 编码；仓库自身 Qdrant writer 使用 1.16.0 server/client 完成真实 collection、metadata、snapshot、独立干净实例恢复和 `QdrantVectorIndex` 只读验收。完整规模成本表和 8M 构建仍单独保留为后续项。
+- [ ] **数据冻结（RFC-0002 协作）**：分别登记批准的 DuReader 版本与团队自爬 20k 语料、来源、统计、ID 清单和 SHA256；不把公开归档或前缀冒充课程目标规模。
+- [~] **自爬测试集**：已将有界 `evaluation.crawl_web` 工作流移入本分支，并完成 gov.cn 30/393/799/1,029 篇候选抓取；又从公开 sitemap 增加 108 篇并按 URL 合并为 1,137 篇，另完成新华网 100 篇未标注跨站点候选试验。用户已授权 assistant 逐条复核 100 条候选并生成正式 qrels，标签来源和复核规则已写入外部 manifest；仍需找到合法且可复现的来源扩展到确认后的 20k 有效文档，独立人工 gold labels 仍是另一条实验边界。
+- [ ] **规模构建**：已纳入 SQLite 支持的 `offline.stream_build`、compact/packed reader、DiskDocuments 和临时 SQLite ID 校验；旧 v1 内存 builder 仍保留兼容性，8M 峰值 RSS、磁盘、吞吐、快照和 HNSW 仍未实测，不能直接宣称支持 8M。
+- [~] **四组前缀烟雾实验**：已在官方 dev corpus 的 20k 固定前缀上冻结 Router、candidate pool、RRF、模型和截断规则，并在独立 9-query test split 上运行 lexical/dense/hybrid/adaptive，保存指标、延迟、vector success/fallback 和 TREC runs；这不是课程全量正式成绩。
+- [~] **不确定性与交付**：已用 `evaluation.compare` 对官方前缀实验和本次 1,137 篇 assistant-reviewed lexical→RM3 做 10,000 次 paired bootstrap，并保留资源/模型/Qdrant 限制；真实 Qdrant server 小批恢复收据已补齐，团队自爬 20k、全量成本表和 8M/HNSW 正式验收仍待补齐。
+
+本地 Windows 使用 `python`，Linux/集群可使用 `python3`；两者运行同一测试入口。当前仓库没有提交数据集、权重、Qdrant collection、快照或生成索引；本次已记录受限前缀的语义冒烟和 paired bootstrap，但不报告 Qdrant HNSW 性能或全规模结果。运行 `typst compile slides/proposal.typ slides/proposal.pdf` 可更新汇报。
 
 ---
 

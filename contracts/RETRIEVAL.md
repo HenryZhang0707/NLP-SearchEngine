@@ -16,15 +16,35 @@
 
 保留 `IndexReader`：`postings(term)`、`df(term)`、`doc_length(docid)`、`doc(docid)`、`vocab()`、`manifest()`，以及 n_docs / avgdl。
 
+`doc_length` 等于共享 analyzer 的实际 token 数，可以为 0。官方语料含 `()` 等非空但没有可分析 token 的正文；构建必须保留原文、外部 ID 和行序，不得静默跳过。该类文档的 offsets 为空且不出现在词法 postings 中；`n_docs` 和 `avgdl` 仍涵盖全部文档。全零 token 语料的 `avgdl=0`、词表为空，词法查询返回空结果。conformance 仍逐文档核对 analyzer 的实际输出，因此不能用伪造零长度掩盖缺失 postings。此约定不改变 v1 文件结构，既有 `DiskIndex` 已接受非负长度。
+
 - docid：内部 int，按语料行号从 0 连续编号；跨两套索引保持一致。
 - doc_id：非空唯一 str，用于评测输出；不得把内部 docid 和外部字符串混用。
 - postings 按 docid 升序；位置严格递增；tf 等于位置数。
 - `manifest.bm25 = {k1, b, idf}`；默认 1.2、0.75、log1p-lucene。此字段为词法 v1 的可选扩展，老产物缺省时使用默认值。非默认实验参数应离线记录，在线默认读取，不硬编码覆盖。
 - 保留 docs.jsonl/postings.jsonl/offsets.jsonl/stats.json 的原有格式及文件校验。
 
+RFC-0004 的正式交付必须为这四个文件提供 64 位小写 SHA256；`verify_files` 的严格
+模式会拒绝缺失摘要。普通 `DiskIndex` 仍兼容早期 v1 产物，但兼容读取不等于可发布。
+构建输入、版本、依赖、运行资源和阶段耗时写入交付目录的 provenance/report sidecar，
+不写机器绝对路径、凭据或 qrels。
+
 ## 3. 接口 A2：向量构建/读取
 
 ### 配置与产物
+
+离线文档源使用 `DocumentSource`（`n_docs` / `doc(docid)`），`IndexReader` 兼容继承它。
+这允许固定原始 corpus 的向量编码与词法构建并行，不要求先制造完整词法产物。
+`CorpusDocuments` 必须校验原始 SHA256、文档数和字段，按物理行序保留全部文档并拒绝
+空行。它自身不承诺外部 ID 唯一；`build_vectors` 在编码和发布前用 SQLite 检查。
+公共有序语料指纹算法、A1/A2 文件格式及在线双索引匹配门禁保持不变。
+
+Qdrant writer 将非空 `index_params` 作为真实 `HnswConfigDiff` 传给建库请求，并在快照前
+核对服务返回的 `config.hnsw_config`；不能只凭 metadata 声明参数已经生效。当前支持
+严格整数 `m >= 0`、`ef_construct >= 4`、`full_scan_threshold >= 10`、
+`max_indexing_threads >= 0`，以及严格布尔 `on_disk`。未知字段或类型转换会拒绝；
+空对象保留服务默认设置。搜索 beam 由在线服务的 `--hnsw-ef` 明确指定，正式实验
+同时记录建图和搜索参数；`exact=false` 本身不能证明 planner 实际走了 HNSW。
 
 `EmbeddingSpec` 精确比较以下全部字段，不仅比较维度：
 
@@ -74,8 +94,20 @@ class VectorReader(Protocol):
 - encode_documents 输出顺序与输入一致，数量相等。离线可分批调用；模板由构建器应用，前缀/模型 tokenizer/截断/归一化由编码器应用。
 - writer 必须消费全部 records，创建新 collection，校验点数/ID/向量、完成快照，再返回仅补齐 snapshot_files 的 manifest。快照写入与 build_vectors 相同的产物目录，文件名不允许路径穿越。
 - `build_vectors` 核验快照文件 SHA256，最后原子重命名发布 vector_manifest.json。构建失败不发布 manifest；调用方清理失败的新 collection/临时目录，不能污染旧线上版本。构建目录只能有一个 writer，不支持并发发布。
+- 若 writer 已返回成功而本地 manifest/provenance/report 发布随后失败，具有远端资源的 writer
+  应提供同名 `rollback(manifest)` 钩子，由 `build_vectors` 尝试删除本次版本 collection；
+  清理错误不能覆盖原始发布错误。没有该钩子的旧 writer 只能证明本地契约，不能宣称远端
+  失败清理完整。
+- 发布顺序是“新版本 collection 完整写入并核对 exact count → 快照下载到 `.part` → 快照
+  SHA256 校验 → 原子写入 vector_manifest → 写 provenance/report”。任何一步失败都不得
+  把半成品当作可发布版本；已存在的非空目标目录与已有 collection 不覆盖。默认重试语义是
+  使用新的版本化 collection 全量重建，不支持跨语料、模型、编码配置或索引参数的断点续写。
 - reader 返回 `VectorHit(docid, doc_id, score)`；score 是 cosine 相似度，越大越好，不是距离。最多 limit 条唯一结果，按 score 降序、内部 docid 升序；ANN 搜索不保证与精确全扫同集合。
 - 真实适配器须从已恢复的 collection 读取并核对嵌入配置/语料指纹等元数据，恢复时检查快照 SHA256；不能只信调用者传入的 manifest。
+- Qdrant 的“恢复通过”必须在隔离的干净实例上实际导入快照，并记录 server/client 版本、
+  collection metadata、向量规格、exact count、内部 ID 覆盖、外部 ID 与 corpus fingerprint。
+  本地 `memory-exact`、SDK double、仅有快照文件哈希的检查只能证明格式和身份，不能替代该项
+  恢复验收或 HNSW 性能实验。
 - Qdrant 服务与 `qdrant-client` 均要求 1.16+（collection metadata）。writer 创建 collection 时在 `config.metadata.nlp_search_engine` 保存 `VectorManifest.build_metadata()`：包含完整构建身份，仅排除 `snapshot_files`，避免快照包含自身校验和的循环依赖。reader 启动时逐字段比对这些持久化元数据，核对单向量维度、Cosine 距离，并使用 `count(exact=True)` 核对文档数，不依赖近似 `points_count`。缺元数据的旧 collection 必须重建，不能根据外部 manifest 补填后冒充已验证产物。
 - 超时、模型/后端不可用统一包装成 `RetrievalUnavailable`。不要把任意编程错误吞成空列表。
 
@@ -173,4 +205,18 @@ engine = SearchEngine(reader, encoder=query_encoder, vectors=vector_reader,
 
 零依赖 runner 检查本仓库 schema 使用的响应子集，不是完整 JSON Schema 引擎。UI 和评测器可用标准 JSON Schema 验证器直接消费 api.py 的两个 schema。
 
-真实模型权重、DuRetrieval 全量语料/qrels 和 Qdrant 服务不随仓库提供，因此当前没有真实语义质量或 HNSW 性能结论。RM3 是确定性的本地伪相关反馈扩展；SLM 仍需要外部固定模型与离线缓存并返回 501，二者都不改变显式约束，也不会自动混入四组主实验。
+真实模型权重、DuRetrieval 全量语料/qrels 和 Qdrant 服务不随仓库提供。已记录的受限前缀结果是工程冒烟；当前没有正式全规模语义质量或 HNSW 性能结论，资源和准入进展见 `evaluation/RESOURCES.md`。RM3 是确定性的本地伪相关反馈扩展；SLM 仍需要外部固定模型与离线缓存并返回 501，二者都不改变显式约束，也不会自动混入四组主实验。
+
+### 可选只读加速接口
+
+`IndexReader.doc()` 仍返回完整 offsets，conformance 和显式位置语义不变。实现可以额外提供
+`external_doc_id(docid)`、`document_text(docid)`、`iter_document_text()` 与
+`term_frequencies(term)`；在线层在存在可调用实现时使用它们，否则保留原接口。
+纯正文接口的内部/外部 ID、title 和 text 必须与 `doc()` 完全一致，只省略不消费的 offsets；
+词频对的顺序必须与 postings 相同。顺序正文流必须覆盖全部文档并绑定 `docs.idx` 的
+每行字节窗口，不能只对物理 JSONL 行计算身份。语料指纹的 canonical JSON 与 SHA256 算法不变。
+
+compact reader 对不超过 64 KiB 的原始文档行最多缓存 256 条，序列化 payload 上限为
+16 MiB，另有有界的缓存键开销；大行正常读取但不保留。它不缓存可变的解析对象，也不把
+该缓存上限解释为进程总 RSS。普通 OR 计分不再重复构建候选并集，显式空集和 AND 交集仍过滤。
+稳定 Top-K 仍按分数降序、内部 docid 升序，分页、Router 与 RRF 使用同一前缀。

@@ -11,8 +11,12 @@ Example::
 
     python3 -m evaluation.prepare_dataset \
       --corpus data/raw/corpus.jsonl --queries data/raw/queries.jsonl \
-      --qrels data/raw/qrels.tsv --out data/duretrieval \
-      --expected-docs 100001 --expected-queries 2000 --expected-qrels 9839
+      --qrels data/raw/qrels.tsv --out data/duretrieval
+
+The full normalizer loads the corpus into memory. For resources already
+validated against their corpus, use ``--queries-only`` to split only queries
+and qrels, retaining the same seed/hash assignment. JSONL output preserves
+query control characters; all published files use LF on every platform.
 """
 
 from __future__ import annotations
@@ -21,6 +25,7 @@ import argparse
 import hashlib
 import json
 import sys
+import tempfile
 from pathlib import Path
 from typing import Sequence
 
@@ -47,7 +52,7 @@ def _record_id(value: object, label: str, line_no: int, path: Path) -> str:
 
 def _load_jsonl(path: Path) -> list[dict]:
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        lines = path.read_text(encoding="utf-8").split("\n")
     except OSError as error:
         raise EvaluationError(f"无法读取 {path}: {error}") from error
     records: list[dict] = []
@@ -95,6 +100,8 @@ def load_query_records(path: str | Path) -> list[tuple[str, str]]:
     for line_no, value in enumerate(_load_jsonl(path), 1):
         raw_id = value.get("qid", value.get("query_id", value.get("id", value.get("_id"))))
         qid = _record_id(raw_id, "qid", line_no, path)
+        if any(char.isspace() for char in qid):
+            raise EvaluationError(f"{path}:{line_no}: qid 不能包含空白字符")
         if qid in seen:
             raise EvaluationError(f"{path}:{line_no}: qid 重复: {qid!r}")
         query = value.get("query", value.get("text"))
@@ -162,20 +169,111 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _validate_split_policy(seed, dev_fraction, test_fraction):
+    if type(seed) is not int:
+        raise EvaluationError("seed 必须是整数")
+    if not 0 <= dev_fraction < 1 or not 0 <= test_fraction < 1 or dev_fraction + test_fraction >= 1:
+        raise EvaluationError("dev/test 比例必须非负且总和小于 1")
+
+
+def _query_format(queries, requested):
+    if requested not in ("auto", "tsv", "jsonl"):
+        raise EvaluationError("query_format 必须为 auto、tsv 或 jsonl")
+    multiline = any(any(char in query for char in "\t\r\n\v\f\x1c\x1d\x1e\x85\u2028\u2029")
+                    for _, query in queries)
+    if requested == "tsv" and multiline:
+        raise EvaluationError("查询含制表或换行，必须使用 JSONL 输出")
+    return ("jsonl" if multiline else "tsv") if requested == "auto" else requested
+
+
+def _write_splits(out, queries, qrel_rows, seed, dev_fraction, test_fraction, query_format):
+    assignments = {qid: _split_for(qid, seed, dev_fraction, test_fraction) for qid, _ in queries}
+    for split in SPLITS:
+        with (out / f"queries.{split}.{query_format}").open("w", encoding="utf-8", newline="\n") as handle:
+            for qid, query in queries:
+                if assignments[qid] == split:
+                    if query_format == "jsonl":
+                        handle.write(json.dumps({"qid": qid, "query": query}, separators=(",", ":")) + "\n")
+                    else:
+                        handle.write(f"{qid}\t{query}\n")
+        with (out / f"qrels.{split}.tsv").open("w", encoding="utf-8", newline="\n") as handle:
+            for qid, docid, relevance in qrel_rows:
+                if assignments[qid] == split:
+                    handle.write(f"{qid} 0 {docid} {relevance:g}\n")
+    return assignments
+
+
+def _finish_manifest(out, manifest):
+    manifest["files"] = {path.name: {"sha256": _sha256(path), "bytes": path.stat().st_size}
+                         for path in sorted(out.iterdir())
+                         if path.is_file() and path.name != "dataset_manifest.json"}
+    with (out / "dataset_manifest.json").open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
+    return manifest
+
+
+def _split_sources(queries_path, qrels_path):
+    return {key: {"sha256": _sha256(Path(path)), "bytes": Path(path).stat().st_size}
+            for key, path in (("queries", queries_path), ("qrels", qrels_path))}
+
+
+def prepare_query_splits(queries_path: str | Path, qrels_path: str | Path,
+                         out_dir: str | Path, *, seed: int = 2026,
+                         dev_fraction: float = 0.1, test_fraction: float = 0.8,
+                         expected_queries: int | None = None, expected_qrels: int | None = None,
+                         query_format: str = "jsonl") -> dict:
+    """Split already corpus-validated query/qrels files, without loading a corpus.
+
+    This entry checks query IDs and qrel query references only. It deliberately
+    makes no claim about document membership or corpus validation.
+    """
+    _validate_split_policy(seed, dev_fraction, test_fraction)
+    sources = _split_sources(queries_path, qrels_path)
+    queries = load_query_records(queries_path)
+    qrel_rows = _qrel_rows(Path(qrels_path))
+    query_format = _query_format(queries, query_format)
+    for label, actual, expected in (("查询", len(queries), expected_queries),
+                                    ("qrels", len(qrel_rows), expected_qrels)):
+        if expected is not None and actual != expected:
+            raise EvaluationError(f"{label}数不符: {actual} != {expected}")
+    unknown = {qid for qid, _, _ in qrel_rows} - {qid for qid, _ in queries}
+    if unknown:
+        raise EvaluationError(f"qrels 含未知 qid: {sorted(unknown)[:3]}")
+    out = Path(out_dir)
+    if out.exists() and (not out.is_dir() or any(out.iterdir())):
+        raise EvaluationError(f"输出目录必须不存在或为空: {out}")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=f".{out.name}.query-splits-", dir=out.parent) as directory:
+        stage = Path(directory)
+        assignments = _write_splits(stage, queries, qrel_rows, seed, dev_fraction, test_fraction, query_format)
+        manifest = _finish_manifest(stage, {
+            "schema_version": 1, "scope": "query-splits-only", "corpus_validation": "not_performed",
+            "sources": sources, "seed": seed, "query_format": query_format,
+            "split_fractions": {"dev": dev_fraction, "test": test_fraction,
+                                "train": 1.0 - dev_fraction - test_fraction},
+            "counts": {"queries": len(queries), "qrels": len(qrel_rows)},
+            "splits": {split: sum(value == split for value in assignments.values()) for split in SPLITS},
+        })
+        if _split_sources(queries_path, qrels_path) != sources:
+            raise EvaluationError("划分期间输入文件发生变化")
+        if out.exists():
+            out.rmdir()
+        stage.rename(out)
+    return manifest
+
+
 def prepare_dataset(corpus_path: str | Path, queries_path: str | Path,
                     qrels_path: str | Path, out_dir: str | Path, *, seed: int = 2026,
                     dev_fraction: float = 0.1, test_fraction: float = 0.8,
                     expected_docs: int | None = None,
                     expected_queries: int | None = None,
-                    expected_qrels: int | None = None) -> dict:
+                    expected_qrels: int | None = None, query_format: str = "auto") -> dict:
     """Normalize inputs, write stable split files, and return the manifest."""
 
-    if type(seed) is not int:
-        raise EvaluationError("seed 必须是整数")
-    if not 0 <= dev_fraction < 1 or not 0 <= test_fraction < 1 or dev_fraction + test_fraction >= 1:
-        raise EvaluationError("dev/test 比例必须非负且总和小于 1")
+    _validate_split_policy(seed, dev_fraction, test_fraction)
     corpus = load_corpus(corpus_path)
     queries = load_query_records(queries_path)
+    query_format = _query_format(queries, query_format)
     qrel_rows = _qrel_rows(Path(qrels_path))
     if expected_docs is not None and len(corpus) != expected_docs:
         raise EvaluationError(f"文档数不符: {len(corpus)} != {expected_docs}")
@@ -198,23 +296,14 @@ def prepare_dataset(corpus_path: str | Path, queries_path: str | Path,
         raise EvaluationError(f"输出目录必须为空，以免混入旧数据: {out}")
     out.mkdir(parents=True, exist_ok=True)
     corpus_out = out / "corpus.jsonl"
-    with corpus_out.open("w", encoding="utf-8") as handle:
+    with corpus_out.open("w", encoding="utf-8", newline="\n") as handle:
         for record in corpus:
             handle.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
-    assignments = {qid: _split_for(qid, seed, dev_fraction, test_fraction)
-                   for qid, _ in queries}
-    for split in SPLITS:
-        with (out / f"queries.{split}.tsv").open("w", encoding="utf-8") as handle:
-            for qid, query in queries:
-                if assignments[qid] == split:
-                    handle.write(f"{qid}\t{query}\n")
-        with (out / f"qrels.{split}.tsv").open("w", encoding="utf-8") as handle:
-            for qid, docid, relevance in qrel_rows:
-                if assignments[qid] == split:
-                    handle.write(f"{qid} 0 {docid} {relevance:g}\n")
+    assignments = _write_splits(out, queries, qrel_rows, seed, dev_fraction, test_fraction, query_format)
     manifest = {
         "schema_version": 1,
         "seed": seed,
+        "query_format": query_format,
         "split_fractions": {"dev": dev_fraction, "test": test_fraction,
                              "train": 1.0 - dev_fraction - test_fraction},
         "counts": {"documents": len(corpus), "queries": len(queries),
@@ -223,18 +312,15 @@ def prepare_dataset(corpus_path: str | Path, queries_path: str | Path,
                    for split in SPLITS},
         "files": {},
     }
-    for path in sorted(out.iterdir()):
-        if path.is_file() and path.name != "dataset_manifest.json":
-            manifest["files"][path.name] = {"sha256": _sha256(path), "bytes": path.stat().st_size}
-    manifest_path = out / "dataset_manifest.json"
-    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
-                             encoding="utf-8")
-    return manifest
+    return _finish_manifest(out, manifest)
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="校验并固定外部检索数据集的输入与划分")
-    parser.add_argument("--corpus", required=True, type=Path, help="JSONL corpus")
+    parser.add_argument("--corpus", type=Path, help="JSONL corpus; normal mode loads it into memory")
+    parser.add_argument("--queries-only", action="store_true", help="只划分已完成语料校验的查询/qrels，不读取或复制 corpus")
+    parser.add_argument("--query-format", choices=("auto", "tsv", "jsonl"),
+                        help="默认普通准备为 auto，仅划分查询为 jsonl；JSONL 保留查询中的制表和换行")
     parser.add_argument("--queries", required=True, type=Path, help="JSONL queries")
     parser.add_argument("--qrels", required=True, type=Path, help="TREC qrels")
     parser.add_argument("--out", required=True, type=Path)
@@ -248,13 +334,22 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
+    parser = _parser()
+    args = parser.parse_args(argv)
+    if args.queries_only and (args.corpus is not None or args.expected_docs is not None):
+        parser.error("--queries-only 不接受 --corpus 或 --expected-docs，不执行语料校验")
+    if not args.queries_only and args.corpus is None:
+        parser.error("普通准备模式必须提供 --corpus，或使用 --queries-only")
     try:
-        manifest = prepare_dataset(
-            args.corpus, args.queries, args.qrels, args.out, seed=args.seed,
+        options = dict(seed=args.seed,
             dev_fraction=args.dev_fraction, test_fraction=args.test_fraction,
-            expected_docs=args.expected_docs, expected_queries=args.expected_queries,
+            expected_queries=args.expected_queries,
             expected_qrels=args.expected_qrels)
+        manifest = (prepare_query_splits(args.queries, args.qrels, args.out,
+                                        query_format=args.query_format or "jsonl", **options)
+                    if args.queries_only else prepare_dataset(args.corpus, args.queries, args.qrels, args.out,
+                                                              expected_docs=args.expected_docs,
+                                                              query_format=args.query_format or "auto", **options))
         print(json.dumps(manifest, ensure_ascii=False, indent=2))
     except (EvaluationError, OSError) as error:
         print(f"dataset preparation error: {error}", file=sys.stderr)

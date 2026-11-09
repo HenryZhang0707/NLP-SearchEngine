@@ -63,7 +63,7 @@ def _check_invariants(reader) -> None:
                 f"{term!r}@doc{docid}: positions 非严格递增"
             )
     lens = [reader.doc_length(d) for d in range(reader.n_docs)]
-    assert all(n > 0 for n in lens), "存在 doc_length 为 0 的文档"
+    assert all(type(n) is int and n >= 0 for n in lens), "文档长度必须是非负整数"
     assert abs(sum(lens) / len(lens) - reader.avgdl) < 1e-6, "avgdl 与 doc_lengths 不一致"
 
 

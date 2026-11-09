@@ -1,6 +1,7 @@
 """Small stdlib-only tests for the HTTP-only evaluator."""
 
 import io
+import hashlib
 import json
 import tempfile
 import threading
@@ -11,8 +12,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 from evaluation.evaluate import (
+    DENSE_CONSTRAINT_ERROR,
     EvaluationError,
     QueryRecord,
+    QueryRouting,
     evaluate_http,
     evaluate_run,
     load_qrels,
@@ -29,6 +32,15 @@ class _Handler(BaseHTTPRequestHandler):
         request = json.loads(self.rfile.read(length))
         self.server.requests.append(request)
         query, mode = request["query"], request["mode"]
+        if query in ("unsupported", "wrong-error", "unavailable", "non-json"):
+            status = 503 if query == "unavailable" else 400
+            body = (b"not json" if query == "non-json" else json.dumps({"error":
+                    DENSE_CONSTRAINT_ERROR if query == "unsupported" else "different error"}).encode())
+            self.send_response(status)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         rows = [{"doc_id": "d1", "score": 2.0}, {"doc_id": "d2", "score": 1.0}]
         if query == "deep":
             rows = [{"doc_id": f"d{i}", "score": float(121 - i)} for i in range(1, 121)]
@@ -80,6 +92,267 @@ def _serve():
 
 
 class EvaluatorTests(unittest.TestCase):
+    def _policy_inputs(self, root, middle="unsupported"):
+        queries = root / "queries.tsv"
+        queries.write_text(f"q1\tq1\nq2\t{middle}\nq3\tq1\n", encoding="utf-8")
+        policy = {"schema_version": 1,
+                  "queries_sha256": hashlib.sha256(queries.read_bytes()).hexdigest(),
+                  "preflight_parser_sha256": "a" * 64,
+                  "request": {"mode": "dense", "scorer": "bm25", "expander": "none"},
+                  "expected_unsupported": {"query_ids": ["q2"], "status": 400,
+                                           "body": {"error": DENSE_CONSTRAINT_ERROR}}}
+        path = root / "policy.json"
+        path.write_text(json.dumps(policy, ensure_ascii=False), encoding="utf-8")
+        return queries, path, policy
+
+    def test_expected_unsupported_keeps_all_queries_and_durable_outcomes(self):
+        with _serve() as (endpoint, server), tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            queries, policy, _ = self._policy_inputs(root)
+            run = root / "dense.trec"
+            qrels = {qid: {"d1": 1.0} for qid in ("q1", "q2", "q3")}
+            summary = evaluate_http(endpoint, load_queries(queries), qrels, mode="dense",
+                                    unsupported_policy=policy, queries_source=queries, run_output=run)
+            self.assertEqual([x["query"] for x in server.requests], ["q1", "unsupported", "q1"])
+            self.assertTrue(all(x["mode"] == "dense" and x["k"] == 100 for x in server.requests))
+            self.assertEqual(summary.n_queries, 3)
+            rejected = summary.per_query[1]
+            self.assertEqual((rejected.ndcg, rejected.recall, rejected.mrr, rejected.map_at_100), (0, 0, 0, 0))
+            self.assertEqual(rejected.retrieved, 0)
+            self.assertIsNone(rejected.routing)
+            self.assertIsNone(rejected.latency_ms)
+            self.assertEqual(summary.routing.n_queries, 2)
+            self.assertEqual(summary.routing.fallbacks, 0)
+            self.assertAlmostEqual(summary.ndcg_at_10, 2 / 3)
+            self.assertEqual(evaluate_run(qrels, load_run(run)).ndcg_at_10, summary.ndcg_at_10)
+            self.assertNotIn("q2", load_run(run))
+            state = json.loads(Path(str(run) + ".requests.json").read_text(encoding="utf-8"))
+            self.assertEqual(state, summary.requests)
+            self.assertEqual(state["status"], "COMPLETE")
+            self.assertEqual((state["attempted_requests"], state["http_200"], state["expected_unsupported"]), (3, 2, 1))
+            self.assertEqual(state["unexpected_errors"], 0)
+            self.assertEqual(state["http_success_coverage"], 2 / 3)
+            self.assertEqual(state["protocol_accounted_coverage"], 1)
+            self.assertEqual(state["policy"]["sha256"], hashlib.sha256(policy.read_bytes()).hexdigest())
+            self.assertIn("runtime_parser_not_verified", state["policy"]["parser_identity_scope"])
+            self.assertEqual(state["outcomes"][1]["status"], "EXPECTED_UNSUPPORTED")
+            self.assertIsNone(state["outcomes"][1]["routing"])
+            self.assertGreaterEqual(state["outcomes"][1]["latency_ms"], 0)
+            journal = run.parent / state["journal"]["file"]
+            self.assertEqual(hashlib.sha256(journal.read_bytes()).hexdigest(), state["journal"]["sha256"])
+            events = [json.loads(line) for line in journal.read_text(encoding="utf-8").splitlines()]
+            self.assertEqual([event["event"] for event in events], ["START", "BEGIN", "OUTCOME", "BEGIN", "OUTCOME", "BEGIN", "OUTCOME"])
+            self.assertEqual(events[0]["query_ids"], state["query_ids"])
+            self.assertEqual([event["sequence"] for event in events], list(range(7)))
+            self.assertEqual([event["outcome"] for event in events if event["event"] == "OUTCOME"], state["outcomes"])
+
+    def test_default_strict_and_unexpected_errors_leave_incomplete_evidence(self):
+        for middle, use_policy in (("unsupported", False), ("wrong-error", True),
+                                   ("unavailable", True), ("non-json", True),
+                                   ("q1", True), ("missing-routing", True)):
+            with self.subTest(middle=middle, policy=use_policy), _serve() as (endpoint, server), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                queries, policy, _ = self._policy_inputs(root, middle)
+                run = root / "partial.trec"
+                with self.assertRaises(EvaluationError):
+                    evaluate_http(endpoint, load_queries(queries), {}, mode="dense", run_output=run,
+                                  unsupported_policy=policy if use_policy else None, queries_source=queries)
+                state = json.loads(Path(str(run) + ".requests.json").read_text(encoding="utf-8"))
+                self.assertEqual(state["status"], "INCOMPLETE")
+                self.assertEqual(state["unexpected_errors"], 1)
+                self.assertEqual(state["expected_unsupported"], 0)
+                self.assertEqual(state["attempted_requests"], 2)
+                self.assertNotIn("outcomes", state)
+                self.assertNotIn("query_ids", state)
+                self.assertEqual(state["last_outcome"]["status"], "UNEXPECTED_ERROR")
+                journal = run.parent / state["journal"]["file"]
+                events = [json.loads(line) for line in journal.read_text(encoding="utf-8").splitlines()]
+                self.assertEqual(events[-1]["outcome"], state["last_outcome"])
+                self.assertEqual(events[0]["query_ids"], ["q1", "q2", "q3"])
+                self.assertEqual(len(server.requests), 2)
+                self.assertEqual(set(load_run(run)), {"q1"})
+
+    def test_policy_rejects_drift_before_outputs_or_http(self):
+        mutations = [lambda p: p.update(extra=True),
+                     lambda p: p.update(schema_version=True),
+                     lambda p: p.update(queries_sha256="b" * 64),
+                     lambda p: p.update(preflight_parser_sha256="bad"),
+                     lambda p: p["request"].update(extra=True),
+                     lambda p: p["expected_unsupported"].update(extra=True),
+                     lambda p: p["expected_unsupported"].update(query_ids=[]),
+                     lambda p: p["expected_unsupported"].update(query_ids=["q2", "q2"]),
+                     lambda p: p["expected_unsupported"].update(query_ids=["missing"]),
+                     lambda p: p["expected_unsupported"].update(status=503),
+                     lambda p: p["expected_unsupported"].update(body={"error": "different"})]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for mutate in mutations:
+                queries, policy_path, policy = self._policy_inputs(root)
+                mutate(policy)
+                policy_path.write_text(json.dumps(policy), encoding="utf-8")
+                with patch("evaluation.evaluate._request_search") as request, self.assertRaises(EvaluationError):
+                    evaluate_http("http://unused", load_queries(queries), {}, mode="dense",
+                                  unsupported_policy=policy_path, queries_source=queries,
+                                  run_output=root / "should-not-exist.trec")
+                request.assert_not_called()
+                self.assertFalse((root / "should-not-exist.trec").exists())
+                self.assertFalse((root / "should-not-exist.trec.requests.json").exists())
+                self.assertFalse((root / "should-not-exist.trec.requests.json.events.jsonl").exists())
+            queries, policy_path, _ = self._policy_inputs(root)
+            for kwargs in ({"mode": "lexical", "queries_source": queries},
+                           {"mode": "dense", "scorer": "tfidf", "queries_source": queries},
+                           {"mode": "dense", "expander": "rm3", "queries_source": queries},
+                           {"mode": "dense"},
+                           {"mode": "dense", "queries_source": queries}):
+                with patch("evaluation.evaluate._request_search") as request, self.assertRaises(EvaluationError):
+                    evaluate_http("http://unused", load_queries(queries), {}, unsupported_policy=policy_path, **kwargs)
+                request.assert_not_called()
+
+    def test_stale_outputs_are_rejected_and_cli_cannot_leave_stale_summary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            queries, policy, _ = self._policy_inputs(root)
+            run = root / "existing.trec"
+            run.write_text("protected", encoding="utf-8")
+            with patch("evaluation.evaluate._request_search") as request, self.assertRaisesRegex(EvaluationError, "已存在"):
+                evaluate_http("http://unused", load_queries(queries), {}, run_output=run)
+            request.assert_not_called()
+            self.assertEqual(run.read_text(), "protected")
+            qrels = root / "qrels.tsv"
+            qrels.write_text("q1 0 d1 1\n", encoding="utf-8")
+            output = root / "summary.json"
+            output.write_text("protected summary", encoding="utf-8")
+            with redirect_stderr(io.StringIO()), patch("evaluation.evaluate._request_search") as request:
+                code = main(["--endpoint", "http://unused", "--queries", str(queries), "--qrels", str(qrels),
+                             "--output-json", str(output), "--output-run", str(root / "new.trec")])
+            self.assertEqual(code, 2)
+            request.assert_not_called()
+            self.assertFalse((root / "new.trec").exists())
+            self.assertEqual(output.read_text(), "protected summary")
+
+    def test_policy_rejects_duplicate_json_and_changed_records(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            queries, policy, _ = self._policy_inputs(root)
+            policy.write_text(policy.read_text(encoding="utf-8").replace('"schema_version": 1', '"schema_version": 1, "schema_version": 1'), encoding="utf-8")
+            with patch("evaluation.evaluate._request_search") as request, self.assertRaisesRegex(EvaluationError, "重复"):
+                evaluate_http("http://unused", load_queries(queries), {}, mode="dense", unsupported_policy=policy,
+                              queries_source=queries, request_output=root / "out.json")
+            request.assert_not_called()
+            queries, policy, _ = self._policy_inputs(root)
+            changed = load_queries(queries)
+            changed[0] = QueryRecord("q1", "changed")
+            with patch("evaluation.evaluate._request_search") as request, self.assertRaisesRegex(EvaluationError, "记录不匹配"):
+                evaluate_http("http://unused", changed, {}, mode="dense", unsupported_policy=policy,
+                              queries_source=queries, request_output=root / "out.json")
+            request.assert_not_called()
+            self.assertFalse((root / "out.json").exists())
+
+    def test_request_persistence_serialization_is_linear_for_2000_queries(self):
+        totals = []
+        for count in (1000, 2000):
+            stats = {"bytes": 0, "snapshots": 0, "events": 0, "complete": 0}
+
+            def snapshot_writer(path, value):
+                stats["snapshots"] += 1
+                stats["bytes"] += len(json.dumps(value, ensure_ascii=False, indent=2).encode("utf-8"))
+                if value["status"] == "INCOMPLETE":
+                    self.assertNotIn("query_ids", value)
+                    self.assertNotIn("outcomes", value)
+                    self.assertLess(len(json.dumps(value)), 2500)
+                else:
+                    stats["complete"] += 1
+                    self.assertEqual(len(value["query_ids"]), count)
+                    self.assertEqual(len(value["outcomes"]), count)
+
+            def event_writer(path, value):
+                stats["events"] += 1
+                stats["bytes"] += len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) + 1
+
+            with tempfile.TemporaryDirectory() as directory, \
+                    patch("evaluation.evaluate._atomic_json", side_effect=snapshot_writer), \
+                    patch("evaluation.evaluate._append_request_event", side_effect=event_writer), \
+                    patch("evaluation.evaluate._request_search", return_value=([], 1.0, QueryRouting("lexical", "lexical", "test", False, False, False))) as request:
+                summary = evaluate_http("http://unused", [QueryRecord(f"q{i:04d}", "query") for i in range(count)], {},
+                                        request_output=Path(directory) / "requests.json")
+                self.assertEqual(request.call_count, count)
+                self.assertEqual(summary.requests["attempted_requests"], count)
+            self.assertEqual(stats["complete"], 1)
+            self.assertEqual(stats["events"], 2 * count + 1)
+            self.assertEqual(stats["snapshots"], 2 * count + 2)
+            totals.append(stats["bytes"])
+        self.assertLess(totals[1], 2.1 * totals[0])
+        self.assertLess(totals[1], 12_000_000)
+
+    def test_stale_journal_and_output_collision_are_rejected_before_requests(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            outcome = root / "requests.json"
+            journal = Path(str(outcome) + ".events.jsonl")
+            journal.write_text("protected journal\n", encoding="utf-8")
+            with patch("evaluation.evaluate._request_search") as request, self.assertRaisesRegex(EvaluationError, "已存在"):
+                evaluate_http("http://unused", [QueryRecord("q1", "q1")], {}, request_output=outcome)
+            request.assert_not_called()
+            self.assertFalse(outcome.exists())
+            self.assertEqual(journal.read_text(), "protected journal\n")
+            queries, policy, _ = self._policy_inputs(root)
+            qrels = root / "qrels.tsv"
+            qrels.write_text("q1 0 d1 1\n", encoding="utf-8")
+            with patch("evaluation.evaluate._request_search") as request, redirect_stderr(io.StringIO()):
+                code = main(["--endpoint", "http://unused", "--queries", str(queries), "--qrels", str(qrels),
+                             "--output-requests", str(root / "new.json"),
+                             "--output-json", str(root / "new.json.events.jsonl")])
+            self.assertEqual(code, 2)
+            request.assert_not_called()
+            self.assertFalse((root / "new.json").exists())
+            for collision in (root / "fresh.json.events.jsonl", root / "fresh.json.tmp"):
+                with patch("evaluation.evaluate._request_search") as request, self.assertRaisesRegex(EvaluationError, "相同"):
+                    evaluate_http("http://unused", [QueryRecord("q1", "query")], {},
+                                  run_output=collision, request_output=root / "fresh.json")
+                request.assert_not_called()
+                self.assertFalse((root / "fresh.json").exists())
+
+    def test_request_exception_is_journaled_and_interrupt_keeps_inflight(self):
+        for failure in (RuntimeError("synthetic error"), KeyboardInterrupt()):
+            with self.subTest(failure=type(failure).__name__), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / "requests.json"
+                with patch("evaluation.evaluate._request_search", side_effect=failure), self.assertRaises(type(failure)):
+                    evaluate_http("http://unused", [QueryRecord("q1", "query")], {}, request_output=output)
+                state = json.loads(output.read_text(encoding="utf-8"))
+                events = [json.loads(line) for line in Path(str(output) + ".events.jsonl").read_text(encoding="utf-8").splitlines()]
+                self.assertEqual(state["status"], "INCOMPLETE")
+                self.assertEqual(state["http_200"], 0)
+                if isinstance(failure, KeyboardInterrupt):
+                    self.assertEqual(events[-1]["event"], "BEGIN")
+                    self.assertEqual(state["inflight_outcome"]["qid"], "q1")
+                    self.assertIsNone(state["inflight_outcome"]["http_status"])
+                else:
+                    self.assertEqual(events[-1]["event"], "OUTCOME")
+                    self.assertEqual(events[-1]["outcome"]["error_type"], "RuntimeError")
+                    self.assertEqual(state["unexpected_errors"], 1)
+
+    def test_cli_policy_and_unknown_qid_rejection_use_real_http(self):
+        with _serve() as (endpoint, _), tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            queries, policy_path, policy = self._policy_inputs(root)
+            qrels = root / "qrels.tsv"
+            qrels.write_text("q1 0 d1 1\nq2 0 d1 1\nq3 0 d1 1\n", encoding="utf-8")
+            output = root / "summary.json"
+            with patch("sys.stdout", new=io.StringIO()):
+                code = main(["--endpoint", endpoint, "--queries", str(queries), "--qrels", str(qrels),
+                             "--mode", "dense", "--unsupported-policy", str(policy_path),
+                             "--output-requests", str(root / "requests.json"), "--output-json", str(output)])
+            self.assertEqual(code, 0)
+            self.assertEqual(json.loads(output.read_text(encoding="utf-8"))["requests"]["status"], "COMPLETE")
+            policy["expected_unsupported"]["query_ids"] = ["q3"]
+            policy_path.write_text(json.dumps(policy), encoding="utf-8")
+            with self.assertRaises(EvaluationError):
+                evaluate_http(endpoint, load_queries(queries), {}, mode="dense", unsupported_policy=policy_path,
+                              queries_source=queries, request_output=root / "unknown-qid.json")
+            state = json.loads((root / "unknown-qid.json").read_text(encoding="utf-8"))
+            self.assertEqual(state["status"], "INCOMPLETE")
+            self.assertEqual(state["expected_unsupported"], 0)
+
     def test_metrics_and_trec_loaders(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -20,12 +20,14 @@ with ``qid``/``query`` (or ``query_id``/``text``) are accepted as well.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
+import re
 import statistics
 import sys
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 from urllib.error import HTTPError, URLError
@@ -34,6 +36,83 @@ from urllib.request import Request, urlopen
 
 class EvaluationError(ValueError):
     """Input, transport, or response errors raised by the evaluator."""
+
+    def __init__(self, message: str, *, transport: dict | None = None):
+        super().__init__(message)
+        self.transport = transport
+
+
+class HTTPResponseError(EvaluationError):
+    """A non-200 or invalid HTTP200 response with observed transport metadata."""
+
+    def __init__(self, status: int, body: object, latency_ms: float, reason: str | None = None):
+        self.status, self.body, self.latency_ms = status, body, latency_ms
+        super().__init__(reason or f"HTTP {status}: {str(body)[:500]}")
+
+
+DENSE_CONSTRAINT_ERROR = "dense 模式无法保证显式词法约束，请使用 lexical、hybrid 或 adaptive"
+
+
+def _sha256(path: str | Path) -> str:
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def _unique_json_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise EvaluationError(f"JSON 字段重复: {key}")
+        result[key] = value
+    return result
+
+
+def _load_unsupported_policy(path, queries_source, records, mode, scorer, expander):
+    """Validate a frozen policy without importing or claiming to check the parser."""
+    if queries_source is None:
+        raise EvaluationError("unsupported policy 需要原始 queries_source 文件")
+    try:
+        raw = Path(path).read_bytes()
+        value = json.loads(raw, object_pairs_hook=_unique_json_object)
+        query_digest = _sha256(queries_source)
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise EvaluationError("无法读取 unsupported policy 或 queries_source") from error
+    fields = {"schema_version", "queries_sha256", "preflight_parser_sha256", "request", "expected_unsupported"}
+    if not isinstance(value, dict) or set(value) != fields or type(value["schema_version"]) is not int or value["schema_version"] != 1:
+        raise EvaluationError("unsupported policy schema/字段无效")
+    for key in ("queries_sha256", "preflight_parser_sha256"):
+        if not isinstance(value[key], str) or re.fullmatch(r"[0-9a-f]{64}", value[key]) is None:
+            raise EvaluationError(f"unsupported policy {key} 无效")
+    if value["queries_sha256"] != query_digest or list(records) != load_queries(queries_source):
+        raise EvaluationError("unsupported policy query SHA256/记录不匹配")
+    expected_request = {"mode": "dense", "scorer": "bm25", "expander": "none"}
+    if value["request"] != expected_request or {"mode": mode, "scorer": scorer, "expander": expander} != expected_request:
+        raise EvaluationError("unsupported policy 请求参数不匹配")
+    expected = value["expected_unsupported"]
+    if not isinstance(expected, dict) or set(expected) != {"query_ids", "status", "body"}:
+        raise EvaluationError("unsupported policy expected_unsupported 字段无效")
+    if type(expected["status"]) is not int or expected["status"] != 400 or expected["body"] != {"error": DENSE_CONSTRAINT_ERROR}:
+        raise EvaluationError("unsupported policy 只允许特定 dense constraints HTTP400")
+    ids = expected["query_ids"]
+    if (not isinstance(ids, list) or not ids or any(not isinstance(qid, str) or not qid.strip() or qid != qid.strip() for qid in ids)
+            or len(set(ids)) != len(ids) or not set(ids).issubset({record.qid for record in records})):
+        raise EvaluationError("unsupported policy qid 缺失、重复或无效")
+    return set(ids), {"sha256": hashlib.sha256(raw).hexdigest(), **value,
+                      "parser_identity_scope": "preflight_provenance_only_runtime_parser_not_verified"}
+
+
+def _atomic_json(path: Path, value: dict) -> None:
+    pending = path.with_name(path.name + ".tmp")
+    with pending.open("x", encoding="utf-8") as handle:
+        handle.write(json.dumps(value, ensure_ascii=False, indent=2) + "\n")
+    pending.replace(path)
+
+
+def _append_request_event(path: Path, value: dict) -> None:
+    # The caller exclusively creates this owned journal before any appends.
+    # A crash may leave an incomplete final line; only complete lines count.
+    with path.open("a", encoding="utf-8", newline="\n") as handle:
+        handle.write(json.dumps(value, ensure_ascii=False, separators=(",", ":")) + "\n")
+        handle.flush()
 
 
 Qrels = dict[str, dict[str, float]]
@@ -123,6 +202,7 @@ class EvaluationSummary:
     p95_latency_ms: float | None
     per_query: tuple[QueryMetrics, ...] = ()
     routing: RoutingSummary | None = None
+    requests: dict | None = None
 
     def to_dict(self, include_per_query: bool = False) -> dict:
         value = asdict(self)
@@ -406,16 +486,43 @@ def _request_search(endpoint: str, query: str, *, k: int, mode: str, scorer: str
             status = response.status
             body = response.read()
     except HTTPError as error:
-        body = error.read().decode("utf-8", errors="replace")
-        raise EvaluationError(f"HTTP {error.code}: {body[:500]}") from error
+        try:
+            raw = error.read()
+        finally:
+            error.close()
+        try:
+            error_body = json.loads(raw, object_pairs_hook=_unique_json_object)
+        except (ValueError, UnicodeError):
+            error_body = None
+        raise HTTPResponseError(error.code, error_body,
+                                (time.perf_counter() - started) * 1000.0) from error
     except (URLError, TimeoutError, OSError) as error:
-        raise EvaluationError(f"请求搜索服务失败: {error}") from error
+        cause = error.reason if isinstance(error, URLError) else error
+        detail = {"kind": "timeout" if isinstance(cause, TimeoutError) else "transport",
+                  "cause_type": type(cause).__name__ if isinstance(cause, BaseException) else "URLError",
+                  "errno": getattr(cause, "errno", None) if type(getattr(cause, "errno", None)) is int else None,
+                  "elapsed_ms": (time.perf_counter() - started) * 1000.0}
+        # Exception text may contain endpoint credentials. Keep structured cause
+        # and elapsed time, without putting that text in logs or the CLI error.
+        raise EvaluationError("请求搜索服务失败", transport=detail) from None
     latency_ms = (time.perf_counter() - started) * 1000.0
-    if status < 200 or status >= 300:
-        raise EvaluationError(f"搜索服务返回 HTTP {status}")
+    if status != 200:
+        try:
+            error_body = json.loads(body, object_pairs_hook=_unique_json_object)
+        except (ValueError, UnicodeError):
+            error_body = None
+        raise HTTPResponseError(status, error_body, latency_ms)
+    try:
+        results, routing = _decode_search_response(body, mode)
+    except EvaluationError as error:
+        raise HTTPResponseError(200, None, latency_ms, str(error)) from error
+    return results, latency_ms, routing
+
+
+def _decode_search_response(body: bytes, mode: str) -> tuple[list[tuple[str, float]], QueryRouting]:
     try:
         value = json.loads(body)
-    except json.JSONDecodeError as error:
+    except (ValueError, UnicodeError) as error:
         raise EvaluationError("搜索服务返回的不是 JSON") from error
     if not isinstance(value, dict) or not isinstance(value.get("results"), list):
         raise EvaluationError("搜索服务响应缺少 results 数组")
@@ -437,7 +544,7 @@ def _request_search(endpoint: str, query: str, *, k: int, mode: str, scorer: str
             raise EvaluationError("搜索服务 results 含非有限 score")
         results.append((docid, score))
     routing = QueryRouting.from_response(value.get("routing"), mode)
-    return results, latency_ms, routing
+    return results, routing
 
 
 def _write_trec_run(path: str | Path, qid: str, rows: Sequence[tuple[str, float]], tag: str) -> None:
@@ -450,12 +557,12 @@ def _write_trec_run(path: str | Path, qid: str, rows: Sequence[tuple[str, float]
             handle.write(f"{qid} Q0 {docid} {rank} {score:.8f} {tag}\n")
 
 
-def evaluate_http(endpoint: str, queries: Iterable[QueryRecord], qrels: Mapping[str, Mapping[str, float]], *, k: int = 10, mode: str = "lexical", scorer: str = "bm25", expander: str = "none", timeout: float = 10.0, run_output: str | Path | None = None, tag: str = "http-search", map_k: int = 100, fail_on_fallback: bool = False) -> EvaluationSummary:
+def evaluate_http(endpoint: str, queries: Iterable[QueryRecord], qrels: Mapping[str, Mapping[str, float]], *, k: int = 10, mode: str = "lexical", scorer: str = "bm25", expander: str = "none", timeout: float = 10.0, run_output: str | Path | None = None, tag: str = "http-search", map_k: int = 100, fail_on_fallback: bool = False, unsupported_policy: str | Path | None = None, queries_source: str | Path | None = None, request_output: str | Path | None = None) -> EvaluationSummary:
     """Query a public HTTP endpoint and evaluate its responses.
 
     Retrieve ``max(k, map_k)`` results, then apply each metric cutoff separately.
     When ``run_output`` is supplied, a TREC run is written while requests are
-    made. The output is replaced at the beginning of each evaluation. Routing
+    made. Existing output paths are rejected. Routing
     outcomes are always reported; ``fail_on_fallback`` rejects degraded runs.
     """
 
@@ -466,36 +573,145 @@ def evaluate_http(endpoint: str, queries: Iterable[QueryRecord], qrels: Mapping[
         raise EvaluationError("HTTP 召回深度 max(k, map_k) 不能超过 API 上限 200")
     if timeout <= 0 or not math.isfinite(timeout):
         raise EvaluationError("timeout 必须是正数")
+    if (mode not in ("lexical", "dense", "hybrid", "adaptive")
+            or scorer not in ("bm25", "tfidf") or expander not in ("none", "rm3", "slm")
+            or mode != "lexical" and (scorer != "bm25" or expander != "none")):
+        raise EvaluationError("HTTP 请求 mode/scorer/expander 参数无效")
     records = list(queries)
     if not records:
         raise EvaluationError("queries 为空")
+    if len({record.qid for record in records}) != len(records):
+        raise EvaluationError("queries qid 重复")
     if not tag or any(ch.isspace() for ch in tag):
         raise EvaluationError("run tag 必须是非空单词")
-    if run_output is not None:
-        output_path = Path(run_output)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text("", encoding="utf-8")
+    expected_ids, policy_metadata = set(), None
+    if unsupported_policy is not None:
+        expected_ids, policy_metadata = _load_unsupported_policy(
+            unsupported_policy, queries_source, records, mode, scorer, expander)
+    output_path = None if run_output is None else Path(run_output)
+    outcome_path = (Path(request_output) if request_output is not None else
+                    None if output_path is None else Path(str(output_path) + ".requests.json"))
+    if unsupported_policy is not None and outcome_path is None:
+        raise EvaluationError("unsupported policy 需要 run_output 或 request_output 持久记录")
+    journal_path = None if outcome_path is None else Path(str(outcome_path) + ".events.jsonl")
+    paths = [path for path in (output_path, outcome_path, journal_path) if path is not None]
+    reserved_paths = paths + [path.with_name(path.name + ".tmp") for path in paths]
+    if len({path.resolve() for path in reserved_paths}) != len(reserved_paths):
+        raise EvaluationError("run/request output 路径不能相同")
+    if any(path.exists() or path.with_name(path.name + ".tmp").exists() for path in paths):
+        raise EvaluationError("output 已存在，拒绝覆盖旧 run/request 证据")
+    for path in paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    state = {"schema_version": 1, "status": "INCOMPLETE", "requested_queries": len(records),
+             "attempted_requests": 0, "http_200": 0, "expected_unsupported": 0,
+             "unexpected_errors": 0, "http_success_coverage": 0.0,
+             "protocol_accounted_coverage": 0.0, "policy": policy_metadata,
+             "request": {"mode": mode, "scorer": scorer, "expander": expander, "k": retrieval_depth},
+             "query_ids": [record.qid for record in records], "outcomes": [],
+             "last_event_sequence": 0, "inflight_outcome": None, "last_outcome": None,
+             "journal": None if journal_path is None else {"file": journal_path.name}}
+    state["query_universe_sha256"] = hashlib.sha256(json.dumps(
+        state["query_ids"], ensure_ascii=False, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+    def save_state(event=None, outcome=None):
+        state["http_success_coverage"] = state["http_200"] / len(records)
+        state["protocol_accounted_coverage"] = (state["http_200"] + state["expected_unsupported"]) / len(records)
+        if event is not None:
+            state["last_event_sequence"] += 1
+            if journal_path is not None:
+                _append_request_event(journal_path, {"event": event,
+                    "sequence": state["last_event_sequence"], "attempt": state["attempted_requests"],
+                    "outcome": outcome})
+            state["inflight_outcome"] = outcome if event == "BEGIN" else None
+            if event == "OUTCOME":
+                state["last_outcome"] = outcome
+        if outcome_path is not None:
+            if state["status"] == "COMPLETE":
+                _atomic_json(outcome_path, state)
+            else:
+                snapshot = {key: value for key, value in state.items()
+                            if key not in {"query_ids", "outcomes", "policy"}}
+                snapshot["policy"] = None if policy_metadata is None else {
+                    key: policy_metadata[key] for key in ("sha256", "queries_sha256",
+                    "preflight_parser_sha256", "parser_identity_scope")}
+                _atomic_json(outcome_path, snapshot)
+
+    # Publish INCOMPLETE before touching the run. Abrupt interruptions cannot
+    # leave a successful-looking sidecar beside a partial TREC file.
+    if outcome_path is not None:
+        outcome_path.open("x", encoding="utf-8").close()
+        journal_path.open("x", encoding="utf-8").close()
+        _append_request_event(journal_path, {"event": "START", "sequence": 0,
+            "query_ids": state["query_ids"], "query_universe_sha256": state["query_universe_sha256"],
+            "policy": policy_metadata, "request": state["request"]})
+    save_state()
+    if output_path is not None:
+        output_path.open("x", encoding="utf-8").close()
     run: Run = {}
     latencies: dict[str, float] = {}
     routing: dict[str, QueryRouting] = {}
     for record in records:
-        rows, latency, observation = _request_search(
-            endpoint, record.query, k=retrieval_depth, mode=mode,
-            scorer=scorer, expander=expander, timeout=timeout,
-        )
-        if fail_on_fallback and observation.fallback:
-            raise EvaluationError(f"查询 {record.qid!r} 发生向量降级，拒绝该评测 run")
+        state["attempted_requests"] += 1
+        outcome = {"qid": record.qid, "status": "INCOMPLETE", "http_status": None,
+                   "latency_ms": None, "routing": None}
+        state["outcomes"].append(outcome)
+        save_state("BEGIN", outcome)
+        expected_rejection = False
+        try:
+            try:
+                rows, latency, observation = _request_search(
+                    endpoint, record.query, k=retrieval_depth, mode=mode,
+                    scorer=scorer, expander=expander, timeout=timeout,
+                )
+            except HTTPResponseError as error:
+                outcome.update(http_status=error.status, latency_ms=error.latency_ms,
+                               body=error.body)
+                if (record.qid not in expected_ids or error.status != 400
+                        or error.body != {"error": DENSE_CONSTRAINT_ERROR}):
+                    raise
+                expected_rejection = True
+            if not expected_rejection:
+                outcome.update(http_status=200, latency_ms=latency, routing=asdict(observation))
+                if record.qid in expected_ids:
+                    raise EvaluationError(f"policy 预声明查询 {record.qid!r} 意外返回 HTTP200")
+                if fail_on_fallback and observation.fallback:
+                    raise EvaluationError(f"查询 {record.qid!r} 发生向量降级，拒绝该评测 run")
+        except Exception as error:
+            state["unexpected_errors"] += 1
+            outcome.update(status="UNEXPECTED_ERROR", error_type=type(error).__name__)
+            transport = getattr(error, "transport", None) if isinstance(error, EvaluationError) else None
+            if transport is not None:
+                outcome["latency_ms"] = transport["elapsed_ms"]
+                outcome["transport_error"] = dict(transport)
+            save_state("OUTCOME", outcome)
+            raise
+        if expected_rejection:
+            run[record.qid] = []
+            state["expected_unsupported"] += 1
+            outcome["status"] = "EXPECTED_UNSUPPORTED"
+            save_state("OUTCOME", outcome)
+            continue
         run[record.qid] = rows
         latencies[record.qid] = latency
         routing[record.qid] = observation
         if run_output is not None:
             _write_trec_run(run_output, record.qid, rows, tag)
+        state["http_200"] += 1
+        outcome["status"] = "SUCCESS"
+        save_state("OUTCOME", outcome)
     # A qrels file often contains more than one split.  HTTP evaluation must
     # score exactly the queries sent in this invocation, while ``evaluate_run``
     # intentionally uses the union for standalone run scoring.
     selected_qrels = {record.qid: qrels.get(record.qid, {}) for record in records}
-    return evaluate_run(selected_qrels, run, k=k, latencies=latencies, map_k=map_k,
-                        routing=routing)
+    summary = evaluate_run(selected_qrels, run, k=k, latencies=latencies, map_k=map_k,
+                           routing=routing)
+    state["status"] = "COMPLETE"
+    state["routing_observed_queries"] = len(routing)
+    state["success_latency_scope"] = "validated_HTTP200_only"
+    if journal_path is not None:
+        state["journal"]["sha256"] = _sha256(journal_path)
+    save_state()
+    return replace(summary, requests=state)
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
@@ -506,6 +722,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--run", type=Path, help="已有 TREC run；提供后不请求 HTTP")
     parser.add_argument("--output-run", type=Path, help="HTTP 模式下写出的 TREC run")
     parser.add_argument("--output-json", type=Path, help="将汇总 JSON 写入文件")
+    parser.add_argument("--output-requests", type=Path, help="持久 request outcomes；默认 OUTPUT_RUN.requests.json")
+    parser.add_argument("--unsupported-policy", type=Path, help="显式 SHA 绑定的 expected dense-constraints HTTP400 policy")
     parser.add_argument("--include-per-query", action="store_true", help="在 JSON 输出中包含逐查询指标")
     parser.add_argument("--k", type=int, default=10, help="nDCG/Recall/MRR cutoff，默认 10")
     parser.add_argument("--map-k", type=int, default=100, help="MAP cutoff，默认 100")
@@ -522,19 +740,33 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = _build_arg_parser().parse_args(argv)
     try:
+        output_paths = [path for path in (args.output_json, args.output_run,
+                        args.output_requests if args.output_requests is not None else
+                        None if args.output_run is None else Path(str(args.output_run) + ".requests.json"))
+                        if path is not None]
+        outcome_path = (args.output_requests if args.output_requests is not None else
+                        None if args.output_run is None else Path(str(args.output_run) + ".requests.json"))
+        if outcome_path is not None:
+            output_paths.append(Path(str(outcome_path) + ".events.jsonl"))
+        reserved_paths = output_paths + [path.with_name(path.name + ".tmp") for path in output_paths]
+        if len({path.resolve() for path in reserved_paths}) != len(reserved_paths):
+            raise EvaluationError("output 路径不能相同")
+        if any(path.exists() or path.with_name(path.name + ".tmp").exists() for path in output_paths):
+            raise EvaluationError("output 已存在，拒绝覆盖旧评测证据")
         qrels = load_qrels(args.qrels)
         if args.run is not None:
-            if args.endpoint or args.queries or args.output_run or args.fail_on_fallback:
+            if args.endpoint or args.queries or args.output_run or args.fail_on_fallback or args.unsupported_policy or args.output_requests:
                 raise EvaluationError("--run 不能与 HTTP 选项同时使用")
             summary = evaluate_run(qrels, load_run(args.run), k=args.k, map_k=args.map_k)
         else:
             if not args.endpoint or not args.queries:
                 raise EvaluationError("HTTP 模式需要同时提供 --endpoint 和 --queries")
-            summary = evaluate_http(args.endpoint, load_queries(args.queries), qrels, k=args.k, mode=args.mode, scorer=args.scorer, expander=args.expander, timeout=args.timeout, run_output=args.output_run, tag=args.tag, map_k=args.map_k, fail_on_fallback=args.fail_on_fallback)
+            summary = evaluate_http(args.endpoint, load_queries(args.queries), qrels, k=args.k, mode=args.mode, scorer=args.scorer, expander=args.expander, timeout=args.timeout, run_output=args.output_run, tag=args.tag, map_k=args.map_k, fail_on_fallback=args.fail_on_fallback, unsupported_policy=args.unsupported_policy, queries_source=args.queries, request_output=args.output_requests)
         output = json.dumps(summary.to_dict(args.include_per_query), ensure_ascii=False, indent=2)
         if args.output_json:
             args.output_json.parent.mkdir(parents=True, exist_ok=True)
-            args.output_json.write_text(output + "\n", encoding="utf-8")
+            with args.output_json.open("x", encoding="utf-8") as handle:
+                handle.write(output + "\n")
         print(output)
     except EvaluationError as error:
         print(f"evaluation error: {error}", file=sys.stderr)

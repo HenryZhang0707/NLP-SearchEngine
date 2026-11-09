@@ -42,14 +42,22 @@ class MemoryVectorIndex:
 class QdrantVectorIndex:
     """Read-only Qdrant adapter with manifest/collection compatibility checks."""
 
-    def __init__(self, manifest: VectorManifest, url: str):
+    def __init__(self, manifest: VectorManifest, url: str, *, hnsw_ef: int | None = None):
+        if hnsw_ef is not None and (type(hnsw_ef) is not int or hnsw_ef <= 0):
+            raise ValueError("hnsw_ef must be a positive integer")
         if manifest.backend != "qdrant-hnsw":
             raise ValueError("Qdrant 适配器需要 qdrant-hnsw manifest")
         try:
             from qdrant_client import QdrantClient
+            if hnsw_ef is not None:
+                from qdrant_client import models
         except ImportError as error:
             raise RetrievalUnavailable("QdrantVectorIndex 需要安装 qdrant-client") from error
         self._manifest = manifest
+        # exact=False permits ANN; collection state and the planner still decide
+        # whether a particular query traverses HNSW or scans a small segment.
+        self._search_params = (models.SearchParams(hnsw_ef=hnsw_ef, exact=False)
+                               if hnsw_ef is not None else None)
         self._client = QdrantClient(url=url, timeout=30.0)
         self._collection = manifest.collection
         try:
@@ -84,16 +92,18 @@ class QdrantVectorIndex:
         if type(limit) is not int or limit <= 0:
             raise ValueError("limit 必须是正整数")
         try:
+            search_options = ({"search_params": self._search_params}
+                              if self._search_params is not None else {})
             if hasattr(self._client, "query_points"):
                 response = self._client.query_points(
                     collection_name=self._collection, query=list(query_vector), limit=limit,
-                    with_payload=True,
+                    with_payload=True, **search_options,
                 )
                 points = getattr(response, "points", response)
             else:
                 points = self._client.search(
                     collection_name=self._collection, query_vector=list(query_vector),
-                    limit=limit, with_payload=True,
+                    limit=limit, with_payload=True, **search_options,
                 )
         except Exception as error:
             raise RetrievalUnavailable(f"Qdrant 查询失败: {error}") from error

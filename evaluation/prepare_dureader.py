@@ -26,6 +26,7 @@ import argparse
 import hashlib
 import json
 import sys
+import tempfile
 from pathlib import Path
 from typing import Iterable, Sequence
 
@@ -55,8 +56,16 @@ def _require_file(path: Path) -> Path:
 def _load_index_map(path: Path) -> tuple[dict[int, str], set[str]]:
     """Load the official line-index to passage-id map with strict validation."""
 
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise EvaluationError("passage2id.map.json 含重复行号")
+            result[key] = value
+        return result
+
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        value = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique_object)
     except (OSError, json.JSONDecodeError) as error:
         raise EvaluationError(f"无法读取 passage2id.map.json: {path}") from error
     if not isinstance(value, dict) or not value:
@@ -64,16 +73,20 @@ def _load_index_map(path: Path) -> tuple[dict[int, str], set[str]]:
     result: dict[int, str] = {}
     seen_docids: set[str] = set()
     for raw_index, raw_docid in value.items():
-        if not isinstance(raw_index, str) or not raw_index.isdigit():
+        if not isinstance(raw_index, str) or not raw_index.isdecimal():
             raise EvaluationError("passage2id.map.json 含非法行号")
         if not isinstance(raw_docid, str) or not raw_docid.strip():
             raise EvaluationError("passage2id.map.json 含空 passage ID")
-        index = int(raw_index)
+        try:
+            index = int(raw_index)
+        except ValueError as error:
+            raise EvaluationError("passage2id.map.json 含非法行号") from error
         if index in result or raw_docid in seen_docids:
             raise EvaluationError("passage2id.map.json 含重复行号或 passage ID")
         result[index] = raw_docid
         seen_docids.add(raw_docid)
-    if set(result) != set(range(len(result))):
+    # Keys are unique nonnegative integers: N keys in [0, N) prove continuity.
+    if any(index >= len(result) for index in result):
         raise EvaluationError("passage2id.map.json 行号不是从 0 连续编号")
     return result, seen_docids
 
@@ -160,9 +173,9 @@ def _write_qrels(path: Path, qrels: Sequence[tuple[str, str, float]]) -> dict:
 
 
 def _write_corpus(path: Path, parts: Sequence[Path], index_map: dict[int, str]) -> dict:
+    """Write the map validated by ``_load_index_map`` in global line order."""
     digest = hashlib.sha256()
     line_index = 0
-    seen_docids: set[str] = set()
     with path.open("wb") as output:
         for part in parts:
             with part.open("r", encoding="utf-8", newline="") as source:
@@ -176,9 +189,6 @@ def _write_corpus(path: Path, parts: Sequence[Path], index_map: dict[int, str]) 
                     text = fields[2]
                     if not text.strip():
                         raise EvaluationError(f"{part}:{source_line}: passage 正文为空")
-                    if docid in seen_docids:
-                        raise EvaluationError(f"重复 passage ID: {docid}")
-                    seen_docids.add(docid)
                     record = {"doc_id": docid, "title": "", "text": text}
                     encoded = (json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
                     output.write(encoded)
@@ -222,33 +232,40 @@ def prepare_dureader(root: str | Path, out: str | Path, *, archive: str | Path |
         raise EvaluationError(f"官方 dev 查询数不符: {len(queries)} != {expected_queries}")
     if expected_qrels is not None and len(qrels) != expected_qrels:
         raise EvaluationError(f"官方 dev qrels 数不符: {len(qrels)} != {expected_qrels}")
-    out.mkdir(parents=True, exist_ok=True)
-    corpus_info = _write_corpus(out / "corpus.jsonl", parts, index_map)
-    query_info = _write_queries(out / "queries.dev.jsonl", queries)
-    qrel_info = _write_qrels(out / "qrels.dev.tsv", qrels)
-    manifest = {
-        "schema_version": 1,
-        "dataset": "DuReader-Retrieval official baseline archive",
-        "source_url": DEFAULT_ARCHIVE_URL,
-        "source_archive": archive_info,
-        "source_root": str(root),
-        "source_files": {
-            "passage_map": {"path": str(index_path), "sha256": _sha256(index_path), "bytes": index_path.stat().st_size},
-            "passage_parts": [str(path) for path in parts],
-            "dev_json": str(root / "dev" / "dev.json"),
-            "q2qid": str(root / "dev" / "q2qid.dev.json"),
-        },
-        "split": "dev",
-        "split_policy": "official dev only; public baseline archive has no official test labels",
-        "official_metrics": ["MRR@10", "Recall@1", "Recall@50"],
-        "counts": {"documents": corpus_info["documents"], **dev_counts},
-        "files": {
-            "corpus.jsonl": corpus_info,
-            "queries.dev.jsonl": query_info,
-            "qrels.dev.tsv": qrel_info,
-        },
-    }
-    (out / "dataset_manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=f".{out.name}.prepare-", dir=out.parent) as temporary:
+        stage = Path(temporary)
+        corpus_info = _write_corpus(stage / "corpus.jsonl", parts, index_map)
+        query_info = _write_queries(stage / "queries.dev.jsonl", queries)
+        qrel_info = _write_qrels(stage / "qrels.dev.tsv", qrels)
+        manifest = {
+            "schema_version": 1,
+            "dataset": "DuReader-Retrieval official baseline archive",
+            "source_url": DEFAULT_ARCHIVE_URL,
+            "source_archive": archive_info,
+            "source_root": str(root),
+            "source_files": {
+                "passage_map": {"path": str(index_path), "sha256": _sha256(index_path), "bytes": index_path.stat().st_size},
+                "passage_parts": [str(path) for path in parts],
+                "dev_json": str(root / "dev" / "dev.json"),
+                "q2qid": str(root / "dev" / "q2qid.dev.json"),
+            },
+            "split": "dev",
+            "split_policy": "official dev only; public baseline archive has no official test labels",
+            "official_metrics": ["MRR@10", "Recall@1", "Recall@50"],
+            "counts": {"documents": corpus_info["documents"], **dev_counts},
+            "files": {
+                "corpus.jsonl": corpus_info,
+                "queries.dev.jsonl": query_info,
+                "qrels.dev.tsv": qrel_info,
+            },
+        }
+        (stage / "dataset_manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        # Publish only after every output and its manifest have been written.
+        # rmdir refuses a concurrently populated target; no existing files are removed.
+        if out.exists():
+            out.rmdir()
+        stage.rename(out)
     return manifest
 
 
