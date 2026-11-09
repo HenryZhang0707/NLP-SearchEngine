@@ -29,6 +29,10 @@ class MemoryVectorIndex:
     def manifest(self) -> VectorManifest:
         return self._manifest
 
+    @property
+    def search_config(self) -> dict:
+        return {"hnsw_ef": None, "exact": True, "timeout_s": None}
+
     def search(self, query_vector: Sequence[float], limit: int) -> list[VectorHit]:
         validate_vector(query_vector, self._manifest.embedding)
         if type(limit) is not int or limit <= 0:
@@ -42,9 +46,13 @@ class MemoryVectorIndex:
 class QdrantVectorIndex:
     """Read-only Qdrant adapter with manifest/collection compatibility checks."""
 
-    def __init__(self, manifest: VectorManifest, url: str, *, hnsw_ef: int | None = None):
+    def __init__(self, manifest: VectorManifest, url: str, *, hnsw_ef: int | None = None,
+                 timeout_s: float = 30.0):
         if hnsw_ef is not None and (type(hnsw_ef) is not int or hnsw_ef <= 0):
             raise ValueError("hnsw_ef must be a positive integer")
+        if (type(timeout_s) is bool or not isinstance(timeout_s, (int, float))
+                or not math.isfinite(timeout_s) or timeout_s <= 0):
+            raise ValueError("timeout_s must be a positive finite number of seconds")
         if manifest.backend != "qdrant-hnsw":
             raise ValueError("Qdrant 适配器需要 qdrant-hnsw manifest")
         try:
@@ -54,11 +62,13 @@ class QdrantVectorIndex:
         except ImportError as error:
             raise RetrievalUnavailable("QdrantVectorIndex 需要安装 qdrant-client") from error
         self._manifest = manifest
+        self._hnsw_ef = hnsw_ef
+        self._timeout_s = float(timeout_s)
         # exact=False permits ANN; collection state and the planner still decide
         # whether a particular query traverses HNSW or scans a small segment.
         self._search_params = (models.SearchParams(hnsw_ef=hnsw_ef, exact=False)
                                if hnsw_ef is not None else None)
-        self._client = QdrantClient(url=url, timeout=30.0)
+        self._client = QdrantClient(url=url, timeout=self._timeout_s)
         self._collection = manifest.collection
         try:
             info = self._client.get_collection(self._collection)
@@ -86,6 +96,10 @@ class QdrantVectorIndex:
 
     def manifest(self) -> VectorManifest:
         return self._manifest
+
+    @property
+    def search_config(self) -> dict:
+        return {"hnsw_ef": self._hnsw_ef, "exact": False, "timeout_s": self._timeout_s}
 
     def search(self, query_vector: Sequence[float], limit: int) -> list[VectorHit]:
         validate_vector(query_vector, self._manifest.embedding)
