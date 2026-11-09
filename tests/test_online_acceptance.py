@@ -441,6 +441,32 @@ class OnlineAcceptanceTest(unittest.TestCase):
         names = {check["name"] for check in evidence["checks"]}
         self.assertNotIn("vector_identity", names)
         self.assertIn("dense_unavailable_503", names)
+        # 词法 profile 同样执行八类请求校验矩阵；四模式分页不适用（查询可能不足一页）。
+        for name in ("empty_query", "unknown_field", "bad_k", "bad_offset", "bool_k",
+                     "candidate_boundary", "incompatible_scorer", "syntax_error"):
+            self.assertIn(name, names)
+        self.assertNotIn("pagination_lexical", names)
+        self.assertEqual(evidence["checks_total"], 17)
+
+    def test_lexical_only_profile_fails_on_missing_request_validation(self):
+        # 假词法服务不校验请求：探针必须把新增的矩阵检查判 FAIL，而不是报绿。
+        service = self.service(vector_configured=False, backend_up=False,
+                               accept_invalid_requests=True)
+        status, evidence = self.run_probe(service.endpoint, lexical_only=True)
+        self.assertEqual(status, 1)
+        failures = self.failure_names(evidence)
+        for name in ("unknown_field", "bad_k", "bool_k"):
+            self.assertIn(name, failures)
+        self.assertEqual(evidence["checks_total"], 17)
+
+    def test_vector_down_phase_keeps_ten_checks_without_request_matrix(self):
+        # 只在词法 profile 扩展矩阵：配置向量的 down 阶段计数保持 10。
+        service = self.service(backend_up=False)
+        status, evidence = self.run_probe(service.endpoint, phase="down")
+        self.assertEqual(status, 0, evidence["failures"])
+        self.assertEqual(evidence["checks_total"], 10)
+        names = {check["name"] for check in evidence["checks"]}
+        self.assertNotIn("unknown_field", names)
 
     def test_lexical_only_profile_tolerates_null_bm25(self):
         # 旧版/极简词法产物不声明 BM25 参数：回显 null 是合法身份，不能补造数值。

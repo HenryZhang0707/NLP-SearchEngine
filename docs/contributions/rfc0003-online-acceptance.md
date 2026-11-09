@@ -185,3 +185,33 @@ adaptive 1.19 s（8M 语料上词法阶段是主项）。这只是 dev-only 接�
 修正后全量门禁（venv，最终 head 见交接报告）：`tests/run.py` **80/80**、
 `unittest discover -s tests` **207 tests OK**（0 skip）、`unittest discover -s evaluation`
 **91 tests OK**、`node --test tests/test_web.cjs` **13 pass**。
+
+## 8. 终审跟进修正（P2，位于 `dac09aa` 之上的后续提交）
+
+终审（只读静态复核）给出两条 P2，本轮按最小改动修掉并重新取数；没有新架构、没有新评审循环。
+
+| 修正 | 内容 | 新增回归 |
+|---|---|---|
+| A | `SearchEngine.info()["config"]` 的 `policy_version` 改为回显**实际生效**策略版本（注入的自定义 Router 也一致），`config` 其余检索参数逐字段不变，冻结的 `RetrievalConfig` 不被改写 | `tests/test_router_seam.py::test_custom_policy_version_echoes_agree_and_config_stays_unchanged`：`info().config.policy_version`、`info().policy.policy_version`、`routing.policy_version` 三者一致，`candidate_k/rrf_c`/`search_config` 与冻结配置一致 |
+| B | `scripts/online_acceptance.py` 的 `--lexical-only` 分支补跑八类请求校验矩阵（请求契约与向量后端无关）；矩阵**只**加到词法 profile，配置向量的 down 阶段仍是 10 项，healthy/recovered 仍是 23/27 项；不加词法分页假设 | `test_lexical_only_profile_expects_unavailable_vector_modes`（17 项、含 8 个矩阵检查、无 `pagination_lexical`）、`test_lexical_only_profile_fails_on_missing_request_validation`（假词法服务不校验请求时必须 FAIL）、`test_vector_down_phase_keeps_ten_checks_without_request_matrix` |
+
+两条新回归都在修正前代码上先失败（移除 `_error_matrix` 调用后，词法分支只报 9 项且假服务
+不校验请求时会“报绿”），修正后通过。
+
+跟进修正后的复跑（同一分支，venv，私有端口，只读既有后端）：
+
+| 项目 | 结果 |
+|---|---|
+| 真实 `fixtures/tiny_index` + `--lexical-only` | **17/17 PASS**（修正前 9 项 → 现 17 项，矩阵已在词法 profile 上执行） |
+| 真实自定义 Router（`--router-factory` 指向仓库外 `module:factory`，`policy_version=probe-v2`）HTTP 回显 | `config.policy_version = policy.policy_version = routing.policy_version = probe-v2`，`candidate_k=200` 不变 |
+| 真实 news 20k healthy（备用回环端口，自有转发代理 → 只读 `16333`） | **23/23 PASS**；`/index/info` 回显 `config.policy_version=rules-v1`、`policy.policy_version=rules-v1`、`candidate_k=200` |
+| 同一 news 进程 down（停自有代理，后端不动） | **10/10 PASS**（计数未因矩阵改动而变化），代理恢复后 hybrid 即恢复（`vector_used=true`） |
+| 门禁 | `tests/run.py` **81/81**、`unittest discover -s tests` **209 tests OK**、`unittest discover -s evaluation` **91 tests OK**、`node --test tests/test_web.cjs` **13 pass**、`pytest -q tests evaluation` **381 passed / 567 subtests** |
+
+官方 8,096,668 profile **没有重跑**：两条修正一条只改 `/index/info` 的回显值，一条只作用于
+`--lexical-only` 验收分支，都不改变默认 `rule` 策略的真实检索路径，也不改变启动身份校验。
+第 1–7 节的官方证据（含 23/10/27 三阶段、cgroup 观测、四模式 dev 冒烟）仍然对应
+`20f06f4` / `dac09aa` 的实际执行，明确保留、不改写、不冒充本轮重跑。
+
+跟进期间自有进程（news 应用、两套转发代理、两套 tiny 词法服务）全部停止，端口释放；
+既有只读服务 `127.0.0.1:18080` 与 `127.0.0.1:16333` 只被读取，结束后仍健康。

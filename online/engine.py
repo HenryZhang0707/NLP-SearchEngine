@@ -56,9 +56,14 @@ class SearchEngine:
                                          if isinstance(search_config, dict) else None)
         else:
             vector_identity = None
+        # ``config.policy_version`` mirrors the policy that actually took effect
+        # (an injected router may declare its own); ``self.config`` itself stays
+        # the untouched frozen retrieval configuration.
+        config_echo = {**asdict(self.config),
+                       "policy_version": self.policy["policy_version"]}
         return {
             "vector_ready": self.vectors is not None,
-            "config": asdict(self.config),
+            "config": config_echo,
             "vector_manifest": vector.to_dict() if vector is not None else None,
             "index_identity": {
                 "dataset": manifest["dataset"],

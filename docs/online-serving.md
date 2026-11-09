@@ -163,7 +163,8 @@ systemd 或容器，进程管理、日志轮转和资源上限都属于部署方
   `index_identity`、`vector_identity`、`search_config`、`policy`，HTTP server 另加
   `serving`。字段定义见 `contracts/RETRIEVAL.md` 第 4 节"在线服务身份与配置回显"。
   客户端必须容忍字段缺失或 `null`；`search.exact=false` 只说明允许 ANN，
-  不证明本次查询实际走了 HNSW。
+  不证明本次查询实际走了 HNSW。`config.policy_version` 与 `policy.policy_version`
+  都回显实际生效的策略版本（自定义 `module:factory` 策略也一致），其余检索参数不变。
 - 演示 UI 读取同一份身份回显显示 dataset、文档数、语料指纹、analyzer、BM25 参数、
   collection、embedding 规格与搜索参数；缺失字段显示为不可用，不伪造数值。
 
@@ -221,8 +222,9 @@ python3 scripts/online_acceptance.py "${NEWS_ARGS[@]}" --phase recovered \
 
 脚本覆盖：`/health` 的词法 liveness、`/index/info` 的 dataset/文档数/语料指纹/collection/
 `hnsw_ef`/`timeout_s`/`candidate_k`/`rrf_c`/`policy` 回显、静态 UI 与路径穿越拒绝、
-四模式路由回显与分页稳定性、OOV 语义救援、显式布尔/短语约束、八类 400 错误矩阵、
-down 阶段的 503/`vector_unavailable`/显式 fallback，以及 recovered 阶段无需重启服务的恢复。
+四模式路由回显与分页稳定性（仅 live-vector 阶段）、OOV 语义救援、显式布尔/短语约束、
+八类 400 错误矩阵（含纯词法 profile）、down 阶段的 503/`vector_unavailable`/显式
+fallback，以及 recovered 阶段无需重启服务的恢复。
 每个检索请求都带 `--run-tag`（默认 `online-acceptance`），便于与服务 stderr 日志对账。
 
 - 退出码 `0` 表示全部检查通过，`1` 表示至少一项失败；证据 JSON 里 `checks`/`events`/`failures`
@@ -230,7 +232,12 @@ down 阶段的 503/`vector_unavailable`/显式 fallback，以及 recovered 阶�
 - 向量 profile 要求显式 `--expect-hnsw-ef`：先固定搜索 beam（示例为 256）再验收；
   省略 beam 的部署 `search.hnsw_ef` 回显为 `null`，没有可断言的值，无法给出 HNSW 搜索参数证据。
 - 纯词法 profile 用 `--lexical-only`：脚本不再要求 collection/`hnsw_ef` 期望，改为核对
-  dense/hybrid 的 503 与 adaptive 回退；`--lexical-only` 与 `--phase recovered` 互斥。
+  dense/hybrid 的 503 与 adaptive 回退，并同样执行八类请求校验矩阵
+  （`--lexical-only` 与 `--phase recovered` 互斥）。四模式分页只对**有活向量后端**的
+  healthy/recovered 阶段适用；词法 profile 不假设目标查询一定满页命中，因此不做分页
+  断言。该分支共 17 项检查，配置向量的 down 阶段仍是 10 项，healthy/recovered 仍是 23/27 项。
+  这些回退预期假定默认 `rule` 策略：自定义策略若从不尝试向量，`adaptive` 不会走
+  `vector_unavailable` 回退，需按该策略语义单独解释。
 - 脚本只读、可重复执行；它不启动/停止服务或后端，也不写入数据库。阶段切换由操作者完成。
 - 它证明的是服务接线与失败语义，不证明检索质量、HNSW 性能或容量。
 

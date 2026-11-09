@@ -9,6 +9,7 @@ import math
 import sys
 import time
 from contextlib import contextmanager
+from dataclasses import asdict
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -156,6 +157,27 @@ def test_default_router_keeps_positional_compatibility_and_identity():
     assert lexical_info["vector_manifest"] is None
     assert lexical_info["vector_identity"] is None
     assert lexical_info["index_identity"]["corpus_sha256"] is None
+
+
+def test_custom_policy_version_echoes_agree_and_config_stays_unchanged():
+    config = RetrievalConfig(candidate_k=37, rrf_c=12.5)
+    engine, _, _ = _engine(router=AlwaysLexicalPolicy(), config=config)
+    assert engine.config is config
+    info = engine.info()
+    # info 的三个回显位（config/policy 与 routing）都必须是实际生效的策略版本。
+    assert info["policy"]["policy_version"] == "test-always-lexical"
+    assert info["config"]["policy_version"] == "test-always-lexical"
+    assert info["config"] == {**asdict(config), "policy_version": "test-always-lexical"}
+    # 其余检索参数逐字段保留，候选池/融合常量不被改写。
+    assert (info["config"]["candidate_k"], info["config"]["rrf_c"]) == (37, 12.5)
+    assert info["search_config"] == {"candidate_k": 37, "rrf_c": 12.5}
+    resp = engine.search(SearchRequest("phone", mode="adaptive"))
+    assert resp.routing.policy_version == "test-always-lexical"
+    assert resp.routing.candidate_k == 37
+    assert resp.routing.executed_mode == "lexical"
+    # 冻结的 RetrievalConfig 本身没有被 info() 改写。
+    assert config.policy_version == "rules-v1"
+    assert (config.candidate_k, config.rrf_c) == (37, 12.5)
 
 
 def test_policy_swap_leaves_lexical_pool_and_forced_modes_identical():

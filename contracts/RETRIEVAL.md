@@ -210,6 +210,7 @@ engine = SearchEngine(reader, encoder=query_encoder, vectors=vector_reader,
 | `vector_identity` | `null`，或 `VectorManifest.to_dict()` 再加 `search={hnsw_ef, exact, timeout_s}` | 内存精确替身回显 `hnsw_ef=null, exact=true, timeout_s=null`。`exact=false` 只表示允许 ANN，不证明本次查询实际走了 HNSW |
 | `search_config` | `{candidate_k, rrf_c}` | 与 `config` 中同名服务级参数一致 |
 | `policy` | `{name, policy_version, requires_statistics}` | `policy_version` 必须是实际生效策略的版本，不能是用配置默认值拼出的标签；`requires_statistics` 为布尔值 |
+| `config` | 原检索配置回显，字段不变 | 其中 `policy_version` 同样回显**实际生效**策略版本；只有该字段随注入策略变化，`candidate_k`/`rrf_c`/阈值等仍来自冻结配置 |
 | `serving` | `{schema_version:1, profile, host, port, max_body_bytes, request_timeout_s, router_factory}` | 由 HTTP server 追加；`profile` 等于 `dataset`；不暴露本地绝对路径、后端 URL 或凭据 |
 
 就绪语义（不新增端点，不改变 `GET /health`）：

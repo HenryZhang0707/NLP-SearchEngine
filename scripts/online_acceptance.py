@@ -13,9 +13,11 @@
 * ``recovered``：后端重启、服务进程不重启，语义模式恢复。
 
 ``--lexical-only`` 描述未部署 vector 块的词法 profile：它期望 503/回退，
-而不是语义模式成功。``--query`` 必须是目标语料上确实有词法命中的查询，
-``--oov-query`` 用于构造词法零命中的语义救援场景。每条检查只靠 ``assert`` 判定，
-因此在启用优化（``python -O`` / ``PYTHONOPTIMIZE``）的解释器下直接拒绝运行。
+而不是语义模式成功，并同样执行八类请求校验矩阵；四模式分页只对有活向量后端的
+profile 有意义，词法 profile 不假设每个查询都有满页命中。``--query`` 必须是目标语料上
+确实有词法命中的查询，``--oov-query`` 用于构造词法零命中的语义救援场景。每条检查只靠
+``assert`` 判定，因此在启用优化（``python -O`` / ``PYTHONOPTIMIZE``）的解释器下直接
+拒绝运行。
 """
 
 import argparse
@@ -384,6 +386,9 @@ def run_checks(probe, phase, lexical_only):
             _recovered_checks(probe)
     else:
         _down_checks(probe)
+        if lexical_only:
+            # 请求校验矩阵与向量后端无关：词法 profile 也必须满足冻结的请求契约。
+            _error_matrix(probe)
 
 
 def _sha256_digest(value):
