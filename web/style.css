@@ -21,6 +21,16 @@ h1, h2, h3, p { margin-top: 0; }
 h1 { margin-bottom: 8px; font-size: clamp(30px, 5vw, 48px); letter-spacing: -.04em; }
 .subtitle { margin: 0; color: var(--muted); }
 .index-summary { max-width: 290px; margin: 0; color: var(--muted); font-size: 13px; line-height: 1.6; text-align: right; }
+.index-identity { margin: 0 0 18px; padding: 12px 18px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 8px 24px rgba(20, 39, 75, .04); }
+.index-identity summary { color: var(--ink); font-size: 13px; font-weight: 650; cursor: pointer; }
+.index-identity summary::marker { color: var(--muted); }
+.identity-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 22px; margin-top: 12px; }
+.identity-facts .fact dd { display: flex; align-items: center; gap: 7px; }
+.identity-facts .fact.wide { grid-column: 1 / -1; }
+.identity-facts .fact-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.identity-facts .fact.wide .fact-text { overflow: visible; white-space: normal; overflow-wrap: anywhere; }
+.identity-facts .copy { flex: 0 0 auto; min-height: 22px; padding: 0 8px; border: 1px solid #dbe3ff; border-radius: 6px; color: var(--accent); background: #eef2ff; font-size: 11px; font-weight: 600; }
+.identity-facts .copy:hover { color: var(--accent-dark); background: #e3e9ff; border-color: #c9d5ff; }
 .search-panel, .observability, .result-card { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; box-shadow: 0 12px 32px rgba(20, 39, 75, .05); }
 .search-panel { padding: 20px; }
 .query-row { display: flex; gap: 10px; }
@@ -73,6 +83,7 @@ mark.expanded { background: #d9e8ff; }
   .shell { width: min(100% - 22px, 620px); padding-top: 30px; }
   .hero { display: block; }
   .index-summary { margin-top: 14px; text-align: left; }
+  .identity-facts { grid-template-columns: 1fr; }
   .query-row { display: grid; grid-template-columns: 1fr auto; }
   .controls { align-items: flex-start; flex-wrap: wrap; gap: 12px; }
   .hint { width: 100%; margin-left: 0; }

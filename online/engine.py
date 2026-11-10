@@ -20,31 +20,86 @@ from . import parser, scorers
 from .expanders import EXPANDERS
 from .fusion import rrf
 from .highlight import build_highlights
-from .router import QueryFeatures, RuleRouter
+from .router import QueryFeatures, RouteDecision, Router, RuleRouter, router_identity
 
 SNIPPET_LEN = 80
 
 
 class SearchEngine:
     def __init__(self, reader: IndexReader, encoder: TextEncoder | None = None,
-                 vectors: VectorReader | None = None, config: RetrievalConfig | None = None):
+                 vectors: VectorReader | None = None, config: RetrievalConfig | None = None,
+                 router: Router | None = None):
         self.reader = reader
         self.encoder = encoder
         self.vectors = vectors
         self.config = config or RetrievalConfig()
-        self.router = RuleRouter(self.config)
         if (encoder is None) != (vectors is None):
             raise ValueError("encoder 与 vectors 必须同时提供或同时省略")
         if vectors is not None:
             check_alignment(reader, vectors, encoder)
+        self.router = RuleRouter(self.config) if router is None else router
+        self.policy = router_identity(self.router)
 
     def info(self) -> dict:
-        """能力与配置回显，不把尚未实现的后端宣称为可用。"""
+        """能力与配置回显，不把尚未实现的后端宣称为可用。
+
+        ``vector_ready`` 只表示启动时已配置并通过对齐检查，不是后端实时健康。
+        ``index_identity.corpus_sha256`` 复用启动对齐时已验证的向量指纹；纯词法
+        服务不做额外全文扫描，回 null。
+        """
+        manifest = self.reader.manifest()
+        vector = self.vectors.manifest() if self.vectors is not None else None
+        if vector is not None:
+            vector_identity = vector.to_dict()
+            search_config = getattr(self.vectors, "search_config", None)
+            vector_identity["search"] = (dict(search_config)
+                                         if isinstance(search_config, dict) else None)
+        else:
+            vector_identity = None
+        # ``config.policy_version`` mirrors the policy that actually took effect
+        # (an injected router may declare its own); ``self.config`` itself stays
+        # the untouched frozen retrieval configuration.
+        config_echo = {**asdict(self.config),
+                       "policy_version": self.policy["policy_version"]}
         return {
             "vector_ready": self.vectors is not None,
-            "config": asdict(self.config),
-            "vector_manifest": self.vectors.manifest().to_dict() if self.vectors else None,
+            "config": config_echo,
+            "vector_manifest": vector.to_dict() if vector is not None else None,
+            "index_identity": {
+                "dataset": manifest["dataset"],
+                "n_docs": manifest["n_docs"],
+                "schema_version": manifest["schema_version"],
+                "analyzer_hash": manifest["analyzer"]["config_hash"],
+                "corpus_sha256": vector.corpus_sha256 if vector is not None else None,
+                "bm25": manifest.get("bm25"),
+            },
+            "vector_identity": vector_identity,
+            "search_config": {"candidate_k": self.config.candidate_k,
+                              "rrf_c": self.config.rrf_c},
+            "policy": dict(self.policy),
         }
+
+    def _decide(self, features: QueryFeatures) -> RouteDecision:
+        decision = self.router.decide(features)
+        if (not isinstance(decision, RouteDecision)
+                or type(decision.use_vector) is not bool
+                or not isinstance(decision.reason, str) or not decision.reason):
+            raise ValueError("路由策略 decide 必须返回 use_vector 布尔值与非空 reason 的 RouteDecision")
+        return decision
+
+    def _features(self, explicit: bool, terms: list, ranked: list) -> QueryFeatures:
+        unique_terms = set(terms)
+        coverage = (sum(self.reader.df(t) > 0 for t in unique_terms) / len(unique_terms)
+                    if unique_terms else 0.0)
+        gap = ((ranked[0][1] - ranked[1][1]) / max(abs(ranked[0][1]), 1e-12)
+               if len(ranked) >= 2 else None)
+        statistics = {}
+        if self.policy["requires_statistics"]:
+            statistics = self.router.statistics(self.reader, tuple(terms), tuple(ranked))
+            if not isinstance(statistics, dict):
+                raise ValueError("路由策略 statistics 必须返回 dict")
+        return QueryFeatures(explicit, len(unique_terms), coverage, len(ranked), gap,
+                             statistics)
 
     def _vector_search(self, query: str, timings: dict) -> list[tuple[int, float]]:
         if self.encoder is None or self.vectors is None:
@@ -120,12 +175,12 @@ class SearchEngine:
         use_vector = req.mode in ("dense", "hybrid")
         if req.mode == "adaptive":
             start = time.perf_counter()
-            unique_terms = set(terms)
-            coverage = sum(self.reader.df(t) > 0 for t in unique_terms) / len(unique_terms) if unique_terms else 0.0
-            gap = ((ranked[0][1] - ranked[1][1]) / max(abs(ranked[0][1]), 1e-12)
-                   if len(ranked) >= 2 else None)
-            decision = self.router.decide(QueryFeatures(explicit, len(unique_terms), coverage, len(ranked), gap))
-            use_vector, reason = decision.use_vector, decision.reason
+            if explicit:
+                # 显式约束由引擎直接短路，任何注入策略都不能把它送进向量召回。
+                use_vector, reason = False, "explicit_constraints"
+            else:
+                decision = self._decide(self._features(explicit, terms, ranked))
+                use_vector, reason = decision.use_vector, decision.reason
             timings["router"] = (time.perf_counter() - start) * 1000
 
         executed = "lexical"
@@ -165,6 +220,7 @@ class SearchEngine:
                 snippet=doc.text[:SNIPPET_LEN], highlights=build_highlights(doc, set(terms)),
             ))
         routing = RoutingInfo(req.mode, executed, reason, vector_used, use_vector, fallback,
-                              score_kind, self.config.candidate_k, self.config.policy_version)
+                              score_kind, self.config.candidate_k,
+                              self.policy["policy_version"])
         return SearchResponse(int((time.perf_counter() - t0) * 1000), parsed, expanded,
                               results, routing, {k: round(v, 3) for k, v in timings.items()})

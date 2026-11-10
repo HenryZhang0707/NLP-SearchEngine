@@ -199,6 +199,28 @@ engine = SearchEngine(reader, encoder=query_encoder, vectors=vector_reader,
 
 `GET /index/info`：原词法 manifest + retrieval={vector_ready, config, vector_manifest}。`GET /health` 仅报告原词法服务健康，不代表向量可用。默认 CLI 不带向量参数时 vector_ready=false；提供可选的 vector URL、manifest 和依赖后才报告向量就绪。
 
+### 在线服务身份与配置回显
+
+第 4 节的请求、响应 schema 和错误码不变；下面是 `GET /index/info` 的信息增量。客户端必须容忍
+这些字段缺失或为 `null`，不得据此把未知值臆造为成功证据。
+
+| 字段 | 内容 | 约束 |
+|---|---|---|
+| `index_identity` | `{dataset, n_docs, schema_version, analyzer_hash, corpus_sha256, bm25}` | `corpus_sha256` 复用启动时已对齐核验的向量指纹；纯词法部署可为 `null`，不为此额外做全量扫描。`bm25` 只回显产物中实际已知的 `k1`/`b`/`idf`，产物未声明时为 `null`，不补造实验参数 |
+| `vector_identity` | `null`，或 `VectorManifest.to_dict()` 再加 `search={hnsw_ef, exact, timeout_s}` | 内存精确替身回显 `hnsw_ef=null, exact=true, timeout_s=null`。`exact=false` 只表示允许 ANN，不证明本次查询实际走了 HNSW |
+| `search_config` | `{candidate_k, rrf_c}` | 与 `config` 中同名服务级参数一致 |
+| `policy` | `{name, policy_version, requires_statistics}` | `policy_version` 必须是实际生效策略的版本，不能是用配置默认值拼出的标签；`requires_statistics` 为布尔值 |
+| `config` | 原检索配置回显，字段不变 | 其中 `policy_version` 同样回显**实际生效**策略版本；只有该字段随注入策略变化，`candidate_k`/`rrf_c`/阈值等仍来自冻结配置 |
+| `serving` | `{schema_version:1, profile, host, port, max_body_bytes, request_timeout_s, router_factory}` | 由 HTTP server 追加；`profile` 等于 `dataset`；不暴露本地绝对路径、后端 URL 或凭据 |
+
+就绪语义（不新增端点，不改变 `GET /health`）：
+
+- `vector_ready` 是**启动时**“已配置且身份对齐”的结论，不是后端实时健康，也不是高可用承诺。
+- `GET /health` 仍只报告词法服务 liveness，不能当语义就绪探针。
+- 启动校验包括：配置 schema/路径（相对配置目录或绝对路径）与 dataset 完全匹配、向量 manifest 的 `EmbeddingSpec`/`n_docs`/`corpus_sha256` 与词法侧对齐、collection 持久化构建元数据与真实维度/Cosine 距离/`count(exact=True)`、BGE 本地模型 SHA256 清单。**不**在每次启动重算快照 SHA256，该门禁属于 `offline.validate` 的发布检查。
+- 运行期后端失联时：dense/hybrid 返回 503 `vector_unavailable`，adaptive 显式 `fallback=true`；
+  后端恢复后无需重启服务。`search_config`、`policy` 和 `serving` 都是只读回显，客户端不能据此推断后端实时状态。
+
 ## 5. 契约验收与当前边界
 
 运行 `python3 tests/run.py`：覆盖 DiskIndex/MemoryIndex conformance、双索引批次和发布、快照校验、模型/语料错配、向量维度/归一化、Router/RRF、四模式、分页、布尔/短语位置过滤、降级、HTTP 状态/响应结构和静态 UI 路由。`python3 -m unittest evaluation.test_evaluate` 覆盖 HTTP-only evaluator 的 qrels/run 读取与指标输出。

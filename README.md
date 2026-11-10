@@ -6,6 +6,8 @@
 - [跨组 API 契约](contracts/RETRIEVAL.md)
 - [RFC-0004 离线产物交付补充](docs/contributions/rfc0004-delivery-validation.md)
 - [RFC-0004 接收机实测与合并修正](docs/contributions/rfc0004-receiver-acceptance.md)
+- [在线服务部署与验收](docs/online-serving.md)
+- [RFC-0003 在线服务验收记录](docs/contributions/rfc0003-online-acceptance.md)
 - [开题汇报 PDF](slides/proposal.pdf) / [Typst 源文件](slides/proposal.typ)
 - [实施计划与历史讨论](PLAN.md)
 
@@ -155,6 +157,12 @@ python3 -m online.server --index /path/to/compact \
 固定 revision、CLS、右截断和 FP32，启动前校验同一 model inventory；缺依赖、错模型或
 坏哈希明确拒绝。未传 BGE 参数时仍使用通用 SentenceTransformer 路径。无模型接线测试
 不替代真实模型的长短文本、padding/batch 一致性和运行环境记录。
+
+版本化部署改用单个 profile 文件：`python3 -m online.server --config /path/to/news20k.json`，
+示例见 `deploy/config/`。`--config` 与上面所有 index/vector/retrieval/host/port flag 互斥，
+`dataset` 必须与产物 manifest 完全一致；配置路径相对配置文件解析（私有部署配置也可写绝对路径）、
+不做环境变量插值。
+就绪语义、日志隐私、前台启动与三阶段 HTTP 验收见[在线服务部署与验收](docs/online-serving.md)。
 
 向量构建可以直接读取冻结的标准 corpus，与词法构建并行；必须显式提供原始文件的
 SHA256 和文档数。内部 ID 保持物理行序，空行、坏字段、文件变化和错哈希都会拒绝。
