@@ -215,3 +215,34 @@ adaptive 1.19 s（8M 语料上词法阶段是主项）。这只是 dev-only 接�
 
 跟进期间自有进程（news 应用、两套转发代理、两套 tiny 词法服务）全部停止，端口释放；
 既有只读服务 `127.0.0.1:18080` 与 `127.0.0.1:16333` 只被读取，结束后仍健康。
+
+## 9. 合并前复核修正（2026-11-10，基于 `3bb1fd1`）
+
+独立复核发现请求体 JSON 解析只捕获 `JSONDecodeError`：5000 位整数会触发普通
+`ValueError`，深层嵌套会触发 `RecursionError`。两类请求都可小于 65536 字节上限，
+原实现却会直接断连、输出线程 traceback，且缺失结构化 search 事件。
+
+`online.server` 现将这两类解析异常统一送入既有的净化 HTTP 400 路径，不进入检索，
+不回显查询或异常详情，并记录 `reason=invalid_request`。新增两条原始 HTTP 回归，
+修复前均因空响应报错，修复后验证 400、结构化日志、无查询/traceback 泄漏，以及同一
+服务继续处理 `/health` 和正常搜索。
+
+固定 Python 3.10.14 环境的本轮门禁如下（`PY` 为复核 venv 的解释器）：
+
+| 命令 | 结果 |
+|---|---|
+| `$PY -B -m unittest tests.test_observability -v` | 14 tests OK |
+| `$PY -B tests/run.py` | 81/81 |
+| `$PY -B -m unittest discover -s tests -p 'test_*.py'` | 211 tests OK |
+| `$PY -B -m unittest discover -s evaluation -p 'test_*.py'` | 91 tests OK |
+| `$PY -B -m pytest -q -p no:cacheprovider tests evaluation` | 383 passed / 567 subtests |
+| `node --test tests/test_web.cjs` | 13 pass |
+| `git diff --check` | 通过，无输出 |
+
+另以独立子进程和临时回环端口启动真实 tiny profile：5000 位整数与 2000 层嵌套
+均返回净化 400，日志含两条对应的 `invalid_request` 事件，且无查询或 traceback；
+随后同一进程完成词法 HTTP 验收 17/17。仅本轮测试进程被停止，既有服务未被修改。
+
+修正不改变正常请求、Router 或双索引检索路径；新闻 20k 与官方 8M 服务未在本轮重跑，
+前述真实产物验收仍对应其原始提交。评测器尚不发送 `run_tag` 的跨 RFC 接线缺口保持
+明确记录，不以本次请求解析修复冒充完成。

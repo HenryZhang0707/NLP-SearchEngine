@@ -272,7 +272,9 @@ def make_handler(engine: SearchEngine, static_root: Path | None = None, *,
                                  "invalid_request") from error
             try:
                 return json.loads(text) if text else {}
-            except json.JSONDecodeError as error:
+            except (ValueError, RecursionError) as error:
+                # JSONDecodeError is a ValueError; integer digit limits and
+                # excessive nesting must use the same sanitized client error.
                 raise _BodyError(400, "request body is not valid JSON",
                                  "invalid_request") from error
 

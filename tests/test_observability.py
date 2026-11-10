@@ -4,6 +4,7 @@ from http.server import ThreadingHTTPServer
 import io
 import json
 import socket
+import sys
 import threading
 import time
 import unittest
@@ -109,12 +110,12 @@ class HttpServingTests(unittest.TestCase):
             "profile": "memory",
             "host": "127.0.0.1",
             "port": 0,
-            "max_body_bytes": 1024,
+            "max_body_bytes": 65536,
             "request_timeout_s": 0.3,
             "router_factory": "rule",
         }
         handler = make_handler(
-            self.engine, serving=self.serving, max_body_bytes=1024,
+            self.engine, serving=self.serving, max_body_bytes=65536,
             request_timeout_s=0.3, search_log=SearchLogger(self.sink))
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
         self.server.daemon_threads = True
@@ -248,7 +249,7 @@ class HttpServingTests(unittest.TestCase):
             (b"POST /search HTTP/1.1\r\nHost: x\r\nContent-Length: 2\r\n"
              b"Content-Length: 2\r\n\r\n", 400),
             (b"POST /search HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n", 400),
-            (b"POST /search HTTP/1.1\r\nHost: x\r\nContent-Length: 4096\r\n\r\n", 413),
+            (b"POST /search HTTP/1.1\r\nHost: x\r\nContent-Length: 65537\r\n\r\n", 413),
         ]
         for request, expected in cases:
             with self.subTest(expected=expected, request=request):
@@ -276,6 +277,41 @@ class HttpServingTests(unittest.TestCase):
         self.assertEqual(self.post({"query": "water"})[0], 200)
         self.assertEqual(len(calls), 1)
         self.assertNotIn("UnicodeDecodeError", self.sink.getvalue())
+
+    def _assert_json_parser_failure_is_sanitized(self, body):
+        self.assertLessEqual(len(body), self.serving["max_body_bytes"])
+        request = (b"POST /search HTTP/1.1\r\nHost: x\r\nContent-Length: "
+                   + str(len(body)).encode("ascii") + b"\r\n\r\n" + body)
+        with patch.object(self.engine, "search", wraps=self.engine.search) as search, \
+                patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            status, data = self.raw_request(request)
+            self.assertEqual(status, 400)
+            self.assertEqual(json.loads(data.split(b"\r\n\r\n", 1)[1]),
+                             {"error": "request body is not valid JSON"})
+            search.assert_not_called()
+            record = self.wait_for_records(1)[0]
+            self.assertEqual(record["status"], 400)
+            self.assertEqual(record["reason"], "invalid_request")
+            self.assertNotIn("SECRET_QUERY_TEXT", self.sink.getvalue())
+            self.assertEqual(stderr.getvalue(), "")
+        # A rejected payload must leave the same service ready for valid requests.
+        self.assertEqual(self.get("/health")[0], 200)
+        self.assertEqual(self.post({"query": "water"})[0], 200)
+
+    @unittest.skipUnless(hasattr(sys, "set_int_max_str_digits"),
+                         "Python does not enforce a JSON integer digit limit")
+    def test_json_integer_digit_limit_is_sanitized_400_before_search(self):
+        previous_limit = sys.get_int_max_str_digits()
+        sys.set_int_max_str_digits(4300)
+        self.addCleanup(sys.set_int_max_str_digits, previous_limit)
+        body = b'{"query":"SECRET_QUERY_TEXT","k":' + b"9" * 5000 + b"}"
+        self._assert_json_parser_failure_is_sanitized(body)
+
+    def test_deeply_nested_json_is_sanitized_400_before_search(self):
+        depth = sys.getrecursionlimit() + 100
+        body = (b'{"query":"SECRET_QUERY_TEXT","k":'
+                + b"[" * depth + b"0" + b"]" * depth + b"}")
+        self._assert_json_parser_failure_is_sanitized(body)
 
     def test_content_length_digits_are_strict_ascii_and_bounded(self):
         calls = []
