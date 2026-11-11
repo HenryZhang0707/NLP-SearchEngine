@@ -266,6 +266,31 @@ The output contains `run.trec` and a manifest with hashes, versions and
 observed short rankings. Use `evaluation.external_run` to validate and score
 the TREC file. Observed short counts are diagnostic until independently checked.
 
+### Exact dense reference
+
+The exact reference uses the same frozen BGE model and verified FP32 document
+cache as the Qdrant arm. It evaluates every document with float64 cosine,
+breaking score ties by corpus order. The paired comparison measures agreement
+between exact search and ANN on the shared embeddings. Record the exact and ANN
+backends separately when reporting results.
+
+```bash
+python -m evaluation.dense_reference \
+  --corpus data/mini100k/corpus.jsonl --n-docs 100000 \
+  --corpus-sha256 f24b50b6012b47f6fb5f72272666dbf187124a869f19d1c8d83f7e30d6cb62b4 \
+  --queries data/mini100k/queries.dev.jsonl --qrels data/mini100k/qrels.dev.tsv \
+  --exceptions data/mini100k/dense-depth-exceptions.json \
+  --cache-dir artifacts/mini100k/bge-cache --model-path models/bge-small-zh-v1.5 \
+  --chunk-size 1024 --batch-size 32 --shards 1 --depth 100 --out runs/bge-exact-mini100k
+```
+
+Pass the same cache partition parameters used by the producer. When the frozen
+query set includes explicit lexical constraints, the exceptions file must list
+exactly those queries with `expected_count: 0`. Keep their query IDs in the
+evaluation denominator. Run `evaluation.external_run` on the emitted TREC
+file with the same exceptions. The qrels bind the policy by SHA256 and do not
+participate in ranking.
+
 ## Human review of a frozen candidate pool
 
 Use the frozen corpus, query split and candidate pool already admitted for the
@@ -290,6 +315,27 @@ relevant), and record each grade with its opaque `pair_id`. Assign a subset to
 independent reviewers, resolve disagreements and preserve the adjudication
 before deriving qrels. Exporting a packet records candidate coverage and does
 not assign labels.
+
+Freeze the reviewer assignments and record the plan SHA256 before collecting
+grades. A version 1 plan contains `schema_version`, `packet_sha256`,
+`private_map_sha256` and `reviewers`. The last field maps pseudonymous
+reviewer IDs to their exact assigned `pair_id` lists. Assign every pair to at
+least one reviewer and include an independently reviewed overlap.
+
+```bash
+python -m evaluation.annotation_intake \
+  --packet data/review/reviewer.jsonl --private-map data/review/private/mapping.json \
+  --plan data/review/private/plan.json --plan-sha256 "$FROZEN_PLAN_SHA256" \
+  --reviewer reviewer-a data/review/private/reviewer-a.jsonl \
+  --reviewer reviewer-b data/review/private/reviewer-b.jsonl \
+  --adjudication data/review/private/adjudication.jsonl \
+  --qrels data/review/news-human.qrels.tsv --receipt data/review/private/intake.json
+```
+
+Each submission row contains only `pair_id` and an integer `relevance` in
+`0/1/2`. Provide adjudication for exactly the pairs whose grades disagree.
+Omit `--adjudication` when the independent submissions agree on every
+overlapping pair. Keep the reviewer inputs, private map and receipt outside Git.
 
 ## Simple bounded crawler
 
