@@ -488,5 +488,42 @@
         0.028952504337374018
       ]
     }
+  },
+  "learned_router_http": {
+    "queries": 1020,
+    "metrics": {
+      "ndcg": 0.3680976402515744,
+      "recall": 0.4109021726729649,
+      "mrr": 0.5044090413943355,
+      "map": 0.3176186645073553
+    },
+    "heavy_rate": 0.5303921568627451,
+    "e2e_ms": {
+      "p50": 122.35005642287433,
+      "p95": 217.05057611688966
+    },
+    "ce_ms": {
+      "p50": 54.35460666194558,
+      "p95": 64.64960193261504
+    },
+    "train_positive_rate": 0.8197674418604651,
+    "paired_delta_vs_hybrid": {
+      "mean": 0.14022540253192248,
+      "ci95": [
+        0.1255719621113083,
+        0.15344679222032975
+      ]
+    },
+    "protocol": {
+      "train_queries": 172,
+      "dev_queries": 1020,
+      "labels_train_only": true,
+      "features": [
+        "n_terms",
+        "vocab_coverage",
+        "relative_gap",
+        "candidate_hits"
+      ]
+    }
   }
 }

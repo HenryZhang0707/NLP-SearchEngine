@@ -53,3 +53,16 @@ The repaired quality-first policy was also exercised through the real HTTP servi
 | repaired hybrid-v1 | 0.22768 | 0.26430 | 99.9% | 68.85 / 120.95 |
 
 The serving harness is `evaluation/benchmark_dureader100k_router_http.py`; aggregate output is included in `dureader-100k-ce-router-summary.json`. This confirms the policy repair over HTTP, while the separate train-only learned Router remains an offline experimental model.
+
+## Learned Router HTTP confirmation
+
+The train-only learned Router was bound to a loopback HTTP handler and evaluated on all 1,020 dev queries. The handler computes runtime lexical features, performs hybrid retrieval, and conditionally runs CE-40. Training used only the 172 train queries.
+
+- nDCG@10: `0.36810`
+- Recall@10: `0.41090`
+- heavy rate: `53.0%`
+- e2e p50/p95: `122.35/217.05 ms`
+- CE p50/p95 on heavy requests: `54.35/64.65 ms`
+- paired nDCG delta vs equal-RRF: `+0.14023`, 95% CI `[0.12557, 0.15345]`
+
+This is the production-path confirmation for the train-only model. It is intentionally reported separately from the earlier capture-based learned Router because runtime feature extraction changes the decision distribution. Reproduce with `evaluation/benchmark_dureader100k_learned_router_http.py`.
