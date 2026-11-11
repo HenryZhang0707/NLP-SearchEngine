@@ -23,6 +23,7 @@
 - [x] **RFC-0002 共享集复建与词法参考**。重建 [DuReader 100k v1.0](https://huggingface.co/datasets/ShwStone/dureader-mini-100k/tree/v1.0)，逐文件复核发布哈希。手写 BM25 与 BM25S 在冻结的 1,020 条 dev 查询上逐排名一致，保存了两份深度 100 的 TREC run、输入校验和四项配对区间，详见[资源记录](evaluation/RESOURCES.md#dureader-100k-协作开发集词法对照)。
 - [ ] **RFC-0002 语义与 Router 基线**。[Issue #4](https://github.com/ShwStone/NLP-SearchEngine/issues/4) 还需要在同一 100k 语料及查询上运行 dense、固定 RRF、旧规则 Router 和独立稠密参考，保留逐查询证据。100k 开发结果与 808 条全量留出结果分别报告。
 - [x] **RFC-0002 本地 20k 演示验收**。从已交接的快照恢复 20,000 个点，校验同一语料的压缩词法索引。真实浏览器走四模式，实测无效语法清除旧结果。HTTP 后端断开与恢复分别通过 10 项和 27 项检查。
+- [x] **RFC-0002 20k 路由日志对账**。50 条开发查询逐一运行四模式，200 条 HTTP 结果均匹配同一服务的日志。固定 RRF 调用向量 50 次，规则 Router 调用 9 次，无回退。单次顺序工程测量见[资源记录](evaluation/RESOURCES.md#新闻-20k-本地浏览器演示与恢复验收)。
 - [ ] **RFC-0002 自爬人工实测**。复用冻结的 20k 语料、划分、候选池与双索引。盲审包和评分导入入口就绪。待独立人工标注、重叠复核和分歧裁决后，按人审 qrels 重新评分，并补充检索质量的失败分析。
 - [ ] **RFC-0001 Router 对照**。现有 [PR #9](https://github.com/ShwStone/NLP-SearchEngine/pull/9) 承接 [Issue #3](https://github.com/ShwStone/NLP-SearchEngine/issues/3)，与当前主线存在冲突。通过已合入的 Router 接口对齐策略版本、模型、候选池与 RRF 参数。冻结 100k 开发协议后比较学习路由、固定预算和等成本随机策略，保留完整质量、触发率、成本与不确定性；全量留出在冻结后复验。
 - [x] **Windows 回归验证**。修复 checkpoint 子进程退出后锁释放的时序断言、CLI 子进程编码、原生路径断言和 JSON 解码异常的测试稳定性。完整 Windows unittest 运行 211 项，跳过两项 POSIX 专用用例，其余通过。

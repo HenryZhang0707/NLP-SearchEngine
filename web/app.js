@@ -317,8 +317,9 @@ async function search(event) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query, mode: modeInput.value, k }),
     });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || `请求失败（HTTP ${response.status}）`);
+    const data = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(data?.error || `请求失败（HTTP ${response.status}）`);
+    if (!Array.isArray(data?.results)) throw new Error("搜索响应格式无效");
     renderResponse(data);
   } catch (error) {
     resultBox.innerHTML = "";

@@ -401,6 +401,34 @@ class EvaluatorTests(unittest.TestCase):
             reloaded = evaluate_run({"q1": {"d11": 1.0}}, load_run(path))
             self.assertEqual(reloaded.map_at_100, summary.map_at_100)
 
+    def test_http_request_tag_binds_payload_and_journal_independently_of_trec_tag(self):
+        with _serve() as (endpoint, server), tempfile.TemporaryDirectory() as directory:
+            run = Path(directory) / "run.trec"
+            summary = evaluate_http(
+                endpoint, [QueryRecord("q1", "q1")], {"q1": {"d1": 1.0}},
+                run_output=run, tag="ranking-arm", request_tag="experiment-attempt.1",
+            )
+            self.assertEqual(server.requests[0]["run_tag"], "experiment-attempt.1")
+            self.assertEqual(summary.requests["request"]["run_tag"], "experiment-attempt.1")
+            sidecar = Path(str(run) + ".requests.json")
+            journal = Path(str(sidecar) + ".events.jsonl")
+            complete = json.loads(sidecar.read_text(encoding="utf-8"))
+            start = json.loads(journal.read_text(encoding="utf-8").splitlines()[0])
+            self.assertEqual(start["request"], complete["request"])
+            self.assertEqual(complete["request"]["run_tag"], "experiment-attempt.1")
+            self.assertTrue(all(line.split()[-1] == "ranking-arm"
+                                for line in run.read_text(encoding="utf-8").splitlines()))
+
+    def test_invalid_http_request_tags_leave_no_requests_or_outputs(self):
+        with _serve() as (endpoint, server), tempfile.TemporaryDirectory() as directory:
+            run = Path(directory) / "run.trec"
+            for tag in ("", "with space", "x" * 129, "x\nnext", "中文"):
+                with self.subTest(tag=tag), self.assertRaisesRegex(EvaluationError, "request tag"):
+                    evaluate_http(endpoint, [QueryRecord("q1", "q1")], {},
+                                  run_output=run, request_tag=tag)
+            self.assertEqual(server.requests, [])
+            self.assertEqual(list(Path(directory).iterdir()), [])
+
     def test_http_fetches_larger_ranking_cutoff_independently_of_map_cutoff(self):
         with _serve() as (endpoint, server):
             summary = evaluate_http(

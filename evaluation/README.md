@@ -36,6 +36,24 @@ dependencies is therefore visibly degraded rather than silently labeled as a
 successful hybrid experiment. Add `--fail-on-fallback` to reject any such query
 with a nonzero exit status.
 
+For server-side timing analysis, pass a distinct `--request-tag` per HTTP
+attempt. The evaluator sends it as the public `run_tag` field and records it
+in the request journal and snapshot. The tag starts with an ASCII letter or
+digit, can also contain `.`, `_` and `-`, and is at most 128 characters.
+`--tag` continues to name the TREC run.
+
+Keep the full server log, including its startup record, and pass it together
+with the finalized request sidecar:
+
+```bash
+python3 -m evaluation.serving_cost --run runs/bm25.trec.requests.json service.log
+```
+
+Use a distinct tag per serial attempt. The log intentionally contains no query
+IDs. The checker verifies ordered HTTP status and routing agreement within one
+startup epoch. It reports server stage timings and client HTTP latency
+separately. Repeated `--run` arguments preserve the per-attempt timing scopes.
+
 Standalone TREC runs contain no routing or latency evidence: those fields are
 `null`, not zero failures or zero latency.
 
