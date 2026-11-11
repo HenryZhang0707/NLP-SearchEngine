@@ -1,0 +1,14 @@
+# Full DuReader resource audit
+
+The official archive is present and verified locally. The four passage files contain exactly 8,096,668 records:
+
+```
+part-00 2,024,167
+part-01 2,024,167
+part-02 2,024,167
+part-03 2,024,167
+```
+
+The current repository BM25 builder materializes the complete corpus and all postings as Python objects before writing JSONL. The frozen 100k build produced a 896 MiB BM25 directory. A linear extrapolation to 8,096,668 documents is about 72 GiB of BM25 JSONL alone, before the Python postings graph, temporary objects, full dense vectors and Qdrant HNSW storage. The machine currently has 123 GiB free and 251 GiB RAM. A full dense build would additionally encode 8,096,668 documents (at least 16.6 GiB of raw float32 vectors before Qdrant/index overhead).
+
+Because the implementation's in-memory postings representation scales with every token occurrence, a full build cannot be claimed safe on this host without a streaming/sharded index implementation and a fresh disk budget. No full-corpus result is therefore reported as if it were complete. The official archive, 100k reconstruction, 100k lexical/dense indexes, CE actions, and loopback HTTP evidence remain independently reproducible. The goal stays open until either a sharded full-corpus backend is implemented and audited or the maintainer explicitly accepts the 100k-only scope.
