@@ -204,6 +204,93 @@ Run the evaluator tests with:
 python3 -m unittest discover -s evaluation -p 'test_*.py'
 ```
 
+## External TREC runs and the DuReader 100k development subset
+
+The shared [DuReader 100k rebuild recipe](https://huggingface.co/datasets/ShwStone/dureader-mini-100k/tree/2db5eadeb4adabec463324b4ca3562b7b79fda94)
+pins 100,000 documents and 172 train / 1,020 development queries from the
+public official-dev release. Use its published hashes to verify the rebuilt
+files. These development results use a different candidate corpus from the
+full-corpus 808-query holdout.
+
+External baselines can generate a six-column TREC file in a separate
+environment. The validator checks one run tag, unique documents and
+contiguous ranks per query, corpus membership and minimum depth. It scores
+every query in the supplied order, with zero metrics for queries without qrels.
+Latency and routing are unavailable from a TREC run alone. Use the hashes in the
+receipt to check that each compared run used the same frozen input bytes.
+
+```bash
+python -m evaluation.external_run \
+  --corpus data/mini100k/corpus.jsonl \
+  --queries data/mini100k/queries.dev.jsonl --qrels data/mini100k/qrels.dev.tsv \
+  --run runs/reference.trec --depth 100 --output-json runs/reference.validation.json
+```
+
+A method that legitimately yields fewer than 100 documents needs a reviewed
+`--exceptions` JSON file. Freeze the eligibility rule before inspecting
+quality metrics and verify the exact counts independently of the submitted run.
+An explicit-constraint rejection can be accounted for with an expected count of
+zero. The evaluator keeps the query in the denominator. An unexplained missing
+or truncated query fails validation.
+
+```json
+{
+  "schema_version": 1,
+  "corpus_sha256": "<frozen corpus SHA256>",
+  "queries_sha256": "<frozen queries SHA256>",
+  "qrels_sha256": "<frozen qrels SHA256>",
+  "depth": 100,
+  "short_queries": {
+    "<frozen query ID>": {"expected_count": 0, "reason": "<reviewed reason>"}
+  }
+}
+```
+
+The optional formula-aligned BM25S reference scores document body tokens using
+the shared analyzer and `bm25s==0.2.14` with ATIRE term-frequency saturation,
+Lucene IDF, `k1=1.2`, `b=0.75` and float64. Corpus order breaks score ties.
+Queries with Boolean or phrase constraints use the project's positional filter
+on a separately built lexical index whose ordered corpus fingerprint must match.
+BM25S supplies all scores. The reference does not use qrels while retrieving.
+
+```bash
+python -m pip install bm25s==0.2.14
+python -m evaluation.bm25s_reference \
+  --corpus data/mini100k/corpus.jsonl --n-docs 100000 \
+  --corpus-sha256 f24b50b6012b47f6fb5f72272666dbf187124a869f19d1c8d83f7e30d6cb62b4 \
+  --queries data/mini100k/queries.dev.jsonl --depth 100 \
+  --constraint-index artifacts/mini100k/compact --out runs/bm25s-mini100k
+```
+
+The output contains `run.trec` and a manifest with hashes, versions and
+observed short rankings. Use `evaluation.external_run` to validate and score
+the TREC file. Observed short counts are diagnostic until independently checked.
+
+## Human review of a frozen candidate pool
+
+Use the frozen corpus, query split and candidate pool already admitted for the
+experiment. Export all pairs, including any source-anchor pairs that were
+graded separately in a previous run. Each input JSONL row requires
+`query_id`, `query`, `doc_id`, `title`, `text`, `document_sha256` and
+`query_sha256`. Hash the query as UTF-8 and the document as the UTF-8 bytes of
+the compact JSON array `[doc_id,title,text]` with unescaped Unicode.
+
+```bash
+python -m evaluation.annotation_packet \
+  --candidates data/frozen/blinded-pairs.jsonl \
+  --candidates data/frozen/seed-candidates.jsonl \
+  --packet data/review/reviewer.jsonl --private-map data/review/private/mapping.json
+```
+
+Keep both outputs outside Git. Share only `reviewer.jsonl` with reviewers.
+Each row contains `pair_id`, `query`, `title` and `text`; keep pool-system
+membership, original IDs, seed roles and old judgments with the coordinator.
+Use relevance grades 0 (irrelevant), 1 (partly relevant) and 2 (directly
+relevant), and record each grade with its opaque `pair_id`. Assign a subset to
+independent reviewers, resolve disagreements and preserve the adjudication
+before deriving qrels. Exporting a packet records candidate coverage and does
+not assign labels.
+
 ## Simple bounded crawler
 
 The legacy `evaluation.crawl_web` entry rejects all HTTP redirects before any
