@@ -42,3 +42,14 @@ At the learned Router's target heavy rate (60.7%), fixed and random controls wer
 | learned Router | 0.39438 | 0.43529 | 60.7% | +0.16650 [0.15174, 0.18110] |
 
 The learned Router exceeds both random same-budget controls on nDCG, but its margin is an offline result; the serving binding still needs a separate HTTP run. Use `evaluation/evaluate_dureader100k_budget_controls.py` to reproduce the controls.
+
+## Router HTTP confirmation
+
+The repaired quality-first policy was also exercised through the real HTTP serving path. On the same 1,020 dev queries, `hybrid-v1` improves nDCG over the old `rules-v1` by 0.02305 (paired 95% CI [0.01776, 0.02895]).
+
+| policy | nDCG@10 | Recall@10 | vector attempt rate | e2e p50/p95 ms |
+|---|---:|---:|---:|---:|
+| rules-v1 | 0.20464 | 0.24055 | 73.3% | 65.51 / 119.27 |
+| repaired hybrid-v1 | 0.22768 | 0.26430 | 99.9% | 68.85 / 120.95 |
+
+The serving harness is `evaluation/benchmark_dureader100k_router_http.py`; aggregate output is included in `dureader-100k-ce-router-summary.json`. This confirms the policy repair over HTTP, while the separate train-only learned Router remains an offline experimental model.

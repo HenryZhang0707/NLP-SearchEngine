@@ -441,5 +441,52 @@
       "qrels_read_after_actions": true,
       "no_tuning_on_dev": true
     }
+  },
+  "router_http": {
+    "rules-v1": {
+      "queries": 1020,
+      "metrics": {
+        "ndcg": 0.20463631732502127,
+        "recall": 0.24055293401997374,
+        "mrr": 0.3168635231870526,
+        "map": 0.18629752264829544
+      },
+      "e2e_ms": {
+        "p50": 65.50591439008713,
+        "p95": 119.26643366459756
+      },
+      "vector_attempt_rate": 0.7333333333333333,
+      "executed_modes": {
+        "lexical": 272,
+        "hybrid": 748,
+        "dense": 0
+      }
+    },
+    "hybrid-v1": {
+      "queries": 1020,
+      "metrics": {
+        "ndcg": 0.22768260399061538,
+        "recall": 0.2642988484504174,
+        "mrr": 0.3473424369747899,
+        "map": 0.20736768577469616
+      },
+      "e2e_ms": {
+        "p50": 68.85074637830257,
+        "p95": 120.95427112653852
+      },
+      "vector_attempt_rate": 0.9990196078431373,
+      "executed_modes": {
+        "lexical": 1,
+        "hybrid": 1019,
+        "dense": 0
+      }
+    },
+    "paired_ndcg_hybrid_minus_rules": {
+      "mean": 0.02304628666559409,
+      "ci95": [
+        0.01775530336161437,
+        0.028952504337374018
+      ]
+    }
   }
 }
