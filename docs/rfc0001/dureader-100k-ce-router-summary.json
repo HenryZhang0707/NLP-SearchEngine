@@ -351,5 +351,95 @@
         ]
       }
     }
+  },
+  "budget_controls": {
+    "hybrid": {
+      "queries": 1020,
+      "metrics": {
+        "ndcg": 0.2278722377196519,
+        "recall": 0.26478904452884877,
+        "mrr": 0.34746498599439773,
+        "map": 0.2074138719796746
+      },
+      "heavy_rate": 0
+    },
+    "fixed-ce28": {
+      "queries": 1020,
+      "metrics": {
+        "ndcg": 0.4089864406147595,
+        "recall": 0.42592039675870114,
+        "mrr": 0.5817693744164333,
+        "map": 0.34721425293829006
+      },
+      "heavy_rate": 1,
+      "paired_ndcg_vs_hybrid": {
+        "mean": 0.18111420289510763,
+        "ci95": [
+          0.16717184196685186,
+          0.19524745101176655
+        ]
+      }
+    },
+    "fixed-ce40": {
+      "queries": 1020,
+      "metrics": {
+        "ndcg": 0.4854778877431518,
+        "recall": 0.5283109097839421,
+        "mrr": 0.63583372237784,
+        "map": 0.4137920815334247
+      },
+      "heavy_rate": 1,
+      "paired_ndcg_vs_hybrid": {
+        "mean": 0.2576056500234999,
+        "ci95": [
+          0.24237559614584187,
+          0.2731207872277136
+        ]
+      }
+    },
+    "random-budget": {
+      "queries": 1020,
+      "metrics": {
+        "ndcg": 0.3856345668612158,
+        "recall": 0.4305994155290586,
+        "mrr": 0.5158718487394958,
+        "map": 0.33407965730352635
+      },
+      "heavy_rate": 0.5950980392156863,
+      "paired_ndcg_vs_hybrid": {
+        "mean": 0.15776232914156385,
+        "ci95": [
+          0.14249367961651155,
+          0.17225446585536916
+        ]
+      }
+    },
+    "random-budget2": {
+      "queries": 1020,
+      "metrics": {
+        "ndcg": 0.38548694912859116,
+        "recall": 0.4225582103578416,
+        "mrr": 0.5234138655462185,
+        "map": 0.3357376706521435
+      },
+      "heavy_rate": 0.5980392156862745,
+      "paired_ndcg_vs_hybrid": {
+        "mean": 0.15761471140893926,
+        "ci95": [
+          0.1433924605299475,
+          0.17161282860498667
+        ]
+      }
+    },
+    "protocol": {
+      "queries": 1020,
+      "budget_heavy_rate_target": 0.6068627450980392,
+      "random_seeds": [
+        "dureader100k-random-budget-v1",
+        "dureader100k-random-budget-v2"
+      ],
+      "qrels_read_after_actions": true,
+      "no_tuning_on_dev": true
+    }
   }
 }

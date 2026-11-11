@@ -28,3 +28,17 @@ The same frozen BM25/Qdrant backend and reranker were exercised through a real l
 | CE-40 | 0.48548 | 55.41 / 67.68 | 130.12 / 185.54 |
 
 CE-40’s paired nDCG gain over CE-0 is 0.25761 (95% CI [0.24238, 0.27312]). The HTTP harness is reproducible with `evaluation/benchmark_dureader100k_ce_http.py`; its aggregate output is included in `dureader-100k-ce-router-summary.json`. The learned Router still requires an equivalent HTTP run with its train-only model bound into the serving path before it can be called an online acceptance result.
+
+## Same-budget controls
+
+At the learned Router's target heavy rate (60.7%), fixed and random controls were evaluated with the same CE-40 action. Fixed CE-28 and fixed CE-40 are useful cost-quality endpoints; two deterministic random policies match the budget within sampling error.
+
+| policy | nDCG@10 | Recall@10 | heavy rate | paired nDCG delta vs hybrid (95% CI) |
+|---|---:|---:|---:|---:|
+| fixed CE-28 | 0.40899 | 0.42592 | 100% | +0.18111 [0.16717, 0.19525] |
+| fixed CE-40 | 0.48548 | 0.52831 | 100% | +0.25761 [0.24238, 0.27312] |
+| random budget v1 | 0.38563 | 0.43060 | 59.5% | +0.15776 [0.14249, 0.17225] |
+| random budget v2 | 0.38549 | 0.42256 | 59.8% | +0.15761 [0.14339, 0.17161] |
+| learned Router | 0.39438 | 0.43529 | 60.7% | +0.16650 [0.15174, 0.18110] |
+
+The learned Router exceeds both random same-budget controls on nDCG, but its margin is an offline result; the serving binding still needs a separate HTTP run. Use `evaluation/evaluate_dureader100k_budget_controls.py` to reproduce the controls.
