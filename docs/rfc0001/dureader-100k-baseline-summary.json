@@ -71,5 +71,25 @@
       "map": 100
     },
     "dense_explicit_skipped": 1
+  },
+  "adaptive-hybrid-v1": {
+    "queries": 1020,
+    "metrics": {
+      "ndcg": 0.22768260399061538,
+      "recall": 0.2642988484504174,
+      "mrr": 0.3473424369747899,
+      "map": 0.20736768577469616
+    },
+    "latency_ms": {
+      "p50": 70.77117939479649,
+      "p95": 126.18733237031847,
+      "mean": 79.75118367238811
+    }
+  },
+  "router_repair": {
+    "policy": "hybrid-v1",
+    "reason": "rules-v1 regressed against equal-RRF on frozen DuReader 100k; hybrid-v1 preserves explicit constraints and selects hybrid for ordinary queries",
+    "relative_ndcg_gain_vs_rules_v1": 0.1126207066607341,
+    "relative_ndcg_delta_vs_equal_rrf": -0.0008321932102577367
   }
 }
