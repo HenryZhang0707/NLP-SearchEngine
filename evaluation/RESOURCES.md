@@ -295,3 +295,17 @@ done
 ```
 
 该 TREC 离线入口重算质量与区间；请求覆盖/400 policy、路由、epoch、journal 和延迟必须同时核对已封存的请求证据，不能从 TREC 行数推断。最新 Windows Python3.13 复验核心69/69、evaluation83/83、Node7/7、compileall 与 diffcheck 通过；同环境原生69/83/7及固定 Linux153 的源码身份未改变。数据、模型、索引、快照、runs、原始收据及任何凭据不提交 Git。
+## DuReader 100k 协作开发集词法对照
+
+使用维护者发布的 [DuReader 100k v1.0 重建材料](https://huggingface.co/datasets/ShwStone/dureader-mini-100k/tree/2db5eadeb4adabec463324b4ca3562b7b79fda94)，从已规范化的官方公开语料重建 100,000 篇、172 条 train 和 1,020 条 dev。五份数据文件和压缩包的 SHA-256 均与[发布记录](https://huggingface.co/datasets/ShwStone/dureader-mini-100k/blob/v1.0/verification.json)一致。此处的查询来自公开 official-dev 的内部开发划分。
+
+在源码 `d1f2d12` 上通过本地公开 HTTP `POST /search` 执行手写 BM25，使用同一份冻结语料的 A1 索引。外部参考使用 `bm25s==0.2.14` 的 ATIRE 词频饱和、Lucene IDF 和 float64，双方使用同一 bigram 分词、`k1=1.2`、`b=0.75`。一条显式约束查询共用项目的硬过滤，BM25S 独立计分。1,020 次请求全部返回 HTTP 200；两份 run 都有 101,872 条记录。三条查询的短榜分别为 41、43 和 88 篇，经扫描全部 100,000 篇原文独立复核。其余 1,017 条查询各返回 100 篇。
+
+| 方法 | nDCG@10 | Recall@10 | MRR@10 | MAP@100 |
+| --- | ---: | ---: | ---: | ---: |
+| 手写 BM25（HTTP） | 0.133959 | 0.157120 | 0.217316 | 0.131827 |
+| BM25S 公式对齐 | 0.133959 | 0.157120 | 0.217316 | 0.131827 |
+
+两份 run 的全部排名逐条一致。按 HTTP 的六位小数精度比较，101,872 个分数全部相同。使用 seed `2026` 做 10,000 次查询级配对 bootstrap，四项指标差均为 0，95% 区间均为 `[0, 0]`。这组结果用于验证词法实现的一致性。HTTP 单次顺序开发评测的平均/p50/p95 分别为 76.10/69.17/140.04 ms，期间本机有索引压缩任务；BM25S 的外部 run 无可比较的 HTTP 延迟。
+
+HTTP 和 BM25S 两份 TREC 文件 SHA-256 分别为 `2bea488509bc591c52858c30adbe2677d5fc5fe14bb65dc3a9d6957ec76645bf`、`e46e616b962c5fccb03707feeefe4aaeb01d9060f618dcfe3ff5a39b4484945f`。逐查询证据与校验收据保存在 Git 外。复建、TREC 校验和参考入口见 [评测说明](README.md#external-trec-runs-and-the-dureader-100k-development-subset)。

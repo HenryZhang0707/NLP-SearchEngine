@@ -20,10 +20,12 @@
 
 - [x] **RFC-0004 离线交付**。全量词法、向量与评测证据已通过 [PR #8](https://github.com/ShwStone/NLP-SearchEngine/pull/8) 合入，关闭 [Issue #6](https://github.com/ShwStone/NLP-SearchEngine/issues/6)。待审 [PR #7](https://github.com/ShwStone/NLP-SearchEngine/pull/7) 的离线实现大量重叠，先核对仍有价值的 reader 测试与贡献记录。
 - [x] **RFC-0003 在线接线**。[PR #10](https://github.com/ShwStone/NLP-SearchEngine/pull/10) 合入启动身份、Router 接口、HTTP 请求保护、可观测性与 UI 身份面板，关闭 [Issue #5](https://github.com/ShwStone/NLP-SearchEngine/issues/5)。已有两套真实索引的[工程验收](docs/contributions/rfc0003-online-acceptance.md)。
-- [ ] **RFC-0002 标准集与外部参考**。[Issue #4](https://github.com/ShwStone/NLP-SearchEngine/issues/4) 的共享开发集采用 [DuReader 100k v1.0](https://huggingface.co/datasets/ShwStone/dureader-mini-100k/tree/v1.0)。按冻结的 1,020 条 dev 查询完成手写 BM25、BM25S、dense、固定 RRF 和旧规则 Router 的同协议复跑，补独立稠密参考及逐查询证据。评测输出留在仓库外，100k 和 808 条全量留出结果分别报告。
+- [x] **RFC-0002 共享集复建与词法参考**。重建 [DuReader 100k v1.0](https://huggingface.co/datasets/ShwStone/dureader-mini-100k/tree/v1.0)，逐文件复核发布哈希。手写 BM25 与 BM25S 在冻结的 1,020 条 dev 查询上逐排名一致，保存了两份深度 100 的 TREC run、输入校验和四项配对区间，详见[资源记录](evaluation/RESOURCES.md#dureader-100k-协作开发集词法对照)。
+- [ ] **RFC-0002 语义与 Router 基线**。[Issue #4](https://github.com/ShwStone/NLP-SearchEngine/issues/4) 还需要在同一 100k 语料及查询上运行 dense、固定 RRF、旧规则 Router 和独立稠密参考，保留逐查询证据。100k 开发结果与 808 条全量留出结果分别报告。
 - [ ] **RFC-0002 自爬实测**。复用已冻结的 20k 语料、划分、候选池与双索引。需要把候选对交给人工盲审并记录复核和分歧处理，然后按人审 qrels 重新评分。补基于 20k 数据的实时 HTTP/UI 演示、代表查询及失败案例。
 - [ ] **RFC-0001 Router 对照**。现有 [PR #9](https://github.com/ShwStone/NLP-SearchEngine/pull/9) 承接 [Issue #3](https://github.com/ShwStone/NLP-SearchEngine/issues/3)，与当前主线存在冲突。通过已合入的 Router 接口对齐策略版本、模型、候选池与 RRF 参数。冻结 100k 开发协议后比较学习路由、固定预算和等成本随机策略，保留完整质量、触发率、成本与不确定性；全量留出在冻结后复验。
-- [ ] **跨平台验证和待审分支归并**。核对 Windows 下的锁、子进程编码、路径断言和深 JSON 回归。将 [PR #2](https://github.com/ShwStone/NLP-SearchEngine/pull/2) 与已合入实现逐项比对，只接收经当前主线验证的独立改动。
+- [x] **Windows 回归验证**。修复 checkpoint 子进程退出后锁释放的时序断言、CLI 子进程编码、原生路径断言和 JSON 解码异常的测试稳定性。完整 Windows unittest 运行 211 项，跳过两项 POSIX 专用用例，其余通过。
+- [ ] **待审分支归并**。[PR #2](https://github.com/ShwStone/NLP-SearchEngine/pull/2) 和 [PR #7](https://github.com/ShwStone/NLP-SearchEngine/pull/7) 与已合入实现重叠。只接收仍缺少且经当前主线验证的独立改动。
 
 ## 证据边界
 
