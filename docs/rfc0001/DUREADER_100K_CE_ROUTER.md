@@ -16,3 +16,15 @@ The raw CE action reranks the first 28 or 40 hybrid candidates and leaves the ta
 The CE-40 raw action improves nDCG by 0.25761 over equal RRF (paired 95% CI [0.24238, 0.27312]). The train-only learned ranker adds another 0.02728 nDCG (paired 95% CI [0.01780, 0.03676]). The learned Router improves nDCG by 0.16650 over equal RRF (paired 95% CI [0.15174, 0.18110]) at a 60.7% heavy rate in the final no-position-feature rerun. Its cost and quality must still be qualified through the production HTTP harness before being treated as an online acceptance result.
 
 Run candidate capture with `evaluation/capture_dureader100k.py`, then train/evaluate with `evaluation/train_eval_ce_router_dureader100k.py`. The machine-readable result, input hashes and split protocol are in `dureader-100k-ce-router-summary.json`. Large per-query captures remain local and are intentionally excluded from the PR.
+
+## Loopback HTTP confirmation
+
+The same frozen BM25/Qdrant backend and reranker were exercised through a real loopback HTTP server. Each request performs hybrid retrieval, CE scoring, JSON serialization and response parsing. Across all 1,020 dev queries:
+
+| action | nDCG@10 | CE p50/p95 ms | end-to-end p50/p95 ms |
+|---|---:|---:|---:|
+| CE-0 | 0.22787 | 0 / 0 | 77.45 / 128.93 |
+| CE-28 | 0.40900 | 43.31 / 53.29 | 115.64 / 170.93 |
+| CE-40 | 0.48548 | 55.41 / 67.68 | 130.12 / 185.54 |
+
+CE-40’s paired nDCG gain over CE-0 is 0.25761 (95% CI [0.24238, 0.27312]). The HTTP harness is reproducible with `evaluation/benchmark_dureader100k_ce_http.py`; its aggregate output is included in `dureader-100k-ce-router-summary.json`. The learned Router still requires an equivalent HTTP run with its train-only model bound into the serving path before it can be called an online acceptance result.
