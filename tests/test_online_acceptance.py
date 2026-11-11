@@ -10,6 +10,7 @@ import ast
 import contextlib
 import io
 import json
+import os
 import socket
 import subprocess
 import sys
@@ -559,8 +560,9 @@ class ProbeIsolationTest(unittest.TestCase):
 
     def test_help_exits_zero(self):
         result = subprocess.run(
-            [sys.executable, "-B", str(ROOT / "scripts" / "online_acceptance.py"), "--help"],
-            capture_output=True, text=True, timeout=60)
+            [sys.executable, "-B", "-X", "utf8", str(ROOT / "scripts" / "online_acceptance.py"),
+             "--help"],
+            capture_output=True, encoding="utf-8", timeout=60)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("--endpoint", result.stdout)
         self.assertIn("--phase", result.stdout)
@@ -568,12 +570,12 @@ class ProbeIsolationTest(unittest.TestCase):
     def test_optimized_interpreter_is_refused_instead_of_passing(self):
         # -O 剥离 assert；探针必须拒绝运行，而不是把失败服务报成 PASS。
         result = subprocess.run(
-            [sys.executable, "-B", "-O",
+            [sys.executable, "-B", "-X", "utf8", "-O",
              str(ROOT / "scripts" / "online_acceptance.py"),
-             "--endpoint", "http://127.0.0.1:1", "--out", "/dev/null",
+             "--endpoint", "http://127.0.0.1:1", "--out", os.devnull,
              "--lexical-only", "--expect-dataset", DATASET,
              "--expect-n-docs", str(N_DOCS), "--query", QUERY],
-            capture_output=True, text=True, timeout=60)
+            capture_output=True, encoding="utf-8", timeout=60)
         self.assertEqual(result.returncode, 2, result.stdout)
         self.assertIn("优化", result.stderr)
 
