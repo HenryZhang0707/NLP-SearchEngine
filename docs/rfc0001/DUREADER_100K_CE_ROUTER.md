@@ -11,7 +11,7 @@ The raw CE action reranks the first 28 or 40 hybrid candidates and leaves the ta
 | CE-40 raw | 0.48548 | 0.52831 | 0.63583 | 0.41379 | 49.00 / 60.90 |
 | CE-28 + learned ranker | 0.40331 | 0.42303 | 0.57604 | 0.34125 | 49.04 / 60.22 |
 | CE-40 + learned ranker | 0.51276 | 0.56261 | 0.65878 | 0.42935 | 49.04 / 60.22 |
-| learned Router (CE-40 action) | 0.39438 | 0.43529 | 0.53826 | 0.33819 | 37.0% heavy |
+| learned Router (CE-40 action) | 0.39438 | 0.43529 | 0.53826 | 0.33819 | 60.7% heavy |
 
 The CE-40 raw action improves nDCG by 0.25761 over equal RRF (paired 95% CI [0.24238, 0.27312]). The train-only learned ranker adds another 0.02728 nDCG (paired 95% CI [0.01780, 0.03676]). The learned Router improves nDCG by 0.16650 over equal RRF (paired 95% CI [0.15174, 0.18110]) at a 60.7% heavy rate in the final no-position-feature rerun. Its cost and quality must still be qualified through the production HTTP harness before being treated as an online acceptance result.
 
