@@ -62,6 +62,13 @@ preserved and must not be silently replaced. The gate remains experimental.
 
 ## Remaining gates
 
+The 8-query real HTTP pilot completed all 10 policies. Every returned ordered
+document list matched its offline prediction (100% for every policy), including
+the learned gate decisions. This is a pilot only; it does not establish
+1,020-query parity or isolated latency. The all-query v4 HTTP verification is
+running with train-selected raw-CE safeguards. All 265 worktree tests passed
+after the pipeline additions.
+
 Actual HTTP pilot/all-query evaluation must confirm the exported decisions
 and candidate IDs. Component times during background batch work are not final
 latency evidence. Complete full-corpus BM25 capture, fusion, CE scoring, nested
