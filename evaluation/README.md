@@ -97,6 +97,7 @@ digest. Keep fixed CE40 available and add fixed CE28 for the four-arm comparison
 python -m evaluation.ce_http \
   --baseline http://127.0.0.1:8000 --rerank 28 http://127.0.0.1:8028 \
   --rerank 40 http://127.0.0.1:8040 --learned http://127.0.0.1:8041 --measure-random \
+  --require-instance-id \
   --queries data/queries.dev.jsonl --qrels data/qrels.dev.tsv \
   --warmup-queries data/queries.warmup.jsonl --out runs/ce-dev
 ```
@@ -104,6 +105,12 @@ python -m evaluation.ce_http \
 Repeat with independent holdout files and a new output directory, leaving the
 gate and comparison settings fixed. The learned arm records real HTTP latency
 and CE pair counts; report latency by capture epoch after a resume.
+`--require-instance-id` checks the server-generated `X-Search-Instance` header
+on every identity and search response. A restart with identical configuration
+stops the current invocation before committing a mixed query. A new invocation
+can resume the journal in a separate latency epoch. Both the fixed-arm summary
+and live random summary record the observed service instances by epoch. Legacy
+journals can be replayed with their original options.
 `matched-random-plan.json` freezes a seeded random assignment at exactly the
 observed learned arm's total pair count, using each query's actual fixed CE40
 capacity. Its quality results in `summary.json` and its TREC file replay

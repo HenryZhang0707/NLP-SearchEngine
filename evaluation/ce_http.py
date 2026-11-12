@@ -10,6 +10,7 @@ import math
 import os
 from pathlib import Path
 import random
+import re
 import sqlite3
 import statistics
 import tempfile
@@ -19,6 +20,7 @@ from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 from uuid import uuid4
 
+from contracts.api import SEARCH_INSTANCE_HEADER
 from contracts.ce import GATE_DEPTH, GATE_FEATURE_NAMES
 
 from .ce_analysis import learned_diagnostics
@@ -36,6 +38,7 @@ RANDOM_LIVE_VERSION = 1
 SEED = 2026
 BOOTSTRAP_SAMPLES = 10000
 STAGES = ("lexical", "router", "encode", "vector", "fusion")
+INSTANCE_ID = re.compile(r"[0-9a-f]{32}")
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -57,6 +60,12 @@ def endpoint(url):
     return f"http://{parts.netloc}"
 
 
+def http_client(require_instance):
+    client = build_opener(ProxyHandler({}), NoRedirect())
+    client.service_instances = {} if require_instance else None
+    return client
+
+
 def http_json(client, base, path, body=None):
     payload = None if body is None else json.dumps(body, ensure_ascii=False).encode("utf-8")
     request = Request(base + path, data=payload, headers={
@@ -68,6 +77,13 @@ def http_json(client, base, path, body=None):
             raise EvaluationError(f"{path} returned HTTP {response.status}")
         raw = response.read()
     elapsed = (time.perf_counter() - started) * 1000
+    instances = getattr(client, "service_instances", None)
+    if instances is not None:
+        tokens = response.headers.get_all(SEARCH_INSTANCE_HEADER) or []
+        if len(tokens) != 1 or not INSTANCE_ID.fullmatch(tokens[0]):
+            raise EvaluationError(f"{base}{path} did not return a valid search instance ID")
+        if instances.setdefault(base, tokens[0]) != tokens[0]:
+            raise EvaluationError(f"{base} restarted during the current capture epoch")
     value = json.loads(raw)
     if not isinstance(value, dict):
         raise EvaluationError(f"{path} response must be a JSON object")
@@ -176,8 +192,12 @@ def search(client, base, depth, record, identity, reranker_identity=None):
             raise EvaluationError("CE response returned unexpected gate features")
     elif "rerank" in response:
         raise EvaluationError("response reranked candidates where CE must be bypassed")
-    return {"ranking": ranking, "http_ms": latency, "timings_ms": timings, "ce_pairs": scored,
-            "explicit_constraints": explicit, "features": feature_row}
+    result = {"ranking": ranking, "http_ms": latency, "timings_ms": timings, "ce_pairs": scored,
+              "explicit_constraints": explicit, "features": feature_row}
+    instances = getattr(client, "service_instances", None)
+    if instances is not None:
+        result["service_instance"] = instances[base]
+    return result
 
 
 def capture_query(client, arms, record, index, order, identity):
@@ -281,7 +301,15 @@ def publish_trec(out, name, run):
     publish(out / f"{name}.trec", "".join(lines).encode("utf-8"))
 
 
-def summarize(out, protocol, names, qrels, captured, random_plan=None):
+def bind_epoch_instance(instances, epoch, arm, observation):
+    token = observation.get("service_instance")
+    if not isinstance(token, str) or not INSTANCE_ID.fullmatch(token):
+        raise EvaluationError(f"missing or invalid service instance for {arm} in epoch {epoch}")
+    if instances.setdefault(epoch, {}).setdefault(arm, token) != token:
+        raise EvaluationError(f"mixed service instances for {arm} in epoch {epoch}")
+
+
+def summarize(out, protocol, names, qrels, captured, random_plan=None, instances=None):
     runs = {}
     arms = {}
     for name in names:
@@ -337,6 +365,8 @@ def summarize(out, protocol, names, qrels, captured, random_plan=None):
                 (json.dumps(diagnostics, ensure_ascii=False, indent=2, sort_keys=True,
                             allow_nan=False) + "\n").encode("utf-8"))
         summary["matched_random_replay"] = random_replay(random_plan, qrels, runs["learned"], random_run)
+    if instances is not None:
+        summary["service_instances_by_epoch"] = instances
     publish(out / "summary.json", (json.dumps(summary, ensure_ascii=False, indent=2,
                                              sort_keys=True) + "\n").encode("utf-8"))
 
@@ -404,7 +434,7 @@ def random_live_pair(client, arms, identity, record, control, order, reference):
                        for key in ("ce_pairs", "explicit_constraints", "features"))):
             raise EvaluationError(f"live qid={record.qid!r}, arm={name}: differs from frozen capture")
         rows["learned" if name == "learned" else "random"] = {
-            key: observed[key] for key in ("ce_pairs", "http_ms")
+            key: observed[key] for key in ("ce_pairs", "http_ms", "service_instance") if key in observed
         }
     return {"control": control, "order": list(order), **rows}
 
@@ -424,13 +454,16 @@ def measure_random(out, client, arms, records, warmup, capture_protocol, capture
         "control": "client_dispatch_to_fixed_rrf_or_ce40",
         "latency": "http_open_through_body_read_ms",
     }
+    if "instance_header" in capture_protocol:
+        live_protocol["instance_header"] = capture_protocol["instance_header"]
+    instances = {}
     schedule = list(random_live_schedule(records, plan))
     with closing(sqlite3.connect(out / "matched-random-live.sqlite3")) as db:
         saved = journal(db, live_protocol)
         if list(saved) != [record.qid for record, _, _ in schedule[:len(saved)]]:
             raise EvaluationError("live random journal contains unexpected query IDs or order")
         for record, control, order in schedule[:len(saved)]:
-            _, row = saved[record.qid]
+            epoch, row = saved[record.qid]
             reference = captured[record.qid][1]
             if (row.get("control") != control or row.get("order") != list(order)
                     or any(row.get(name, {}).get("ce_pairs") != reference[arm]["ce_pairs"]
@@ -439,6 +472,9 @@ def measure_random(out, client, arms, records, warmup, capture_protocol, capture
                            or not math.isfinite(row[name]["http_ms"]) or row[name]["http_ms"] < 0
                            for name in ("learned", "random"))):
                 raise EvaluationError(f"live random journal has invalid pair for qid={record.qid!r}")
+            if "instance_header" in live_protocol:
+                bind_epoch_instance(instances, epoch, "learned", row["learned"])
+                bind_epoch_instance(instances, epoch, control, row["random"])
         if len(saved) < len(schedule):
             if check_services(client, arms) != identity:
                 raise EvaluationError("live random service identity differs from frozen capture")
@@ -448,6 +484,9 @@ def measure_random(out, client, arms, records, warmup, capture_protocol, capture
             for i, (record, control, order) in enumerate(schedule[len(saved):], len(saved) + 1):
                 pair = random_live_pair(client, arms, identity, record, control, order,
                                         captured[record.qid][1])
+                if "instance_header" in live_protocol:
+                    bind_epoch_instance(instances, epoch, "learned", pair["learned"])
+                    bind_epoch_instance(instances, epoch, control, pair["random"])
                 if i == len(schedule) and check_services(client, arms) != identity:
                     with db:
                         db.execute("INSERT INTO invalid_epochs VALUES (?, ?)",
@@ -487,6 +526,8 @@ def measure_random(out, client, arms, records, warmup, capture_protocol, capture
     path = out / "matched-random-live.json"
     result = {"protocol": live_protocol, "ce_pairs": total, "queries_by_ce_pair_count": work,
               "latency_by_epoch": epochs}
+    if "instance_header" in live_protocol:
+        result["service_instances_by_epoch"] = instances
     publish(path, (json.dumps(result, ensure_ascii=False, sort_keys=True, indent=2,
                               allow_nan=False) + "\n").encode("utf-8"))
     return path
@@ -499,6 +540,8 @@ def main(argv=None):
     cli.add_argument("--learned", help="Optional digest-bound CE40 gate endpoint")
     cli.add_argument("--measure-random", action="store_true",
                      help="Measure paired HTTP latency against the frozen matched random plan")
+    cli.add_argument("--require-instance-id", action="store_true",
+                     help="Verify that every HTTP response in an epoch comes from the same service instances")
     for name in ("queries", "warmup-queries", "qrels", "out"):
         cli.add_argument(f"--{name}", type=Path, required=True)
     args = cli.parse_args(argv)
@@ -531,7 +574,7 @@ def main(argv=None):
     ):
         raise EvaluationError("warmup and evaluated queries must be disjoint by ID and normalized text")
 
-    client = build_opener(ProxyHandler({}), NoRedirect())
+    client = http_client(args.require_instance_id)
     order = list(arms)
     random.Random(SEED).shuffle(order)
     protocol = {
@@ -541,6 +584,9 @@ def main(argv=None):
         "inputs_sha256": fingerprints,
         "query_count": len(records), "warmup_query_count": len(warmup),
     }
+    if args.require_instance_id:
+        protocol["instance_header"] = SEARCH_INSTANCE_HEADER
+    instances = {} if args.require_instance_id else None
     args.out.mkdir(parents=True, exist_ok=True)
     with closing(sqlite3.connect(args.out / "capture.sqlite3")) as db:
         identities = completed_identity(db, len(records))
@@ -552,6 +598,10 @@ def main(argv=None):
             data.keys() != arms.keys() for _, data in captured.values()
         ):
             raise EvaluationError("journal contains an unexpected query or incomplete paired arms")
+        if instances is not None:
+            for epoch, data in captured.values():
+                for arm, observation in data.items():
+                    bind_epoch_instance(instances, epoch, arm, observation)
         if len(captured) < len(records):
             for i, record in enumerate(warmup):
                 capture_query(client, arms, record, i, order, identities)
@@ -559,6 +609,9 @@ def main(argv=None):
             for i in range(len(captured), len(records)):
                 record = records[i]
                 data = capture_query(client, arms, record, i, order, identities)
+                if instances is not None:
+                    for arm, observation in data.items():
+                        bind_epoch_instance(instances, epoch, arm, observation)
                 if i + 1 == len(records) and check_services(client, arms) != identities:
                     with db:
                         db.execute("INSERT INTO invalid_epochs VALUES (?, ?)",
@@ -578,8 +631,8 @@ def main(argv=None):
                 (json.dumps(random_plan, sort_keys=True, ensure_ascii=False, indent=2)
                  + "\n").encode("utf-8"))
     if args.measure_random:
-        print(measure_random(args.out, client, arms, records, warmup, protocol, captured,
-                             random_plan))
+        print(measure_random(args.out, http_client(args.require_instance_id), arms, records,
+                             warmup, protocol, captured, random_plan))
     if sha256(args.qrels) != fingerprints["qrels"]:
         raise EvaluationError("qrels changed during capture")
     qrels = load_qrels(args.qrels)
@@ -589,7 +642,7 @@ def main(argv=None):
     if missing_qrels:
         raise EvaluationError(f"{len(missing_qrels)} evaluated queries have no qrels")
     summarize(args.out, protocol, arms, {qid: qrels[qid] for qid in query_ids}, captured,
-              random_plan)
+              random_plan, instances)
     print(args.out / "summary.json")
 
 

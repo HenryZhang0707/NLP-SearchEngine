@@ -1,6 +1,6 @@
 """Exercise the peer routing and CE seams through the public search handler."""
 
-from contextlib import redirect_stderr
+from contextlib import closing, redirect_stderr
 from dataclasses import asdict
 from http.server import ThreadingHTTPServer
 import hashlib
@@ -8,6 +8,7 @@ import io
 import json
 import math
 from pathlib import Path
+import sqlite3
 from tempfile import TemporaryDirectory
 import threading
 import unittest
@@ -18,6 +19,7 @@ from urllib.request import ProxyHandler, Request, build_opener
 from contracts.ce import GATE_DEPTH, GATE_FEATURE_NAMES, gate_binding
 from contracts.index_format import BM25Spec
 from contracts.retrieval import EmbeddingSpec, VectorManifest, VectorRecord, corpus_fingerprint
+from evaluation import ce_http
 from evaluation.evaluate import EvaluationError, QueryRecord, evaluate_http
 from online import server
 from online.ce_gate import load_gate
@@ -97,6 +99,10 @@ class PeerRoutingIntegrationTests(unittest.TestCase):
         engine = SearchEngine(self.reader, self.encoder, self.vectors,
                               router=router, reranker=reranker)
         sink = io.StringIO()
+        service = self.start_service(engine, sink)
+        return f"http://127.0.0.1:{service.server_port}/search", sink
+
+    def start_service(self, engine, sink):
         handler = make_handler(engine, search_log=SearchLogger(sink))
         server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
         thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01},
@@ -109,7 +115,7 @@ class PeerRoutingIntegrationTests(unittest.TestCase):
             thread.join(timeout=5)
 
         self.addCleanup(stop)
-        return f"http://127.0.0.1:{server.server_port}/search", sink
+        return server
 
     def post(self, endpoint, **payload):
         request = Request(endpoint, json.dumps(payload).encode("utf-8"),
@@ -137,6 +143,70 @@ class PeerRoutingIntegrationTests(unittest.TestCase):
         raw = json.dumps(artifact).encode("utf-8")
         path.write_bytes(raw)
         return hashlib.sha256(raw).hexdigest()
+
+    def test_ce_capture_resumes_in_a_new_epoch_after_same_config_restart(self):
+        def ce_scorer():
+            scorer = RecordingScorer()
+            scorer.identity = {**scorer.identity, "weights_sha256": "a" * 64,
+                               "inventory_sha256": "b" * 64}
+            scorer.scores = [1.0, 2.0, 3.0, 4.0]
+            return scorer
+
+        def engine(reranker=None):
+            return SearchEngine(self.reader, self.encoder, self.vectors, reranker=reranker)
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            gate_path = root / "gate.json"
+            gate = load_gate(gate_path, self.write_gate(gate_path, ce_scorer()))
+            fixed = engine(HybridReranker(ce_scorer(), depth=40, capture_features=True))
+            sink = io.StringIO()
+            ce40 = self.start_service(fixed, sink)
+            profiles = {
+                "rrf": self.start_service(engine(), io.StringIO()),
+                "ce28": self.start_service(engine(HybridReranker(ce_scorer(), depth=28)), io.StringIO()),
+                "ce40": ce40,
+                "learned": self.start_service(
+                    engine(HybridReranker(ce_scorer(), depth=40, gate=gate)), io.StringIO()),
+            }
+            urls = {name: f"http://127.0.0.1:{service.server_port}" for name, service in profiles.items()}
+            (root / "queries.tsv").write_text("q1\tphone\nq2\tphone alpha missing\n", encoding="utf-8")
+            (root / "warmup.tsv").write_text("w1\tcamera\n", encoding="utf-8")
+            (root / "qrels.tsv").write_text("q1 0 z 1\nq2 0 z 1\n", encoding="utf-8")
+            out = root / "capture"
+            args = [
+                "--baseline", urls["rrf"], "--rerank", "28", urls["ce28"],
+                "--rerank", "40", urls["ce40"], "--learned", urls["learned"],
+                "--queries", str(root / "queries.tsv"), "--qrels", str(root / "qrels.tsv"),
+                "--warmup-queries", str(root / "warmup.tsv"), "--out", str(out),
+                "--require-instance-id", "--measure-random",
+            ]
+            capture = ce_http.capture_query
+
+            def restart_before_second_query(client, arms, record, *rest):
+                if record.qid == "q2":
+                    # Keep the endpoint and effective profile identical to a process restart.
+                    ce40.RequestHandlerClass = make_handler(fixed, search_log=SearchLogger(sink))
+                return capture(client, arms, record, *rest)
+
+            with patch.object(ce_http, "capture_query", side_effect=restart_before_second_query):
+                with self.assertRaisesRegex(EvaluationError, "q2.*ce40.*restarted"):
+                    ce_http.main(args)
+            self.assertFalse((out / "summary.json").exists())
+            with closing(sqlite3.connect(out / "capture.sqlite3")) as db:
+                self.assertEqual(db.execute("SELECT qid FROM queries").fetchall(), [("q1",)])
+
+            ce_http.main(args)
+            summary = json.loads((out / "summary.json").read_bytes())
+            instances = list(summary["service_instances_by_epoch"].values())
+            self.assertEqual(len(instances), 2)
+            self.assertNotEqual(instances[0]["ce40"], instances[1]["ce40"])
+            self.assertEqual(instances[0]["rrf"], instances[1]["rrf"])
+            live = json.loads((out / "matched-random-live.json").read_bytes())
+            self.assertEqual(live["ce_pairs"], {"learned": 4, "random": 4})
+            self.assertEqual(len(live["service_instances_by_epoch"]), 1)
+            live_instances = next(iter(live["service_instances_by_epoch"].values()))
+            self.assertTrue(any(live_instances.items() <= row.items() for row in instances))
 
     def test_learned_gate_skips_or_applies_the_same_fixed_ce40(self):
         scorer, fixed_scorer = RecordingScorer(), RecordingScorer()
