@@ -42,9 +42,14 @@ class MemoryVectorIndex:
 class QdrantVectorIndex:
     """Read-only Qdrant adapter with manifest/collection compatibility checks."""
 
-    def __init__(self, manifest: VectorManifest, url: str):
+    def __init__(self, manifest: VectorManifest, url: str, *, ef=None, exact=False):
         if manifest.backend != "qdrant-hnsw":
             raise ValueError("Qdrant 适配器需要 qdrant-hnsw manifest")
+        if ef is not None and (type(ef) is not int or ef <= 0):
+            raise ValueError('ef must be a positive integer')
+        if type(exact) is not bool:
+            raise ValueError('exact must be boolean')
+        self.search_params = {'hnsw_ef': ef, 'exact': exact}
         try:
             from qdrant_client import QdrantClient
         except ImportError as error:
@@ -84,16 +89,26 @@ class QdrantVectorIndex:
         if type(limit) is not int or limit <= 0:
             raise ValueError("limit 必须是正整数")
         try:
+            extra = {}
+            params = self.search_params
+            if (not isinstance(params, dict) or set(params) != {'hnsw_ef', 'exact'} or
+                    (params['hnsw_ef'] is not None and
+                     (type(params['hnsw_ef']) is not int or params['hnsw_ef'] <= 0)) or
+                    type(params['exact']) is not bool):
+                raise ValueError('invalid Qdrant search parameters')
+            if params['hnsw_ef'] is not None or params['exact']:
+                from qdrant_client import models
+                extra['search_params'] = models.SearchParams(**params)
             if hasattr(self._client, "query_points"):
                 response = self._client.query_points(
                     collection_name=self._collection, query=list(query_vector), limit=limit,
-                    with_payload=True,
+                    with_payload=True, **extra,
                 )
                 points = getattr(response, "points", response)
             else:
                 points = self._client.search(
                     collection_name=self._collection, query_vector=list(query_vector),
-                    limit=limit, with_payload=True,
+                    limit=limit, with_payload=True, **extra,
                 )
         except Exception as error:
             raise RetrievalUnavailable(f"Qdrant 查询失败: {error}") from error
