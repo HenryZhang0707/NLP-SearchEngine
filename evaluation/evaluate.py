@@ -105,7 +105,17 @@ def _atomic_json(path: Path, value: dict) -> None:
     pending = path.with_name(path.name + ".tmp")
     with pending.open("x", encoding="utf-8") as handle:
         handle.write(json.dumps(value, ensure_ascii=False, indent=2) + "\n")
-    pending.replace(path)
+    # On Windows a reader may hold the destination without delete sharing.
+    # Retry the same atomic rename; keep the previous snapshot and pending
+    # bytes intact if the sharing violation does not clear.
+    for delay in (0.01, 0.02, 0.04, 0.08, 0.16, 0.32, None):
+        try:
+            pending.replace(path)
+            return
+        except PermissionError as error:
+            if delay is None or getattr(error, "winerror", None) not in (5, 32, 33):
+                raise
+            time.sleep(delay)
 
 
 def _append_request_event(path: Path, value: dict) -> None:

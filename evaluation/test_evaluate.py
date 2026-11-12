@@ -16,6 +16,7 @@ from evaluation.evaluate import (
     EvaluationError,
     QueryRecord,
     QueryRouting,
+    _atomic_json,
     evaluate_http,
     evaluate_run,
     load_qrels,
@@ -24,6 +25,49 @@ from evaluation.evaluate import (
     main,
 )
 from evaluation.compare import paired_bootstrap
+
+
+class RequestSnapshotTests(unittest.TestCase):
+    def test_transient_windows_reader_lock_keeps_old_snapshot_until_replace(self):
+        with tempfile.TemporaryDirectory() as directory:
+            snapshot = Path(directory) / "requests.json"
+            snapshot.write_text('{"count":1}', encoding="utf-8")
+            pending = snapshot.with_suffix(".json.tmp")
+            replace = Path.replace
+            attempts = []
+
+            def replace_after_reader_closes(source, target):
+                attempts.append(source)
+                if len(attempts) == 1:
+                    self.assertEqual(json.loads(snapshot.read_text(encoding="utf-8")), {"count": 1})
+                    self.assertEqual(json.loads(pending.read_text(encoding="utf-8")), {"count": 2})
+                    error = PermissionError("reader is open without delete sharing")
+                    error.winerror = 5
+                    raise error
+                return replace(source, target)
+
+            with patch.object(Path, "replace", new=replace_after_reader_closes), \
+                    patch("evaluation.evaluate.time.sleep") as pause:
+                _atomic_json(snapshot, {"count": 2})
+            pause.assert_called_once_with(0.01)
+            self.assertEqual(attempts, [pending, pending])
+            self.assertEqual(json.loads(snapshot.read_text(encoding="utf-8")), {"count": 2})
+            self.assertFalse(pending.exists())
+
+    def test_persistent_windows_lock_fails_with_both_snapshots_intact(self):
+        with tempfile.TemporaryDirectory() as directory:
+            snapshot = Path(directory) / "requests.json"
+            snapshot.write_text('{"count":1}', encoding="utf-8")
+            error = PermissionError("persistent reader lock")
+            error.winerror = 32
+            with patch.object(Path, "replace", side_effect=error) as rename, \
+                    patch("evaluation.evaluate.time.sleep") as pause, self.assertRaises(PermissionError):
+                _atomic_json(snapshot, {"count": 2})
+            self.assertEqual(rename.call_count, 7)
+            self.assertEqual(pause.call_count, 6)
+            self.assertEqual(json.loads(snapshot.read_text(encoding="utf-8")), {"count": 1})
+            pending = snapshot.with_suffix(".json.tmp")
+            self.assertEqual(json.loads(pending.read_text(encoding="utf-8")), {"count": 2})
 
 
 class _Handler(BaseHTTPRequestHandler):

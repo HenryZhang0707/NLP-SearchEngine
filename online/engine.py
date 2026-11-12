@@ -39,6 +39,9 @@ class SearchEngine:
             check_alignment(reader, vectors, encoder)
         self.router = RuleRouter(self.config) if router is None else router
         self.policy = router_identity(self.router)
+        check_binding = getattr(self.router, "check_binding", None)
+        if callable(check_binding):
+            check_binding(reader, self.config)
 
     def info(self) -> dict:
         """能力与配置回显，不把尚未实现的后端宣称为可用。

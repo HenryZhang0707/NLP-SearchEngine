@@ -309,6 +309,60 @@ evaluation denominator. Run `evaluation.external_run` on the emitted TREC
 file with the same exceptions. The qrels bind the policy by SHA256 and do not
 participate in ranking.
 
+### Matched HTTP runs on the shared development corpus
+
+Point the serving profile at the 100k compact lexical index and the matching
+Qdrant snapshot. Use the same verified BGE cache for the snapshot and the exact
+reference above. The development protocol uses BGE
+`BAAI/bge-small-zh-v1.5@7999e1d3359715c523056ef9478215996d62a620`,
+512-dimensional FP32 vectors, `candidate_k=200`, `rrf_c=60`,
+`hnsw_ef=256`, and the built-in `rule` policy. Verify the corpus fingerprint,
+embedding, search parameters, collection count and HNSW readiness before and
+after each arm. Record an immutable copy of the service log for each arm.
+The [serving guide](../docs/online-serving.md) describes the profile and log
+formats.
+
+For each of `lexical`, `dense`, `hybrid` and `adaptive`, use a fresh output
+path and unique request tag. This example shows the dense arm, for which the
+frozen HTTP policy records one unsupported explicit-constraint query:
+
+```bash
+python -m evaluation.evaluate --endpoint http://127.0.0.1:8000/search \
+  --queries data/mini100k/queries.dev.jsonl --qrels data/mini100k/qrels.dev.tsv \
+  --mode dense --scorer bm25 --expander none --k 10 --map-k 100 \
+  --unsupported-policy data/mini100k/dense-http-unsupported.json \
+  --include-per-query --fail-on-fallback --timeout 30 \
+  --request-tag mini100k-dense-attempt-001 --tag mini100k-dense \
+  --output-run runs/mini100k/dense.trec --output-json runs/mini100k/dense.json
+
+python -m evaluation.serving_cost \
+  --run runs/mini100k/dense.trec.requests.json runs/mini100k/dense.server.log
+```
+
+Omit `--unsupported-policy` in the other three arms. Keep the constraint query
+in all quality denominators; it contributes an empty ranking to dense and
+exact dense. Confirm that hybrid and adaptive preserve its lexical filter.
+For ANN agreement, compare the exact and ANN document sets at depths 10 and
+100 over the remaining 1,019 queries. Run paired bootstrap with all 1,020
+queries for quality and report the direction of each subtraction.
+
+Measure HTTP latency in a separate warm run with one client request at a time,
+the same frozen query sample for all modes, and an interleaved mode order.
+Keep the per-request wall-clock observations and their matching server log
+rows. Time measured inside the server and wall time measured by the client
+have different boundaries. The exact reference is an offline run, so it has
+no comparable HTTP latency.
+
+To reconstruct the 100k cost schedule, exclude the declared constraint ID,
+sort the remaining IDs by the bytes of SHA-256 of UTF-8 `2026:<qid>`, and
+take the first 96. For each zero-based repeat `r = 0, 1, 2`, copy that list
+and shuffle it with Python `random.Random(2026 + r)`. At zero-based position
+`i` in the shuffled list, request the mode indices
+`[(j + i + r) % 4 for j in (0, 1, 3, 2)]` from
+`[lexical, dense, hybrid, adaptive]`, at depth 100. Before measuring, warm up
+each mode with the first ten eligible training queries. Average each
+query's three repeats before resampling paired latency differences.
+
 ## Human review of a frozen candidate pool
 
 Use the frozen corpus, query split and candidate pool already admitted for the

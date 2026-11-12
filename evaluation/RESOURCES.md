@@ -310,6 +310,48 @@ done
 
 HTTP 和 BM25S 两份 TREC 文件 SHA-256 分别为 `2bea488509bc591c52858c30adbe2677d5fc5fe14bb65dc3a9d6957ec76645bf`、`e46e616b962c5fccb03707feeefe4aaeb01d9060f618dcfe3ff5a39b4484945f`。逐查询证据与校验收据保存在 Git 外。复建、TREC 校验和参考入口见 [评测说明](README.md#external-trec-runs-and-the-dureader-100k-development-subset)。
 
+## DuReader 100k 四模式与精确稠密参考
+
+2026-11-12 在固定运行源码 `71284695a822e08088e3c393eb387ea3b8d54667` 上完成
+100,000 篇、1,020 条 dev 查询、4,960 条 qrels 的四模式质量测试。
+冻结协议 SHA-256 为 `26c99b6ab9cfe8ed97adddd54864450b48b5bc6e2f7cf68321e53d94aea77e64`。
+四臂使用同一压缩词法索引、候选池 200、RRF 60、规则 `rules-v1`、
+BM25 和关闭查询扩展的配置，评测深度 100。语义路径使用
+[固定 BGE revision](https://huggingface.co/BAAI/bge-small-zh-v1.5/tree/7999e1d3359715c523056ef9478215996d62a620)，
+512 维 FP32、CLS、右截断 512、L2 归一化和固定查询前缀。
+98 个封存的文档向量块同时供精确参考和 Qdrant 1.16.0 使用；
+精确参考以 float64 计算余弦相似度。HNSW 使用 `m=16`、
+`ef_construct=100`、`full_scan_threshold=10` KiB、`max_indexing_threads=2`、
+`on_disk=true`、`hnsw_ef=256`，正式请求前核验精确点数 100,000，
+索引向量数 100,000，collection 为 `green`。快照恢复后重复该核验。
+
+语料的有序指纹为 `0792a807c614de14e3b57f3b8f051add2b1c4d7556eee743f4e3cd69f28d5457`，
+Qdrant 快照 SHA-256 为 `4d5bf2e061a30a4be4b51711e951637851a510fec73acd9937e4c811bc3dbcfd`。
+四模式的词法与向量身份及请求配置均通过逐臂前后检查。
+一条显式约束查询按预先登记的规则留在 Dense 和精确参考的分母内，
+以空排名计分；Hybrid 和 Adaptive 继续执行硬过滤。
+质量分数、配对区间、约束边界和成本见[报告第 9 节](../REPORT.md#9-协作开发集与-router-对照)。
+精确参考与 ANN 使用同一编码器，故它们的差异衡量近似检索与实现一致性。
+
+| 方法 | TREC 行数 | TREC SHA-256 |
+| --- | ---: | --- |
+| HTTP BM25（compact） | 101,872 | `2bea488509bc591c52858c30adbe2677d5fc5fe14bb65dc3a9d6957ec76645bf` |
+| HTTP Dense | 101,900 | `62caf89b6e77e3af0d3fc8f0de870e02e45d96df657be9051cde2508299abdc2` |
+| HTTP Hybrid | 102,000 | `dae02ed96fb606d5fbeade44bffad29938565b107cb03dbfbe96c492c4c24d37` |
+| HTTP Adaptive | 101,943 | `3fc535ca9eec398aacf9bf808faf5c2474cee53a8306555c29d8e752a04c080e` |
+| 精确 Dense 参考 | 101,900 | `240637c36bcd50dc059a95c587c776edb1e072900740383f6120fdd5aa92e859` |
+
+两个服务 epoch 使用同一快照和参数。质量臂保留各自的请求与服务日志，
+跨臂延迟仅使用随后单独运行的交错计时。复现步骤见
+[同语料 HTTP 评测](README.md#matched-http-runs-on-the-shared-development-corpus)。
+计时环境为 Intel Core Ultra 7 155H、Windows Python 3.13.5 CPU 推理、
+WSL 内 Qdrant 1.16.0 和回环 HTTP。计时回执 SHA-256 为
+`6dfcb325e462edee38b0335c6b6a26711c180e299953a6f9642d8e980bc3acb5`。
+质量配对回执 SHA-256 为 `28ec2c9e3407003b6979bc1ce1f37ff10f874372855cfc0c237686b6138187bc`，
+逐臂 TREC 重评分、ANN 重合率与单一计时服务日志的复核回执 SHA-256 为
+`25b137212b918173b9eaa9fc94baed5b48c71d09e2b4d9aefd9162be19554b34`。
+原始请求、逐查询结果、TREC、回执和快照保存在 Git 外。
+
 ## 新闻 20k 本地浏览器演示与恢复验收
 
 本地恢复并核对交接清单中的 10 个索引与向量文件，验证语料指纹
