@@ -53,3 +53,7 @@ python -m evaluation.capture_sharded_bm25 \
 ```
 
 One shard reader is resident at a time. All queries are scored before moving to the next shard, and only the merged Top-k candidates are retained. Explicit boolean/phrase filters are evaluated within each shard; NOT-only zero-score candidates retain global document-order ties. Statistics, queries and per-shard manifests are bound by SHA256, and index file checksums are verified when readers load. The resulting candidate capture is local-only and must not be committed to the PR. Batch duration is recorded as candidate generation work, never presented as online latency. A monolithic-engine comparison covers ordinary queries, AND, NOT and phrase queries on an unequal-shard test corpus.
+
+## Full/subset normalization parity
+
+`evaluation.audit_full_subset_parity` scanned all 8,096,668 normalized records and verified every one of the frozen 100,000 subset records by ID, title, text, and relative order. The full normalized corpus SHA256 is `bc67f3ccfe7423c039f04c7a5e7f6eae07a7f722087edf0caa7cfc694a8c45e8`. The frozen subset corpus SHA256 remains `f24b50b6012b47f6fb5f72272666dbf187124a869f19d1c8d83f7e30d6cb62b4`. The aggregate audit is in `full-subset-parity-audit.json`. This establishes exact subset coverage in the full normalized file, not a record-by-record identity audit of all full-corpus documents against the official archive.
