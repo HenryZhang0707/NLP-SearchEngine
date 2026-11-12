@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 
 from contracts import analyzer
+from online.parser import parse
 from contracts.index_format import sha256_of
 from evaluation.build_full_sharded_bm25 import verified
 from evaluation.prepare_bm25_router import jsonl_rows
@@ -18,7 +19,8 @@ def prepare(corpus_dir, index_dir, queries, output):
     if not parts:
         raise ValueError('no declared shards')
     terms = {t.term for row in jsonl_rows(queries)
-             for t in analyzer.analyze(row.get('query', row.get('text', '')))}
+             for raw in parse(row.get('query', row.get('text', '')))['terms']
+             for t in analyzer.analyze(raw)}
     dfs = dict.fromkeys(terms, 0)
     count = total_length = 0
     provenance = []

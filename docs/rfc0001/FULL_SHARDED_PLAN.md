@@ -41,3 +41,15 @@ python -m evaluation.audit_sharded_bm25_sources \
 ```
 
 This streams source and indexed documents in lockstep, checking all document IDs, titles, texts and contiguous internal IDs. It also hashes the raw concatenation of ordered source shards and compares it with the full normalized corpus hash. The report is published only when every shard is complete, required index hashes verify, the document counts agree, and source parity passes. It does not claim semantic conformance of every posting or correctness of the upstream normalization; those remain separate audit requirements.
+
+## Full BM25 candidate capture
+
+After global statistics and source identity are verified:
+
+```bash
+python -m evaluation.capture_sharded_bm25 \
+  --index-dir /path/to/index100k --queries /path/to/queries.jsonl \
+  --statistics /path/to/global-statistics.json --output /path/to/full-bm25-capture --k 200
+```
+
+One shard reader is resident at a time. All queries are scored before moving to the next shard, and only the merged Top-k candidates are retained. Explicit boolean/phrase filters are evaluated within each shard; NOT-only zero-score candidates retain global document-order ties. Statistics, queries and per-shard manifests are bound by SHA256, and index file checksums are verified when readers load. The resulting candidate capture is local-only and must not be committed to the PR. Batch duration is recorded as candidate generation work, never presented as online latency. A monolithic-engine comparison covers ordinary queries, AND, NOT and phrase queries on an unequal-shard test corpus.

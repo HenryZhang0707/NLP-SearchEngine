@@ -97,3 +97,38 @@ def test_source_audit_rejects_wrong_corpus_even_when_index_hashes_pass(tmp_path)
     full.write_bytes(full.read_bytes() + b'\n')
     with pytest.raises(ValueError, match='concatenation'):
         audit(source, indices, full, 1, tmp_path / 'different.json')
+
+
+def test_capture_matches_monolithic_engine_including_explicit_constraints(tmp_path):
+    from evaluation.prepare_sharded_bm25_statistics import prepare
+    from evaluation.capture_sharded_bm25 import capture
+    from evaluation.prepare_bm25_router import jsonl_rows
+    from online.engine import SearchEngine
+    from contracts.api import SearchRequest
+    source = tmp_path / 'sources'
+    source.mkdir()
+    indices = tmp_path / 'indices'
+    all_rows = []
+    for i, texts in enumerate([['苹果 香蕉', '香蕉'], ['汽车', '苹果 苹果', '香蕉 汽车']]):
+        rows = [dict(doc_id=f'{i}-{j}', title='', text=text) for j, text in enumerate(texts)]
+        all_rows.extend(rows)
+        part = source / f'part-{i:03d}'
+        part.write_text(''.join(json.dumps(r) + '\n' for r in rows))
+        build(part, indices / part.name, f'dureader-full-shard-{i:03d}')
+    full = tmp_path / 'full.jsonl'
+    full.write_text(''.join(json.dumps(r) + '\n' for r in all_rows))
+    build(full, tmp_path / 'whole', 'whole')
+    engine = SearchEngine(DiskIndex(tmp_path / 'whole'))
+    queries = tmp_path / 'queries.jsonl'
+    queries.write_text(''.join(json.dumps(dict(query_id=str(i), text=q)) + '\n'
+                               for i, q in enumerate(['苹果', '苹果 AND 香蕉', 'NOT 苹果', '"苹果 香蕉"'])))
+    stats = tmp_path / 'global.json'
+    prepare(source, indices, queries, stats)
+    capture(indices, queries, stats, tmp_path / 'capture', k=100)
+    for row in jsonl_rows(tmp_path / 'capture/capture.jsonl'):
+        expected = engine.search(SearchRequest(query=row['text'], mode='lexical', k=100))
+        assert [x['doc_id'] for x in row['lexical']] == [x.doc_id for x in expected.results]
+        assert [x['score'] for x in row['lexical']] == pytest.approx([x.score for x in expected.results])
+    queries.write_text(queries.read_text() + '\n')
+    with pytest.raises(ValueError, match='query bytes'):
+        capture(indices, queries, stats, tmp_path / 'wrong-capture')

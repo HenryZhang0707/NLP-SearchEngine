@@ -29,11 +29,13 @@ class GlobalStatisticsView:
         return self.local.manifest()
 
 
-def shard_topk(reader, terms, *, n_docs, avgdl, dfs, offset, k):
+def shard_topk(reader, terms, *, n_docs, avgdl, dfs, offset, k, candidate_docs=None):
     if k < 1 or offset < 0:
         raise ValueError('invalid k or document offset')
     view = GlobalStatisticsView(reader, n_docs, avgdl, dfs)
-    scores = bm25(view, terms)
+    scores = bm25(view, terms, candidate_docs=candidate_docs)
+    if candidate_docs is not None:
+        scores = {docid: scores.get(docid, 0.0) for docid in candidate_docs}
     return nsmallest(k, ((docid + offset, score) for docid, score in scores.items()),
                      key=lambda hit: (-hit[1], hit[0]))
 
