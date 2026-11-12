@@ -158,6 +158,7 @@ def make_handler(engine: SearchEngine, static_root: Path | None = None, *,
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header(SEARCH_INSTANCE_HEADER, instance_id)
             self.end_headers()
             self.wfile.write(body)
 

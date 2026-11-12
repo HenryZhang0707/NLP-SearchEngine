@@ -37,6 +37,7 @@ OOV_TOKEN = "zzqx"
 ALL_DOC_IDS = [f"fake-doc-{index:02d}" for index in range(30)]
 ALLOWED_FIELDS = frozenset({"query", "mode", "k", "offset", "scorer", "expander", "run_tag"})
 MODES = ("lexical", "dense", "hybrid", "adaptive")
+INSTANCE = "a" * 32
 
 
 class BadRequest(ValueError):
@@ -75,6 +76,10 @@ class FakeState:
                                        else identity_corpus_sha256)
         self.analyzer_hash = identity_analyzer_hash
         self.identity_bm25 = identity_bm25
+        self.instance_id = None
+        self.error_instance_id = None
+        self.redirect_health = False
+        self.redirect_followed = False
 
     def manifest(self):
         manifest = {
@@ -256,6 +261,11 @@ def make_handler(state):
             self.send_response(code)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
+            instance = state.instance_id
+            if code >= 400 and state.error_instance_id is not None:
+                instance = state.error_instance_id
+            if instance is not None:
+                self.send_header(acceptance.INSTANCE_HEADER, instance)
             self.end_headers()
             self.wfile.write(body)
 
@@ -267,7 +277,13 @@ def make_handler(state):
             path = urlsplit(self.path).path
             if path == "/":
                 self._send_bytes(200, b"<!doctype html><title>fake</title>", "text/html; charset=utf-8")
-            elif path == "/health":
+            elif path == "/health" and state.redirect_health:
+                self.send_response(302)
+                self.send_header("Location", "/redirect-target")
+                self.end_headers()
+            elif path in {"/health", "/redirect-target"}:
+                if path == "/redirect-target":
+                    state.redirect_followed = True
                 self._send(200, {"status": "ok", "index": {
                     "dataset": state.dataset, "n_docs": state.n_docs,
                     "schema_version": 1, "analyzer_hash": state.analyzer_hash,
@@ -335,12 +351,12 @@ class OnlineAcceptanceTest(unittest.TestCase):
         self.addCleanup(service.close)
         return service
 
-    def run_probe(self, endpoint, *, phase="healthy", lexical_only=False, out=None):
+    def run_probe(self, endpoint, *, phase="healthy", lexical_only=False, out=None, extra=()):
         out = out or self.out
         # 探针把逐条 PASS/FAIL 打到 stdout；这里捕获，避免预期失败的用例污染测试输出。
         with contextlib.redirect_stdout(io.StringIO()) as summary:
             status = acceptance.main(probe_argv(endpoint, out, phase=phase,
-                                                lexical_only=lexical_only))
+                                                lexical_only=lexical_only, extra=extra))
         self.last_summary = summary.getvalue()
         self.assertIn("证据", self.last_summary)
         return status, json.loads(out.read_text(encoding="utf-8"))
@@ -364,6 +380,7 @@ class OnlineAcceptanceTest(unittest.TestCase):
                      "candidate_boundary", "syntax_error"):
             self.assertIn(name, names)
         self.assertEqual(evidence["failures"], [])
+        self.assertNotIn("instance_binding", evidence)
         self.assertTrue(all(check["status"] == "PASS" for check in evidence["checks"]))
         search_events = [event for event in evidence["events"] if event["path"] == "/search"]
         self.assertTrue(search_events)
@@ -373,6 +390,52 @@ class OnlineAcceptanceTest(unittest.TestCase):
         self.assertGreaterEqual(len(tagged), 20)
         self.assertTrue(all(event["request"]["run_tag"] == "online-acceptance"
                             for event in tagged))
+
+    def test_strict_instance_is_bound_across_all_three_phases(self):
+        service = self.service()
+        service.state.instance_id = INSTANCE
+        status, healthy = self.run_probe(service.endpoint, extra=("--require-instance-id",))
+        self.assertEqual(status, 0, healthy["failures"])
+        self.assertEqual(healthy["instance_binding"]["verified_id"], INSTANCE)
+        expected = ("--expect-instance-id", healthy["instance_binding"]["verified_id"])
+        service.state.backend_up = False
+        status, down = self.run_probe(service.endpoint, phase="down", extra=expected)
+        self.assertEqual(status, 0, down["failures"])
+        self.assertEqual(down["instance_binding"]["verified_id"], INSTANCE)
+        service.state.backend_up = True
+        status, recovered = self.run_probe(service.endpoint, phase="recovered", extra=expected)
+        self.assertEqual(status, 0, recovered["failures"])
+        self.assertEqual(recovered["instance_binding"]["verified_id"], INSTANCE)
+        service.state.instance_id = "b" * 32
+        status, restarted = self.run_probe(service.endpoint, phase="recovered", extra=expected)
+        self.assertEqual(status, 1)
+        self.assertIn("health_is_lexical_liveness", restarted["failures"])
+        self.assertIsNone(restarted["instance_binding"]["verified_id"])
+
+    def test_strict_instance_rejects_missing_header_and_changed_error_response(self):
+        service = self.service(backend_up=False)
+        strict = ("--require-instance-id",)
+        status, evidence = self.run_probe(service.endpoint, phase="down", extra=strict)
+        self.assertEqual(status, 1)
+        self.assertIn("health_is_lexical_liveness", evidence["failures"])
+        self.assertIsNone(evidence["instance_binding"]["verified_id"])
+        service.state.instance_id = INSTANCE
+        service.state.error_instance_id = "b" * 32
+        status, evidence = self.run_probe(service.endpoint, phase="down", extra=strict)
+        self.assertEqual(status, 1)
+        self.assertNotIn("health_is_lexical_liveness", evidence["failures"])
+        self.assertIn("dense_unavailable_503", evidence["failures"])
+        self.assertIsNone(evidence["instance_binding"]["verified_id"])
+
+    def test_strict_instance_refuses_redirect_before_following_it(self):
+        service = self.service()
+        service.state.instance_id = INSTANCE
+        service.state.redirect_health = True
+        status, evidence = self.run_probe(service.endpoint, extra=("--require-instance-id",))
+        self.assertEqual(status, 1)
+        self.assertIn("health_is_lexical_liveness", evidence["failures"])
+        self.assertFalse(service.state.redirect_followed)
+        self.assertIsNone(evidence["instance_binding"]["verified_id"])
 
     def test_identity_mismatch_fails_each_expected_field(self):
         cases = (
