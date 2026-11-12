@@ -7,6 +7,7 @@ Run in isolation for interpretable latency; background load is disclosed.
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import statistics
 import threading
@@ -39,6 +40,9 @@ def benchmark(index,vector_manifest,model_path,ce_model,url,queries,qrels,
     from adapters.embedding import BGEEncoder
     output=Path(output)
     if output.exists():raise FileExistsError(output)
+    runtime_sources={str(Path(__file__).name):sha256_of(__file__)}
+    for path in ['evaluation/dureader_policy_features.py','online/vector_index.py','online/scorers.py']:
+        runtime_sources[path]=sha256_of(Path(__file__).resolve().parents[1]/path)
     bundle=json.loads((Path(policy_dir)/'models.json').read_text())
     source_predictions={r['query_id']:r for r in jsonl_rows(Path(policy_dir)/'dev-predictions.jsonl')}
     rows=list(jsonl_rows(queries))
@@ -88,6 +92,7 @@ def benchmark(index,vector_manifest,model_path,ce_model,url,queries,qrels,
                     hits=sorted(((i,scores.get(i,0.))for i in candidates),key=lambda h:(-h[1],h[0]))[:200]
                 lexical=[{'doc_id':reader.external_doc_id(i),'docid':i,'score':s}for i,s in hits]
         row={'text':text,'lexical':lexical,'dense':[],'explicit_constraints':constrained}
+        route_start=time.perf_counter()
         terms={t.term for raw in parse(text)['terms'] for t in analyzer.analyze(raw)}
         dfs={t:reader.df(t) for t in terms}
         features=gate_features(row,dfs)
@@ -99,6 +104,7 @@ def benchmark(index,vector_manifest,model_path,ce_model,url,queries,qrels,
         if policy.startswith('random-'):
             if qid not in source_predictions:raise ValueError('random control requires frozen evaluation qid')
             heavy=not constrained and qid in random_heavy[policy]
+        router_ms=(time.perf_counter()-route_start)*1000
         if use_vector:
             hits=vectors.search(encoder.encode_query(text),200)
             for hit in hits:
@@ -127,7 +133,7 @@ def benchmark(index,vector_manifest,model_path,ce_model,url,queries,qrels,
             results=rerank(row,budget,rankers[budget] if policy.endswith('-ranker') else None)
         return {'results':results,'heavy':budget>0,'ce_pairs':min(budget,len(row['pool'])),
                 'ce_ms':elapsed,'vector_attempt':use_vector,'gate_heavy':bool(heavy),
-                'gate_features':features.tolist()}
+                'gate_features':features.tolist(),'router_ms':router_ms}
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):
             try:
@@ -185,6 +191,8 @@ def benchmark(index,vector_manifest,model_path,ce_model,url,queries,qrels,
                          'ce_ms':{k:percentile([r['ce_ms'] for r in rs],p) for k,p in [('p50',.5),('p95',.95)]},
                          'ce_pairs_mean':statistics.mean(r['ce_pairs'] for r in rs),
                          'heavy_rate':statistics.mean(r['heavy'] for r in rs),
+                         'vector_attempt_rate':statistics.mean(r['vector_attempt'] for r in rs),
+                         'router_ms':{k:percentile([r['router_ms'] for r in rs],p) for k,p in [('p50',.5),('p95',.95)]},
                          'exact_ids_match_capture_rate':statistics.mean(r['exact_ids_match_capture'] for r in rs)}
     summary['protocol']={'queries':len(rows),'partial_pilot':bool(limit),'qrels_read_after_requests':True,
                          'requests_sha256_before_labels':prediction_sha,
@@ -192,6 +200,9 @@ def benchmark(index,vector_manifest,model_path,ce_model,url,queries,qrels,
                          'vector_manifest_sha256':sha256_of(vector_manifest),
                          'candidate_replay':False,'search_params':{'hnsw_ef':128,'exact':False},
                          'lexical_backend':'frozen-rfc4-compact-bounded-float64' if reader_source else 'DiskIndex-reference',
+                         'runtime_source_sha256':runtime_sources,'cpu_affinity':sorted(os.sched_getaffinity(0)),
+                         'thread_environment':{k:os.environ.get(k) for k in ['OMP_NUM_THREADS','OPENBLAS_NUM_THREADS','TOKENIZERS_PARALLELISM']},
+                         'qrels_sha256':sha256_of(qrels),'queries_sha256':sha256_of(queries),
                          'latency_scope':'real loopback client wall; concurrent batch jobs may affect latency'}
     (output/'summary.json').write_text(json.dumps(summary,indent=2)+'\n')
     return summary
