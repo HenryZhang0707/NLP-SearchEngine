@@ -171,6 +171,17 @@ def test_qdrant_legacy_search_receives_frozen_parameters():
         assert vars(received['search_params']) == {'hnsw_ef': 128, 'exact': True}
 
 
+def test_qdrant_actual_hnsw_settings_must_match_declared_manifest():
+    manifest = replace(_manifest(), index_params={'m': 16, 'ef_construct': 100})
+    client = _seed(manifest)
+    config = client.collections[manifest.collection].config
+    config.hnsw_config = SimpleNamespace(m=16, ef_construct=100)
+    with _sdk(client):
+        QdrantVectorIndex(manifest, 'http://fixture')
+        config.hnsw_config.m = 32
+        _raises(ValueError, lambda: QdrantVectorIndex(manifest, 'http://fixture'))
+
+
 def test_qdrant_reader_rejects_stale_build_identity_even_at_same_dimension():
     manifest = _manifest()
     changes = {

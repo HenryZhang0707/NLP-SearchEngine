@@ -74,6 +74,11 @@ class QdrantVectorIndex:
             raise ValueError("Qdrant collection 缺少构建元数据；请使用 1.16+ 服务和客户端重建")
         if metadata[VECTOR_BUILD_METADATA_KEY] != manifest.build_metadata():
             raise ValueError("Qdrant collection 构建元数据与 manifest 不一致，请加载同版本产物")
+        if manifest.index_params:
+            actual = getattr(config, 'hnsw_config', None)
+            if any(getattr(actual, key, None) != value
+                   for key, value in manifest.index_params.items()):
+                raise ValueError('Qdrant actual HNSW build parameters mismatch')
         try:
             count = self._client.count(collection_name=self._collection, exact=True).count
         except Exception as error:

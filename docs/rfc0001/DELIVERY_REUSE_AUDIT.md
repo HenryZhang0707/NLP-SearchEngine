@@ -59,6 +59,23 @@ are rerun separately before updating any controlled quality comparison.
 Component timings recorded during concurrent audit jobs are not HTTP latency
 evidence and must not be added to offline BM25 batch time.
 
+The corrected, explicit-ef=128 dense captures are complete for both corpus
+sizes. On the same 1,019 supported dev queries, 100k nDCG@10 is
+`0.2647649751`, and full-corpus nDCG@10 is `0.2600519719`; Recall@10 is
+`0.2908343473` and `0.2837592503`, respectively. The paired full-minus-100k
+nDCG difference is `-0.0047130031` (95% query bootstrap CI
+`[-0.0080967504, -0.0019563530]`, 2,000 samples, seed 42). This is a
+corpus-size comparison using separately frozen HNSW builds, not a Router
+improvement or an end-to-end performance result. One explicit-constraint
+query is excluded from dense quality for both sizes. MAP@100 differs as
+well, so the 100k subset must not stand in for full-corpus evaluation.
+
+Compact identity/readback reports and the controlled dense aggregates are
+stored alongside this document as `full-delivery-*.json`. Large captures
+remain outside the repository. The complete worktree regression suite passed
+259 tests after the initial audit/merge changes; subsequent parameter and
+Unicode regressions must be included in the final rerun before delivery.
+
 ## Outstanding acceptance work
 
 Completed full BM25 train/dev capture, fused candidate construction, CE and learned policy
