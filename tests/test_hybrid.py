@@ -16,7 +16,7 @@ from urllib.request import Request, urlopen
 from unittest.mock import patch
 
 from contracts.api import (
-    ApiError, MODES, REQUEST_JSON_SCHEMA, RESPONSE_JSON_SCHEMA, SearchRequest,
+    ApiError, MODES, REQUEST_JSON_SCHEMA, RESPONSE_JSON_SCHEMA, SEARCH_INSTANCE_HEADER, SearchRequest,
 )
 from contracts.index_format import BM25Spec
 from contracts.retrieval import (
@@ -350,14 +350,19 @@ def test_http_ui_static_routes_are_safe_and_present():
     thread.start()
     base = f"http://127.0.0.1:{server.server_port}"
     try:
+        with urlopen(base + "/health", timeout=5) as response:
+            instance_id = response.headers[SEARCH_INSTANCE_HEADER]
+            assert re.fullmatch(r"[0-9a-f]{32}", instance_id)
         with urlopen(base + "/", timeout=5) as response:
             assert response.status == 200
+            assert response.headers.get_all(SEARCH_INSTANCE_HEADER) == [instance_id]
             assert "中文搜索引擎" in response.read().decode("utf-8")
         # Both registered JavaScript MIME types occur in system MIME databases.
         for mime_type in ("text/javascript", "application/javascript"):
             with patch("online.server.mimetypes.guess_type", return_value=(mime_type, None)):
                 with urlopen(base + "/static/app.js", timeout=5) as response:
                     assert response.status == 200
+                    assert response.headers.get_all(SEARCH_INSTANCE_HEADER) == [instance_id]
                     assert response.headers.get_content_type() == mime_type
                     assert response.headers.get_content_charset() == "utf-8"
         try:
