@@ -616,10 +616,13 @@ def main(argv=None):
         reranker = None
         if config is not None and config.rerank is not None:
             from adapters.reranker import FrozenCrossEncoder
+            from .ce_gate import load_gate
             settings = config.rerank
+            gate = (load_gate(settings.gate_path, settings.gate_sha256)
+                    if settings.gate_path is not None else None)
             reranker = HybridReranker(FrozenCrossEncoder(
                 settings.model_path, device=settings.device, batch_size=settings.batch_size),
-                settings.depth)
+                settings.depth, gate=gate, capture_features=settings.capture_features)
         engine = SearchEngine(reader, encoder, vectors, retrieval_config, router,
                               **({"reranker": reranker} if reranker is not None else {}))
     except Exception as error:

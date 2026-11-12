@@ -18,6 +18,9 @@ from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 from uuid import uuid4
 
+from contracts.ce import GATE_DEPTH, GATE_FEATURE_NAMES
+
+from .ce_budget import matched_random
 from .compare import paired_bootstrap
 from .evaluate import (
     EvaluationError, _decode_search_response, _percentile, evaluate_run,
@@ -26,6 +29,7 @@ from .evaluate import (
 
 
 REQUEST = {"k": 100, "mode": "hybrid", "scorer": "bm25", "expander": "none"}
+CAPTURE_VERSION = 4
 SEED = 2026
 BOOTSTRAP_SAMPLES = 10000
 STAGES = ("lexical", "router", "encode", "vector", "fusion")
@@ -100,6 +104,14 @@ def check_services(client, arms):
                     or not all(reranker["model"].get(key) for key in
                                ("model_id", "revision", "weights_sha256", "inventory_sha256"))):
                 raise EvaluationError(f"{name} has an invalid fixed CE identity")
+            gate_sha = reranker.get("gate_sha256")
+            if name == "learned":
+                if (not isinstance(gate_sha, str) or len(gate_sha) != 64
+                        or any(char not in "0123456789abcdef" for char in gate_sha)
+                        or reranker.get("capture_features") is not True):
+                    raise EvaluationError("learned profile requires a digest-bound gate")
+            elif gate_sha is not None:
+                raise EvaluationError(f"{name} must use a fixed-depth scorer")
             if model is None:
                 model = reranker["model"]
             if reranker["model"] != model:
@@ -110,7 +122,7 @@ def check_services(client, arms):
     return {"common": common, "rerankers": identities}
 
 
-def search(client, base, depth, record, identity):
+def search(client, base, depth, record, identity, reranker_identity=None):
     response, raw, latency = http_json(client, base, "/search", {
         **REQUEST, "query": record.query,
     })
@@ -139,16 +151,30 @@ def search(client, base, depth, record, identity):
         raise EvaluationError("invalid fixed hybrid stage timings")
     rerank = response.get("rerank")
     scored = 0
+    feature_row = None
     if expect_rerank:
+        profile = reranker_identity or {}
+        expected_gate = profile.get("gate_sha256")
+        possible_pairs = {min(depth, len(ranking))}
+        if expected_gate is not None:
+            possible_pairs.add(0)
         if (not isinstance(rerank, dict) or type(rerank.get("depth")) is not int
                 or rerank["depth"] != depth or type(rerank.get("scored")) is not int
-                or rerank["scored"] != min(depth, len(ranking))):
+                or rerank["scored"] not in possible_pairs or rerank.get("gate_sha256") != expected_gate):
             raise EvaluationError("CE response has missing or inconsistent pair counts")
         scored = rerank["scored"]
+        feature_row = rerank.get("features")
+        if profile.get("capture_features") is True:
+            if (not isinstance(feature_row, list) or len(feature_row) != len(GATE_FEATURE_NAMES)
+                    or any(type(value) not in (int, float) or not math.isfinite(value)
+                           for value in feature_row)):
+                raise EvaluationError("CE response omitted the agreed pre-rerank features")
+        elif feature_row is not None:
+            raise EvaluationError("CE response returned unexpected gate features")
     elif "rerank" in response:
         raise EvaluationError("response reranked candidates where CE must be bypassed")
     return {"ranking": ranking, "http_ms": latency, "timings_ms": timings, "ce_pairs": scored,
-            "explicit_constraints": explicit}
+            "explicit_constraints": explicit, "features": feature_row}
 
 
 def capture_query(client, arms, record, index, order, identity):
@@ -157,7 +183,8 @@ def capture_query(client, arms, record, index, order, identity):
     for name in order[shift:] + order[:shift]:
         depth, base = arms[name]
         try:
-            observations[name] = search(client, base, depth, record, identity)
+            observations[name] = search(client, base, depth, record,
+                                        identity["common"]["retrieval"], identity["rerankers"][name])
         except (OSError, ValueError, TypeError) as error:
             raise EvaluationError(f"qid={record.qid!r}, arm={name}: {error}") from error
     baseline = observations["rrf"]
@@ -169,6 +196,13 @@ def capture_query(client, arms, record, index, order, identity):
         original = baseline["ranking"]
         if ranking[prefix:] != original[prefix:] or set(ranking[:prefix]) != set(original[:prefix]):
             raise EvaluationError(f"qid={record.qid!r}, arm={name}: changed the fixed RRF candidate pool")
+    if "learned" in observations:
+        learned, fixed = observations["learned"], observations["ce40"]
+        if learned["ce_pairs"] and (learned["ce_pairs"] != fixed["ce_pairs"]
+                                   or learned["ranking"] != fixed["ranking"]):
+            raise EvaluationError(f"qid={record.qid!r}: active gate differs from fixed CE40")
+        if fixed["features"] is not None and learned["features"] != fixed["features"]:
+            raise EvaluationError(f"qid={record.qid!r}: fixed and learned features disagree")
     return observations
 
 
@@ -237,7 +271,7 @@ def publish(path, contents):
         pending.unlink()
 
 
-def summarize(out, protocol, names, qrels, captured):
+def summarize(out, protocol, names, qrels, captured, random_plan=None):
     runs = {}
     arms = {}
     for name in names:
@@ -287,14 +321,42 @@ def summarize(out, protocol, names, qrels, captured):
         "explicit_constraints_queries": sum(
             data["rrf"]["explicit_constraints"] for _, data in captured.values()),
     }
+    if "learned" in names:
+        summary["matched_random_replay"] = random_replay(random_plan, qrels, runs)
     publish(out / "summary.json", (json.dumps(summary, ensure_ascii=False, indent=2,
                                              sort_keys=True) + "\n").encode("utf-8"))
+
+
+def freeze_random(captured):
+    capacity = {qid: row["ce40"]["ce_pairs"] for qid, (_, row) in captured.items()}
+    selected = {qid: row["learned"]["ce_pairs"] > 0 for qid, (_, row) in captured.items()}
+    random_actions = matched_random(selected, capacity, SEED)
+    count = sum(capacity[qid] for qid, active in random_actions.items() if active)
+    actual = sum(row["learned"]["ce_pairs"] for _, row in captured.values())
+    if count != actual:
+        raise EvaluationError("exact random CE budget disagrees with actual learned work")
+    return {"seed": SEED, "ce_pairs": count, "capacity": capacity,
+            "learned_actions": selected, "random_actions": random_actions}
+
+
+def random_replay(plan, qrels, runs):
+    random_run = {qid: runs["ce40" if active else "rrf"][qid]
+                  for qid, active in plan["random_actions"].items()}
+    intervals = {
+        metric: paired_bootstrap(qrels, random_run, runs["learned"], metric=metric,
+                                 samples=BOOTSTRAP_SAMPLES, seed=SEED).to_dict()
+        for metric in ("ndcg", "recall", "mrr", "map")
+    }
+    return {"source": "observed_fixed_http_rankings", "ce_pairs": plan["ce_pairs"],
+            "seed": plan["seed"], "quality": evaluate_run(qrels, random_run).to_dict(),
+            "learned_minus_random": intervals}
 
 
 def main(argv=None):
     cli = argparse.ArgumentParser(description=__doc__)
     cli.add_argument("--baseline", required=True)
     cli.add_argument("--rerank", action="append", nargs=2, metavar=("DEPTH", "URL"), required=True)
+    cli.add_argument("--learned", help="Optional digest-bound CE40 gate endpoint")
     for name in ("queries", "warmup-queries", "qrels", "out"):
         cli.add_argument(f"--{name}", type=Path, required=True)
     args = cli.parse_args(argv)
@@ -303,6 +365,10 @@ def main(argv=None):
         if depth not in ("28", "40") or f"ce{depth}" in arms:
             cli.error("--rerank requires each of depth 28 and 40 at most once")
         arms[f"ce{depth}"] = (int(depth), endpoint(url))
+    if args.learned:
+        if "ce40" not in arms:
+            cli.error("--learned requires a fixed CE40 endpoint")
+        arms["learned"] = (GATE_DEPTH, endpoint(args.learned))
     if len({base for _, base in arms.values()}) != len(arms):
         cli.error("each arm requires its own endpoint")
 
@@ -325,7 +391,7 @@ def main(argv=None):
     order = list(arms)
     random.Random(SEED).shuffle(order)
     protocol = {
-        "version": 3, "request": REQUEST, "seed": SEED, "base_arm_order": order,
+        "version": CAPTURE_VERSION, "request": REQUEST, "seed": SEED, "base_arm_order": order,
         "bootstrap_samples": BOOTSTRAP_SAMPLES,
         "depths": {name: depth for name, (depth, _) in arms.items()},
         "inputs_sha256": fingerprints,
@@ -343,13 +409,12 @@ def main(argv=None):
         ):
             raise EvaluationError("journal contains an unexpected query or incomplete paired arms")
         if len(captured) < len(records):
-            identity = identities["common"]["retrieval"]
             for i, record in enumerate(warmup):
-                capture_query(client, arms, record, i, order, identity)
+                capture_query(client, arms, record, i, order, identities)
             epoch = uuid4().hex
             for i in range(len(captured), len(records)):
                 record = records[i]
-                data = capture_query(client, arms, record, i, order, identity)
+                data = capture_query(client, arms, record, i, order, identities)
                 if i + 1 == len(records) and check_services(client, arms) != identities:
                     with db:
                         db.execute("INSERT INTO invalid_epochs VALUES (?, ?)",
@@ -362,6 +427,12 @@ def main(argv=None):
                 captured[record.qid] = (epoch, data)
                 if (i + 1) % 100 == 0:
                     print(f"Captured {i + 1}/{len(records)} paired queries", flush=True)
+    random_plan = None
+    if "learned" in arms:
+        random_plan = freeze_random(captured)
+        publish(args.out / "matched-random-plan.json",
+                (json.dumps(random_plan, sort_keys=True, ensure_ascii=False, indent=2)
+                 + "\n").encode("utf-8"))
     if sha256(args.qrels) != fingerprints["qrels"]:
         raise EvaluationError("qrels changed during capture")
     qrels = load_qrels(args.qrels)
@@ -370,7 +441,8 @@ def main(argv=None):
     missing_qrels = set(query_ids) - qrels.keys()
     if missing_qrels:
         raise EvaluationError(f"{len(missing_qrels)} evaluated queries have no qrels")
-    summarize(args.out, protocol, arms, {qid: qrels[qid] for qid in query_ids}, captured)
+    summarize(args.out, protocol, arms, {qid: qrels[qid] for qid in query_ids}, captured,
+              random_plan)
     print(args.out / "summary.json")
 
 

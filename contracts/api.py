@@ -180,7 +180,10 @@ RESPONSE_JSON_SCHEMA = {
             "additionalProperties": False,
             "properties": {
                 "depth": {"type": "integer", "minimum": 1, "maximum": 40},
-                "scored": {"type": "integer", "minimum": 1, "maximum": 40},
+                "scored": {"type": "integer", "minimum": 0, "maximum": 40},
+                "features": {"type": "array", "minItems": 4, "maxItems": 4,
+                             "items": {"type": "number"}},
+                "gate_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
             },
         },
         "took_ms": {"type": "integer", "minimum": 0},

@@ -35,7 +35,9 @@ _EMBEDDING_KEYS = frozenset({"model_path", "device"})
 _RETRIEVAL_KEYS = frozenset({"candidate_k", "rrf_c"})
 _SERVE_KEYS = frozenset({"host", "port", "max_body_bytes", "request_timeout_s"})
 _POLICY_KEYS = frozenset({"factory"})
-_RERANK_KEYS = frozenset({"model_path", "depth", "device", "batch_size"})
+_RERANK_KEYS = frozenset({"model_path", "depth", "device", "batch_size",
+                          "capture_features", "gate"})
+_GATE_KEYS = frozenset({"model_path", "sha256"})
 
 
 class ServingConfigError(ValueError):
@@ -62,6 +64,9 @@ class RerankConfig:
     depth: int
     device: str = DEFAULT_DEVICE
     batch_size: int = 20
+    capture_features: bool = False
+    gate_path: Path | None = None
+    gate_sha256: str | None = None
 
 
 @dataclass(frozen=True)
@@ -291,11 +296,28 @@ def load_serving_config(path) -> ServingConfig:
         _require(block, ("model_path", "depth"), "rerank")
         if vector is None:
             raise ServingConfigError("rerank 需要 vector 配置")
+        capture_features = block.get("capture_features", False)
+        if type(capture_features) is not bool:
+            raise ServingConfigError("rerank.capture_features 必须是布尔值")
+        depth = _integer(block["depth"], "rerank.depth", 1, min(40, retrieval.candidate_k))
+        gate_path = gate_sha256 = None
+        if "gate" in block:
+            gate = _object(block["gate"], "rerank.gate")
+            _reject_unknown(gate, _GATE_KEYS, "rerank.gate")
+            _require(gate, ("model_path", "sha256"), "rerank.gate")
+            if depth != 40:
+                raise ServingConfigError("rerank.gate 需要 depth=40")
+            gate_path = _resolve_path(base, gate["model_path"], "rerank.gate.model_path")
+            gate_sha256 = _text(gate["sha256"], "rerank.gate.sha256").lower()
+            if len(gate_sha256) != 64 or any(char not in "0123456789abcdef" for char in gate_sha256):
+                raise ServingConfigError("rerank.gate.sha256 必须是 64 位十六进制 SHA256")
         rerank = RerankConfig(
             model_path=_resolve_path(base, block["model_path"], "rerank.model_path"),
-            depth=_integer(block["depth"], "rerank.depth", 1, min(40, retrieval.candidate_k)),
+            depth=depth,
             device=_text(block.get("device", DEFAULT_DEVICE), "rerank.device"),
             batch_size=_integer(block.get("batch_size", 20), "rerank.batch_size", 1, 32),
+            capture_features=capture_features,
+            gate_path=gate_path, gate_sha256=gate_sha256,
         )
 
     return ServingConfig(

@@ -87,7 +87,7 @@ python3 -m venv .venv-serving
 | `retrieval` | 否 | `candidate_k` 默认 200、`rrf_c` 默认 60.0；非 lexical 必须 `offset+k <= candidate_k` |
 | `serve` | 否 | `host` 默认 `127.0.0.1`，`port` 默认 8000，`max_body_bytes` 默认 65536，`request_timeout_s` 默认 10.0 |
 | `policy` | 否 | `factory` 默认 `rule`；其他值必须是受信本地 `module:factory` 导入路径，工厂收到配置后返回带 `policy_version` 的 Router 对象 |
-| `rerank` | 否 | 固定混合候选重排实验；需要 `vector`。必填 `model_path` 与 `depth`（1 至 40，且不超过 `candidate_k`）；可选 `device`（默认 `cpu`）与 `batch_size`（1 至 32，默认 20） |
+| `rerank` | 否 | 固定混合候选重排实验；需要 `vector`。必填 `model_path` 与 `depth`（1 至 40，且不超过 `candidate_k`）；可选 `device`（默认 `cpu`）、`batch_size`（1 至 32，默认 20）、`capture_features`（默认 `false`）及 `gate`（仅 `depth=40`） |
 
 两个示例 profile 都用 8000 端口；同时运行两个实例时给 `port` 不同值，不要复用同一端口。
 
@@ -154,6 +154,28 @@ python -m evaluation.ce_http \
 实际 `hnsw_ef=128`。验收回执 SHA-256 为
 `30b4a5650e11ead6b59d4cc00e3261d5552495edfc2769aefbd4a18ecbcc129f`。
 完整开发集的固定对照、学习门控与等预算随机对照，以及隔离留出验证仍待运行。
+
+### 学习门控 CE40
+
+训练采集使用无 `rerank` 的 RRF 服务和固定 CE40 服务。在固定 CE40 的
+`rerank` 块设 `"depth": 40, "capture_features": true`，不设 `gate`。
+按[评测手册](../evaluation/README.md#train-and-evaluate-a-ce40-gate)采集训练集，
+生成门控 JSON 和训练回执。另启一个 profile，保留固定 CE40 的模型、批大小和检索设置，
+在其 `rerank` 块增加以下对象（摘要替换为回执的 `model_sha256`）：
+
+```json
+"gate": {"model_path": "../artifacts/ce40-gate.json", "sha256": "<64-hex SHA256>"}
+```
+
+服务在监听前校验 JSON 摘要、特征顺序和系数，并比对训练绑定的词法索引、向量索引、
+搜索配置及 CE 模型身份。CE 设备不参与门控绑定；做 HTTP 耗时对照时仍应保持设备与
+其他运行条件一致。`/index/info` 的 `reranker` 回显 `gate_sha256` 和
+`capture_features: true`，不需再显式开启特征采集。
+
+门控只用于无显式约束且 RRF 候选非空的固定 `hybrid` 请求：标准化 BM25 特征后的
+线性分数大于 0 时执行 CE40，否则保留 RRF 顺序并返回 `rerank.scored: 0`。
+两种门控结果都回显 `rerank.features` 和 `rerank.gate_sha256`；显式约束、空候选
+和其他检索模式不返回 `rerank` 对象。
 
 ### CLI 选择
 

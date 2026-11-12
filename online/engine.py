@@ -20,6 +20,7 @@ from . import parser, scorers
 from .expanders import EXPANDERS
 from .fusion import rrf
 from .highlight import build_highlights
+from .ce_gate import features as ce_gate_features
 from .router import QueryFeatures, RouteDecision, Router, RuleRouter, router_identity
 
 SNIPPET_LEN = 80
@@ -48,6 +49,8 @@ class SearchEngine:
         if reranker is not None and (vectors is None or reranker.depth > self.config.candidate_k):
             raise ValueError("混合重排需要向量后端且深度不得超过 candidate_k")
         self.reranker = reranker
+        if reranker is not None:
+            reranker.check_binding(self.info())
 
     def info(self) -> dict:
         """能力与配置回显，不把尚未实现的后端宣称为可用。
@@ -185,6 +188,14 @@ class SearchEngine:
         if req.mode != "lexical":
             ranked = ranked[:self.config.candidate_k]
 
+        rerank_features = None
+        rerank_feature_ms = 0.0
+        if (self.reranker is not None and self.reranker.records_features
+                and req.mode == "hybrid" and not explicit):
+            start = time.perf_counter()
+            rerank_features = ce_gate_features(self.reader, terms, ranked)
+            rerank_feature_ms = (time.perf_counter() - start) * 1000
+
         reason = f"forced_{req.mode}"
         use_vector = req.mode in ("dense", "hybrid")
         semantic_mode = "dense" if req.mode == "dense" else "hybrid"
@@ -231,8 +242,9 @@ class SearchEngine:
         rerank = None
         if self.reranker is not None and req.mode == "hybrid" and not explicit and ranked:
             start = time.perf_counter()
-            ranked, rerank = self.reranker.rerank(req.query, ranked, read_document)
-            timings["rerank"] = (time.perf_counter() - start) * 1000
+            ranked, rerank = self.reranker.rerank(req.query, ranked, read_document,
+                                                features=rerank_features)
+            timings["rerank"] = rerank_feature_ms + (time.perf_counter() - start) * 1000
         for rank, (docid, score) in enumerate(ranked[req.offset:req.offset + req.k], req.offset + 1):
             # Rendering re-analyzes the original text; it does not consume the
             # stored token-offset table required by the conformance doc() API.
