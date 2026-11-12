@@ -1,5 +1,18 @@
 # Full corpus sharded BM25 plan
 
-The single-directory builder cannot stay below the 30 GiB cgroup memory limit for the 8,096,668-document corpus. The full normalized corpus is therefore split into 81 deterministic 100,000-document JSONL shards (the last shard is smaller). Each shard is built with the existing repository `offline.build` contract, producing its own docs, postings, offsets, stats and manifest. A future full-corpus reader will query every shard and merge the shard Top-k lists by the existing deterministic `(score, docid)` order.
+The in-memory builder cannot stay below the container memory limit on the full corpus. The normalized corpus is split into 81 deterministic shards of at most 100,000 documents. Each shard retains the existing index contract (docs, postings, offsets, stats, manifest). The full build remains incomplete until all shards and their input identities are audited.
 
-`evaluation/build_full_sharded_bm25.py` builds the shards sequentially and skips only a shard with an already verified manifest. The first shard has completed successfully in about 151 seconds with peak RSS about 4.4 GiB; the full run is intentionally long-running and its output remains outside the PR until all shard manifests are audited.
+Run the resumable launcher from the repository root:
+
+```bash
+python -u -m evaluation.build_full_sharded_bm25 \
+  --corpus-dir /path/to/corpus100k --out /path/to/index100k --workers 3
+```
+
+The launcher uses the current interpreter, a process lock, and at most three child builders. Before reusing a manifest it verifies every required file hash, analyzer identity, dataset name, and BM25 parameters. A corrupt completed shard fails closed. File hashes alone do not establish correspondence with source corpus records; that needs the final corpus/index identity audit.
+
+## Global scoring invariant
+
+Shard-local BM25 scores must **not** be merged directly. Every shard must score with the same full-corpus document count N, summed document frequency df(term), and document-weighted global average length. Only then are each shard's Top-k results sufficient to obtain exact global Top-k. Global document IDs use cumulative shard sizes and ties use ascending global document ID.
+
+`evaluation/sharded_bm25.py` implements this scoring view and deterministic merge without materializing all shard readers simultaneously. The parity regression compares unequal shard sizes, unequal term distributions, repeated query terms, absent terms, and several cutoffs against a monolithic index. This proves the scoring primitive on the test corpus; it is not full-corpus retrieval or latency evidence. The remaining work includes building global statistics, binding full-corpus inputs, querying all shards, and independent end-to-end audit.
