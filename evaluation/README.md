@@ -363,6 +363,55 @@ and shuffle it with Python `random.Random(2026 + r)`. At zero-based position
 each mode with the first ten eligible training queries. Average each
 query's three repeats before resampling paired latency differences.
 
+### Paired live HTTP measurements
+
+For a new paired measurement, freeze a JSON plan with these fields:
+
+| Field | Value |
+| --- | --- |
+| `schema_version` | `1` |
+| `queries_sha256`, `corpus_sha256` | SHA-256 of the exact query file and the expected corpus identity from `/index/info` |
+| `query_ids`, `warmup_query_ids` | Ordered, disjoint ID arrays from that file. Preselect the measured queries. Include warmup query records in the same file. |
+| `repeats`, `depth`, `timeout_s` | Positive repeat count, retrieval depth and request timeout in seconds. Use depth 100 for MAP@100. |
+| `arms` | Ordered objects with `label`, HTTP(S) origin `endpoint`, `mode`, and expected `policy_version`. Set optional `identity_sha256` to pin the full serving identity for that arm. |
+
+Use one vector-ready endpoint with four modes for a mode comparison, or two
+endpoints with `adaptive` and different policy versions for a Router comparison.
+Both endpoints must expose the same index, vector and effective search configuration.
+For a strict rerun, copy each arm's `identity_sha256` from the prior verified
+report. It covers the index, vector, search configuration and policy objects.
+Requests use BM25 and expansion `none`. When a dense arm is present, choose a
+panel it can execute successfully and record any exclusions when freezing the plan.
+Within each repeat the runner walks the listed query IDs and rotates which arm goes
+first after each query. Freeze the query order before inspecting results.
+
+```bash
+mkdir -p runs
+python -m evaluation.paired_http collect --plan paired.json \
+  --queries panel.jsonl --out runs/router-paired
+python -m evaluation.paired_http verify --plan paired.json \
+  --queries panel.jsonl --journal runs/router-paired/requests.jsonl \
+  --server-log rules=rules.server.log --server-log gain=gain.server.log \
+  --run-dir runs/router-paired-trec > runs/router-paired-verified.json
+python -m evaluation.compare --qrels panel.qrels.tsv \
+  --run-a runs/router-paired-trec/rules.trec \
+  --run-b runs/router-paired-trec/gain.trec --metric ndcg --k 10 --map-k 100
+```
+
+Supply the same server log path for labels served by the same endpoint. Keep each
+server's startup event and request logs. The verifier checks the entire schedule,
+including warmup, against unique request tags, the startup identity and the
+client's routing record. A failed request, fallback, changed identity or incomplete
+journal prevents acceptance. Preserve an interrupted journal and collect again into
+a fresh directory so the latency sample covers one measurement session.
+
+The report includes client and server timings, vector attempts and successes,
+and 95% paired intervals for right arm minus left arm. Repeats are averaged
+per query before bootstrap sampling. TREC output uses the first repeat and records
+rank-derived scores. Use qrels restricted to the plan's measured IDs, including
+queries with empty results. The historical 100k schedule above remains the
+reference for the published measurement.
+
 ## Human review of a frozen candidate pool
 
 Use the frozen corpus, query split and candidate pool already admitted for the
