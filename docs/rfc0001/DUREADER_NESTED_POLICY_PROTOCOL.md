@@ -20,6 +20,10 @@ from 0.1/1/10/100; all OOF assignments and selections are recorded locally.
 Dev predictions and model exports are saved before opening dev qrels. The
 1,020 internal-dev queries remain historically observed development evidence,
 not an untouched final test. Grouped paired bootstrap uses 1,014 dev groups.
+The frozen train/dev splits have no normalized duplicate queries, but share
+one positive document. The maintainer's split is preserved. Training folds
+group shared positives internally; this does not remove that cross-split
+document overlap or turn the development results into independent test claims.
 
 The gate estimates CE-40's nDCG gain using only term count, corpus vocabulary
 coverage, BM25 relative gap and lexical candidate count. Its threshold comes
