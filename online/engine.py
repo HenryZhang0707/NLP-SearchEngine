@@ -28,7 +28,7 @@ SNIPPET_LEN = 80
 class SearchEngine:
     def __init__(self, reader: IndexReader, encoder: TextEncoder | None = None,
                  vectors: VectorReader | None = None, config: RetrievalConfig | None = None,
-                 router: Router | None = None):
+                 router: Router | None = None, *, reranker=None):
         self.reader = reader
         self.encoder = encoder
         self.vectors = vectors
@@ -40,8 +40,14 @@ class SearchEngine:
         self.router = RuleRouter(self.config) if router is None else router
         self.policy = router_identity(self.router)
         check_binding = getattr(self.router, "check_binding", None)
+        check_retrieval_binding = getattr(self.router, "check_retrieval_binding", None)
         if callable(check_binding):
             check_binding(reader, self.config)
+        if callable(check_retrieval_binding):
+            check_retrieval_binding(reader, self.config, vectors)
+        if reranker is not None and (vectors is None or reranker.depth > self.config.candidate_k):
+            raise ValueError("混合重排需要向量后端且深度不得超过 candidate_k")
+        self.reranker = reranker
 
     def info(self) -> dict:
         """能力与配置回显，不把尚未实现的后端宣称为可用。
@@ -80,17 +86,19 @@ class SearchEngine:
             "search_config": {"candidate_k": self.config.candidate_k,
                               "rrf_c": self.config.rrf_c},
             "policy": dict(self.policy),
+            **({"reranker": self.reranker.identity} if self.reranker is not None else {}),
         }
 
     def _decide(self, features: QueryFeatures) -> RouteDecision:
         decision = self.router.decide(features)
         if (not isinstance(decision, RouteDecision)
                 or type(decision.use_vector) is not bool
-                or not isinstance(decision.reason, str) or not decision.reason):
+                or not isinstance(decision.reason, str) or not decision.reason
+                or decision.semantic_mode not in ("dense", "hybrid")):
             raise ValueError("路由策略 decide 必须返回 use_vector 布尔值与非空 reason 的 RouteDecision")
         return decision
 
-    def _features(self, explicit: bool, terms: list, ranked: list) -> QueryFeatures:
+    def _features(self, query: str, terms: list, ranked: list) -> QueryFeatures:
         unique_terms = set(terms)
         coverage = (sum(self.reader.df(t) > 0 for t in unique_terms) / len(unique_terms)
                     if unique_terms else 0.0)
@@ -98,10 +106,13 @@ class SearchEngine:
                if len(ranked) >= 2 else None)
         statistics = {}
         if self.policy["requires_statistics"]:
-            statistics = self.router.statistics(self.reader, tuple(terms), tuple(ranked))
+            query_statistics = getattr(self.router, "statistics_for_query", None)
+            args = (self.reader, tuple(terms), tuple(ranked))
+            statistics = (query_statistics(query, *args) if callable(query_statistics)
+                          else self.router.statistics(*args))
             if not isinstance(statistics, dict):
                 raise ValueError("路由策略 statistics 必须返回 dict")
-        return QueryFeatures(explicit, len(unique_terms), coverage, len(ranked), gap,
+        return QueryFeatures(False, len(unique_terms), coverage, len(ranked), gap,
                              statistics)
 
     def _vector_search(self, query: str, timings: dict) -> list[tuple[int, float]]:
@@ -176,14 +187,16 @@ class SearchEngine:
 
         reason = f"forced_{req.mode}"
         use_vector = req.mode in ("dense", "hybrid")
+        semantic_mode = "dense" if req.mode == "dense" else "hybrid"
         if req.mode == "adaptive":
             start = time.perf_counter()
             if explicit:
                 # 显式约束由引擎直接短路，任何注入策略都不能把它送进向量召回。
                 use_vector, reason = False, "explicit_constraints"
             else:
-                decision = self._decide(self._features(explicit, terms, ranked))
+                decision = self._decide(self._features(req.query, terms, ranked))
                 use_vector, reason = decision.use_vector, decision.reason
+                semantic_mode = decision.semantic_mode
             timings["router"] = (time.perf_counter() - start) * 1000
 
         executed = "lexical"
@@ -203,7 +216,7 @@ class SearchEngine:
                 fallback, reason = True, "vector_unavailable"
             else:
                 vector_used = True
-                if req.mode == "dense":
+                if semantic_mode == "dense":
                     ranked, executed, score_kind = dense_ranked, "dense", "cosine"
                 else:
                     start = time.perf_counter()
@@ -214,10 +227,16 @@ class SearchEngine:
 
         results = []
         document_text = getattr(self.reader, "document_text", None)
+        read_document = document_text if callable(document_text) else self.reader.doc
+        rerank = None
+        if self.reranker is not None and req.mode == "hybrid" and not explicit and ranked:
+            start = time.perf_counter()
+            ranked, rerank = self.reranker.rerank(req.query, ranked, read_document)
+            timings["rerank"] = (time.perf_counter() - start) * 1000
         for rank, (docid, score) in enumerate(ranked[req.offset:req.offset + req.k], req.offset + 1):
             # Rendering re-analyzes the original text; it does not consume the
             # stored token-offset table required by the conformance doc() API.
-            doc = document_text(docid) if callable(document_text) else self.reader.doc(docid)
+            doc = read_document(docid)
             results.append(ResultItem(
                 doc_id=doc.doc_id, rank=rank, score=score, title=doc.title,
                 snippet=doc.text[:SNIPPET_LEN], highlights=build_highlights(doc, set(terms)),
@@ -226,4 +245,5 @@ class SearchEngine:
                               score_kind, self.config.candidate_k,
                               self.policy["policy_version"])
         return SearchResponse(int((time.perf_counter() - t0) * 1000), parsed, expanded,
-                              results, routing, {k: round(v, 3) for k, v in timings.items()})
+                              results, routing, {k: round(v, 3) for k, v in timings.items()},
+                              rerank=rerank)

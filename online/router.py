@@ -28,6 +28,7 @@ class QueryFeatures:
 class RouteDecision:
     use_vector: bool
     reason: str
+    semantic_mode: str = "hybrid"
 
 
 class Router(Protocol):
@@ -36,7 +37,8 @@ class Router(Protocol):
     可选属性：
     - `name`：info() 中展示的策略名；缺省用类名。
     - `requires_statistics = True`：此时必须实现
-      `statistics(reader, terms_tuple, ranked_tuple) -> dict`。
+      `statistics(reader, terms_tuple, ranked_tuple) -> dict` 或
+      `statistics_for_query(query, reader, terms_tuple, ranked_tuple) -> dict`。
     """
 
     policy_version: str
@@ -79,9 +81,10 @@ def router_identity(router) -> dict:
     requires_statistics = getattr(router, "requires_statistics", False)
     if type(requires_statistics) is not bool:
         raise ValueError("路由策略 requires_statistics 必须是布尔值")
-    if requires_statistics and not callable(getattr(router, "statistics", None)):
+    if requires_statistics and not (callable(getattr(router, "statistics", None))
+                                    or callable(getattr(router, "statistics_for_query", None))):
         raise ValueError(
-            "requires_statistics=True 时必须实现 statistics(reader, terms, ranked)")
+            "requires_statistics=True 时必须实现 statistics 或 statistics_for_query")
     name = getattr(router, "name", None)
     if not isinstance(name, str) or not name:
         name = type(router).__name__

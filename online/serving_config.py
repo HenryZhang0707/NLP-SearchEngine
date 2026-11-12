@@ -28,13 +28,14 @@ DEFAULT_DEVICE = "cpu"
 
 _TOP_LEVEL_KEYS = frozenset({
     "schema_version", "dataset", "index", "vector", "embedding",
-    "retrieval", "serve", "policy",
+    "retrieval", "serve", "policy", "rerank",
 })
 _VECTOR_KEYS = frozenset({"url", "manifest", "hnsw_ef", "timeout_s"})
 _EMBEDDING_KEYS = frozenset({"model_path", "device"})
 _RETRIEVAL_KEYS = frozenset({"candidate_k", "rrf_c"})
 _SERVE_KEYS = frozenset({"host", "port", "max_body_bytes", "request_timeout_s"})
 _POLICY_KEYS = frozenset({"factory"})
+_RERANK_KEYS = frozenset({"model_path", "depth", "device", "batch_size"})
 
 
 class ServingConfigError(ValueError):
@@ -53,6 +54,14 @@ class VectorConfig:
 class EmbeddingConfig:
     model_path: Path | None = None
     device: str | None = None
+
+
+@dataclass(frozen=True)
+class RerankConfig:
+    model_path: Path
+    depth: int
+    device: str = DEFAULT_DEVICE
+    batch_size: int = 20
 
 
 @dataclass(frozen=True)
@@ -79,6 +88,7 @@ class ServingConfig:
     retrieval: RetrievalSettings
     serve: ServeSettings
     policy_factory: str
+    rerank: RerankConfig | None = None
 
     def retrieval_config(self) -> RetrievalConfig:
         return RetrievalConfig(candidate_k=self.retrieval.candidate_k,
@@ -274,6 +284,20 @@ def load_serving_config(path) -> ServingConfig:
         if "factory" in block:
             policy_factory = _text(block["factory"], "policy.factory")
 
+    rerank = None
+    if "rerank" in value:
+        block = _object(value["rerank"], "rerank")
+        _reject_unknown(block, _RERANK_KEYS, "rerank")
+        _require(block, ("model_path", "depth"), "rerank")
+        if vector is None:
+            raise ServingConfigError("rerank 需要 vector 配置")
+        rerank = RerankConfig(
+            model_path=_resolve_path(base, block["model_path"], "rerank.model_path"),
+            depth=_integer(block["depth"], "rerank.depth", 1, min(40, retrieval.candidate_k)),
+            device=_text(block.get("device", DEFAULT_DEVICE), "rerank.device"),
+            batch_size=_integer(block.get("batch_size", 20), "rerank.batch_size", 1, 32),
+        )
+
     return ServingConfig(
         schema_version=schema_version,
         dataset=dataset,
@@ -283,4 +307,5 @@ def load_serving_config(path) -> ServingConfig:
         retrieval=retrieval,
         serve=serve,
         policy_factory=policy_factory,
+        rerank=rerank,
     )

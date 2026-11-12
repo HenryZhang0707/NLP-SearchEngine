@@ -33,6 +33,7 @@ from .embeddings import SentenceTransformerEncoder
 from .expanders import ExpanderNotReady
 from .observability import SearchLogger
 from .parser import QuerySyntaxError
+from .reranking import HybridReranker, RerankUnavailable
 from .router import load_router
 from .serving_config import (
     DEFAULT_CANDIDATE_K, DEFAULT_HOST, DEFAULT_MAX_BODY_BYTES, DEFAULT_PORT,
@@ -200,7 +201,7 @@ def make_handler(engine: SearchEngine, static_root: Path | None = None, *,
                         executed_mode=None, reason=None, vector_attempted=None,
                         vector_used=None, fallback=None, took_ms=None,
                         timings_ms=None, serialization_ms=None,
-                        http_elapsed_ms=None):
+                        http_elapsed_ms=None, rerank=None):
             dataset, corpus = identity()
             logger.search(
                 status=status, run_tag=run_tag, requested_mode=requested_mode,
@@ -210,6 +211,7 @@ def make_handler(engine: SearchEngine, static_root: Path | None = None, *,
                 dataset=dataset, corpus_sha256=corpus, took_ms=took_ms,
                 timings_ms=timings_ms, serialization_ms=serialization_ms,
                 http_elapsed_ms=http_elapsed_ms,
+                rerank=rerank,
             )
 
         def do_GET(self):
@@ -335,6 +337,16 @@ def make_handler(engine: SearchEngine, static_root: Path | None = None, *,
                     http_elapsed_ms=(time.perf_counter() - started) * 1000,
                 )
                 return
+            except RerankUnavailable:
+                serialization_ms = self._send(
+                    503, {"error": "cross-encoder unavailable", "code": "reranker_unavailable"})
+                self._log_search(
+                    status=503, run_tag=req.run_tag, requested_mode=req.mode,
+                    reason="reranker_unavailable", vector_attempted=True, vector_used=True,
+                    fallback=False, serialization_ms=serialization_ms,
+                    http_elapsed_ms=(time.perf_counter() - started) * 1000,
+                )
+                return
             except Exception:
                 # Plugin/engine failures must not masquerade as empty results, and
                 # the response/log must not expose the raw exception.
@@ -356,6 +368,7 @@ def make_handler(engine: SearchEngine, static_root: Path | None = None, *,
                 took_ms=resp.took_ms, timings_ms=resp.timings_ms,
                 serialization_ms=serialization_ms,
                 http_elapsed_ms=(time.perf_counter() - started) * 1000,
+                rerank=resp.rerank,
             )
 
     return Handler
@@ -600,7 +613,15 @@ def main(argv=None):
     except Exception as error:
         ap.error(f"路由策略加载失败: {error}")
     try:
-        engine = SearchEngine(reader, encoder, vectors, retrieval_config, router)
+        reranker = None
+        if config is not None and config.rerank is not None:
+            from adapters.reranker import FrozenCrossEncoder
+            settings = config.rerank
+            reranker = HybridReranker(FrozenCrossEncoder(
+                settings.model_path, device=settings.device, batch_size=settings.batch_size),
+                settings.depth)
+        engine = SearchEngine(reader, encoder, vectors, retrieval_config, router,
+                              **({"reranker": reranker} if reranker is not None else {}))
     except Exception as error:
         ap.error(f"检索引擎初始化失败: {error}")
 
@@ -647,6 +668,7 @@ def main(argv=None):
         "vector_identity": info.get("vector_identity"),
         "search_config": info.get("search_config"),
         "policy": info.get("policy"),
+        **({"reranker": info["reranker"]} if "reranker" in info else {}),
     })
     print(f"索引已加载（{engine.reader.n_docs} 篇），监听 {actual_host}:{actual_port}",
           flush=True)
