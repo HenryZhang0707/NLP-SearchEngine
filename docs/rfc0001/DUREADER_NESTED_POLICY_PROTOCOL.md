@@ -64,6 +64,13 @@ choose raw CE. This protects quality using training evidence; it is not a
 claim that a learned ranker improved accuracy. The v3 negative results remain
 preserved and must not be silently replaced. The gate remains experimental.
 
+Independent audits reconstruct all exported gate/ranker predictions and
+aggregate quality metrics, outer group separation and OOF membership, plus
+70 recorded inner selection trials across four outer folds and final training.
+Every inner ridge fit, validation score and gate threshold matches the recorded
+result without opening dev labels. See `dureader-100k-nested-v4-audit.json` and
+`dureader-100k-nested-v4-inner-audit.json`.
+
 ## Remaining gates
 
 All-query HTTP verification exposed two adjacent-order differences for the

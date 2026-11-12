@@ -45,6 +45,10 @@ def test_nested_oof_coverage_and_dev_predictions_frozen_before_labels(tmp_path,m
     audited=audit(train,dev,tq,dq,stats,output,tmp_path/'independent-audit')
     assert audited['all_aggregate_quality_metrics_recomputed']
     assert audited['outer_group_exclusion_verified']
+    from evaluation.audit_dureader_inner_selection import audit as audit_inner
+    inner=audit_inner(train,tq,stats,output,tmp_path/'inner-audit')
+    assert inner['recorded_trials_independently_recomputed']==70
+    assert inner['dev_labels_read']is False
     (output/'models.json').write_text('{}')
     with pytest.raises(ValueError,match='artifact hash mismatch'):
         audit(train,dev,tq,dq,stats,output,tmp_path/'corrupt-audit')
