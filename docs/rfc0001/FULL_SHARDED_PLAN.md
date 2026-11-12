@@ -57,3 +57,17 @@ One shard reader is resident at a time. All queries are scored before moving to 
 ## Full/subset normalization parity
 
 `evaluation.audit_full_subset_parity` scanned all 8,096,668 normalized records and verified every one of the frozen 100,000 subset records by ID, title, text, and relative order. The full normalized corpus SHA256 is `bc67f3ccfe7423c039f04c7a5e7f6eae07a7f722087edf0caa7cfc694a8c45e8`. The frozen subset corpus SHA256 remains `f24b50b6012b47f6fb5f72272666dbf187124a869f19d1c8d83f7e30d6cb62b4`. The aggregate audit is in `full-subset-parity-audit.json`. This establishes exact subset coverage in the full normalized file, not a record-by-record identity audit of all full-corpus documents against the official archive.
+
+## Bounded-memory dense encoding
+
+The existing Qdrant writer materializes `records = list(records)`, so it must not be used unchanged for the full corpus. `evaluation.encode_full_dense_chunks` encodes documents directly from corpus JSONL in chunks, preserving `title + '\n' + text` and the frozen vector manifest's embedding specification. The shared encoder verifies the local pinned model inventory. Each completed chunk binds the source SHA256, spec, IDs, offset, dimensions, dtype and vector file hash. A process lock prevents concurrent encoders in the same output directory. Resume verifies existing chunks and re-encodes only unpublished chunks. Numerical shape, finiteness and unit-norm checks run before a chunk is accepted.
+
+```bash
+python -u -m evaluation.encode_full_dense_chunks \
+  --corpus-dir /path/to/corpus100k --out /path/to/dense-chunks \
+  --model-path /path/to/bge-small-zh-v1.5 \
+  --vector-manifest /path/to/frozen-100k/vector_manifest.json \
+  --adapter-root /path/to/shared-adapters --limit-shards 1
+```
+
+The first run is limited to one shard to measure actual throughput and resource use. Encoding summaries explicitly state `qdrant_built=false`. A streaming Qdrant ingestion path, corpus-wide identity alignment, snapshots and ANN checks remain required before the dense backend can be evaluated as a full-corpus index.
