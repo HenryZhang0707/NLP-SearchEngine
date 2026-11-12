@@ -74,3 +74,26 @@ def test_streaming_global_statistics_and_incomplete_build_rejection(tmp_path):
     with pytest.raises(FileNotFoundError):
         prepare(source, indices, queries, tmp_path / 'incomplete.json')
     assert not (tmp_path / 'incomplete.json').exists()
+
+
+def test_source_audit_rejects_wrong_corpus_even_when_index_hashes_pass(tmp_path):
+    from evaluation.audit_sharded_bm25_sources import audit
+    source = tmp_path / 'sources'
+    source.mkdir()
+    part = source / 'part-000'
+    part.write_text(json.dumps(dict(doc_id='a', title='', text='苹果')) + '\n')
+    full = tmp_path / 'full.jsonl'
+    full.write_bytes(part.read_bytes())
+    indices = tmp_path / 'indices'
+    build(part, indices / part.name, 'dureader-full-shard-000')
+    result = audit(source, indices, full, 1, tmp_path / 'ok.json')
+    assert result['source_record_parity_verified']
+    # Corrupt the source, leaving an internally valid index and manifest.
+    part.write_text(json.dumps(dict(doc_id='a', title='', text='香蕉')) + '\n')
+    with pytest.raises(ValueError, match='text mismatch'):
+        audit(source, indices, full, 1, tmp_path / 'wrong.json')
+    assert not (tmp_path / 'wrong.json').exists()
+    part.write_bytes(full.read_bytes())
+    full.write_bytes(full.read_bytes() + b'\n')
+    with pytest.raises(ValueError, match='concatenation'):
+        audit(source, indices, full, 1, tmp_path / 'different.json')
