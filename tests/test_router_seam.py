@@ -393,5 +393,41 @@ def test_qdrant_timeout_is_validated_forwarded_and_echoed():
     assert memory.search_config == {"hnsw_ef": None, "exact": True, "timeout_s": None}
 
 
+def test_adaptive_dense_action_retains_explicit_constraints_and_identity():
+    class DensePolicy(AlwaysVectorPolicy):
+        policy_version = "test-adaptive-dense"
+
+        def decide(self, features):
+            self.calls += 1
+            return RouteDecision(True, "prefer_dense", "dense")
+
+    router = DensePolicy()
+    engine, encoder, vectors = _engine(router)
+    adaptive = engine.search(SearchRequest("phone", mode="adaptive", k=3))
+    assert adaptive.routing.executed_mode == "dense"
+    assert adaptive.routing.policy_version == engine.info()["policy"]["policy_version"]
+    assert adaptive.results == engine.search(SearchRequest("phone", mode="dense", k=3)).results
+    before = encoder.query_calls
+    constrained = engine.search(SearchRequest("phone AND NOT camera", mode="adaptive", k=3))
+    assert constrained.routing.reason == "explicit_constraints"
+    assert not constrained.routing.vector_attempted
+    assert router.calls == 1 and encoder.query_calls == before
+
+
+def test_compiled_bm25_is_bound_and_preserves_explicit_filtering():
+    baseline, encoder, vectors = _engine()
+    hybrid = SearchRequest("phone", mode="hybrid", k=3)
+    constrained = SearchRequest("phone AND NOT camera", mode="hybrid", k=3)
+    accelerator = Mock(reader=baseline.reader)
+    accelerator.topk.return_value = [(0, 1.0)]
+    engine = SearchEngine(baseline.reader, encoder, vectors, bm25_accelerator=accelerator)
+    assert engine.info()["bm25_accelerator"] == "compiled-float64-topk"
+    assert engine.search(hybrid).results == baseline.search(hybrid).results
+    assert engine.search(constrained).results == baseline.search(constrained).results
+    accelerator.topk.assert_called_once_with(["phone"], 200, term_weights={"phone": 1.0})
+    _raises(ValueError, lambda: SearchEngine(
+        baseline.reader, bm25_accelerator=Mock(reader=MemoryIndex.from_corpus(CORPUS))))
+
+
 ALL_TESTS = [value for name, value in sorted(globals().items())
              if name.startswith("test_")]

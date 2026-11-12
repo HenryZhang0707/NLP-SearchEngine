@@ -28,11 +28,14 @@ SNIPPET_LEN = 80
 class SearchEngine:
     def __init__(self, reader: IndexReader, encoder: TextEncoder | None = None,
                  vectors: VectorReader | None = None, config: RetrievalConfig | None = None,
-                 router: Router | None = None):
+                 router: Router | None = None, bm25_accelerator=None):
         self.reader = reader
         self.encoder = encoder
         self.vectors = vectors
         self.config = config or RetrievalConfig()
+        if bm25_accelerator is not None and bm25_accelerator.reader is not reader:
+            raise ValueError('BM25 accelerator must be bound to the same immutable reader')
+        self.bm25_accelerator = bm25_accelerator
         if (encoder is None) != (vectors is None):
             raise ValueError("encoder 与 vectors 必须同时提供或同时省略")
         if vectors is not None:
@@ -42,6 +45,9 @@ class SearchEngine:
         check_binding = getattr(self.router, "check_binding", None)
         if callable(check_binding):
             check_binding(reader, self.config)
+        check_vector_binding = getattr(self.router, "check_vector_binding", None)
+        if callable(check_vector_binding):
+            check_vector_binding(reader, self.config, vectors)
 
     def info(self) -> dict:
         """能力与配置回显，不把尚未实现的后端宣称为可用。
@@ -80,17 +86,24 @@ class SearchEngine:
             "search_config": {"candidate_k": self.config.candidate_k,
                               "rrf_c": self.config.rrf_c},
             "policy": dict(self.policy),
+            "router": {
+                "policy_version": self.policy["policy_version"],
+                "requires_statistics": self.policy["requires_statistics"],
+            },
+            "bm25_accelerator": ("compiled-float64-topk"
+                                 if self.bm25_accelerator is not None else None),
         }
 
     def _decide(self, features: QueryFeatures) -> RouteDecision:
         decision = self.router.decide(features)
         if (not isinstance(decision, RouteDecision)
                 or type(decision.use_vector) is not bool
-                or not isinstance(decision.reason, str) or not decision.reason):
-            raise ValueError("路由策略 decide 必须返回 use_vector 布尔值与非空 reason 的 RouteDecision")
+                or not isinstance(decision.reason, str) or not decision.reason
+                or decision.semantic_mode not in ("dense", "hybrid")):
+            raise ValueError("路由策略必须返回合法的 use_vector、reason 和 semantic_mode")
         return decision
 
-    def _features(self, explicit: bool, terms: list, ranked: list) -> QueryFeatures:
+    def _features(self, query: str, terms: list, ranked: list) -> QueryFeatures:
         unique_terms = set(terms)
         coverage = (sum(self.reader.df(t) > 0 for t in unique_terms) / len(unique_terms)
                     if unique_terms else 0.0)
@@ -98,10 +111,13 @@ class SearchEngine:
                if len(ranked) >= 2 else None)
         statistics = {}
         if self.policy["requires_statistics"]:
-            statistics = self.router.statistics(self.reader, tuple(terms), tuple(ranked))
+            query_statistics = getattr(self.router, "statistics_for_query", None)
+            args = (self.reader, tuple(terms), tuple(ranked))
+            statistics = (query_statistics(query, *args) if callable(query_statistics)
+                          else self.router.statistics(*args))
             if not isinstance(statistics, dict):
                 raise ValueError("路由策略 statistics 必须返回 dict")
-        return QueryFeatures(explicit, len(unique_terms), coverage, len(ranked), gap,
+        return QueryFeatures(False, len(unique_terms), coverage, len(ranked), gap,
                              statistics)
 
     def _vector_search(self, query: str, timings: dict) -> list[tuple[int, float]]:
@@ -160,30 +176,37 @@ class SearchEngine:
         ranked = []
         if req.mode != "dense":
             start = time.perf_counter()
-            scores = scorers.SCORERS[req.scorer](self.reader, scoring_terms,
+            if (self.bm25_accelerator is not None and req.mode != "lexical"
+                    and req.scorer == "bm25" and not explicit):
+                ranked = self.bm25_accelerator.topk(scoring_terms, self.config.candidate_k,
+                                                    term_weights=term_weights)
+            else:
+                scores = scorers.SCORERS[req.scorer](self.reader, scoring_terms,
                                                  candidate_docs=candidate_docs,
                                                  term_weights=term_weights)
-            if candidate_docs:
-                # A NOT-only query, or the negative branch of an OR, has no
-                # positive BM25 contribution. Keep those hard-filtered docs
-                # with deterministic zero scores instead of dropping them.
-                scores = {docid: scores.get(docid, 0.0) for docid in candidate_docs}
-            limit = req.offset + req.k if req.mode == "lexical" else self.config.candidate_k
-            ranked = nsmallest(limit, scores.items(), key=lambda row: (-row[1], row[0]))
+                if candidate_docs:
+                    # A NOT-only query, or the negative branch of an OR, has no
+                    # positive BM25 contribution. Keep those hard-filtered docs
+                    # with deterministic zero scores instead of dropping them.
+                    scores = {docid: scores.get(docid, 0.0) for docid in candidate_docs}
+                limit = req.offset + req.k if req.mode == "lexical" else self.config.candidate_k
+                ranked = nsmallest(limit, scores.items(), key=lambda row: (-row[1], row[0]))
             timings["lexical"] = (time.perf_counter() - start) * 1000
         if req.mode != "lexical":
             ranked = ranked[:self.config.candidate_k]
 
         reason = f"forced_{req.mode}"
         use_vector = req.mode in ("dense", "hybrid")
+        semantic_mode = "dense" if req.mode == "dense" else "hybrid"
         if req.mode == "adaptive":
             start = time.perf_counter()
             if explicit:
                 # 显式约束由引擎直接短路，任何注入策略都不能把它送进向量召回。
                 use_vector, reason = False, "explicit_constraints"
             else:
-                decision = self._decide(self._features(explicit, terms, ranked))
+                decision = self._decide(self._features(req.query, terms, ranked))
                 use_vector, reason = decision.use_vector, decision.reason
+                semantic_mode = decision.semantic_mode
             timings["router"] = (time.perf_counter() - start) * 1000
 
         executed = "lexical"
@@ -203,7 +226,7 @@ class SearchEngine:
                 fallback, reason = True, "vector_unavailable"
             else:
                 vector_used = True
-                if req.mode == "dense":
+                if semantic_mode == "dense":
                     ranked, executed, score_kind = dense_ranked, "dense", "cosine"
                 else:
                     start = time.perf_counter()

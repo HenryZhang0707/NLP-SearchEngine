@@ -52,6 +52,7 @@ _LEGACY_FLAGS = {
     "port": "--port",
     "candidate_k": "--candidate-k",
     "rrf_c": "--rrf-c",
+    "adaptive_policy": "--adaptive-policy",
     "vector_url": "--vector-url",
     "vector_manifest": "--vector-manifest",
     "hnsw_ef": "--hnsw-ef",
@@ -373,6 +374,8 @@ def _parser() -> argparse.ArgumentParser:
     ap.add_argument("--port", type=int, help="监听端口；默认 8000")
     ap.add_argument("--candidate-k", type=int, help="每路候选池；默认 200")
     ap.add_argument("--rrf-c", type=float, help="RRF 常数；默认 60.0")
+    ap.add_argument("--adaptive-policy", choices=("rules-v1", "recall-v1", "hybrid-v1"),
+                    help="BM25-first adaptive routing policy for the built-in rule router")
     ap.add_argument("--vector-url", help="Qdrant URL; requires --vector-manifest")
     ap.add_argument("--vector-manifest", help="published vector_manifest.json")
     ap.add_argument("--hnsw-ef", type=int,
@@ -448,6 +451,8 @@ def _legacy_settings(ap: argparse.ArgumentParser, args) -> dict:
                       else args.router_factory)
     if not isinstance(router_factory, str) or not router_factory.strip():
         ap.error("--router-factory 必须是非空字符串")
+    if args.adaptive_policy is not None and router_factory != DEFAULT_ROUTER_FACTORY:
+        ap.error("--adaptive-policy requires the built-in rule router")
     return {
         "host": host,
         "port": port,
@@ -544,7 +549,10 @@ def main(argv=None):
         forward_vector_timeout = settings["forward_vector_timeout"]
         expected_dataset = None
 
-    retrieval_config = RetrievalConfig(candidate_k=candidate_k, rrf_c=rrf_c)
+    retrieval_config = RetrievalConfig(
+        candidate_k=candidate_k, rrf_c=rrf_c,
+        adaptive_policy=args.adaptive_policy or "rules-v1",
+    )
     encoder = vectors = None
     vector_record = None
     embedding_record = None
