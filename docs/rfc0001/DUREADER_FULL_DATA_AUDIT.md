@@ -16,3 +16,7 @@ Because the implementation's in-memory postings representation scales with every
 ## Storage mount check
 
 A second host volume exists at `/autodl-pub` (1.4 TiB free), but `mount` reports it as `xfs (ro)` and `/autodl-pub/data` as a read-only autofs mount. A write probe was rejected with `Read-only file system`. The only writable project volume is `/root/autodl-tmp`, with approximately 123 GiB free at the audit time. This rules out silently moving the full build to the larger read-only volume.
+
+## Full BM25 attempt after disk expansion
+
+On the follow-up run, `/root/autodl-tmp` expanded to 849 GiB with 462 GiB free, so the 7.43 GiB normalized full corpus was generated successfully (`8,096,668` JSONL records). A real `offline.build` full-corpus attempt was then started. The process reached approximately 30 GiB RSS and disappeared before creating an output index. The container cgroup reports `memory.max=32212254720` bytes (30 GiB); this confirms the current in-memory postings builder cannot complete the full corpus even after the disk expansion. A sharded/streaming index implementation is required for the remaining full-corpus task.
