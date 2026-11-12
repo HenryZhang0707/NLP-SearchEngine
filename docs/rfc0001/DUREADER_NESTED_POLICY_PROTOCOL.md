@@ -74,6 +74,14 @@ fixed-depth result is not considered exact serving parity. A separate CE-24
 capture is required for the corrected fixed-budget comparison. This affects
 neither the frozen gate parameters nor the need for a final isolated run.
 
+The separate CE-24 capture is now complete for 1,020 queries. Ten complete
+rankings differ from the reused CE-40 prefix; aggregate nDCG/Recall are
+unchanged. Router minus independently executed CE-24 is +0.00653 nDCG
+(grouped 95% CI [-0.00849, 0.02180]) and +0.03812 Recall@10
+([0.02075, 0.05505]). This does not establish nDCG superiority. See
+`dureader-100k-fixed24-corrected-summary.json`. CE component timings were
+recorded under concurrent load and are not isolated latency acceptance.
+
 The 8-query real HTTP pilot completed all 10 policies. Every returned ordered
 document list matched its offline prediction (100% for every policy), including
 the learned gate decisions. This is a pilot only; it does not establish

@@ -8,6 +8,12 @@ artifacts in independent directories.
 
 ## Verified identities
 
+The official baseline archive has additionally passed an independent direct
+source audit: pinned archive SHA256, hashes of the extracted four passage
+files/ID map/dev files, and all 8,096,668 normalized document IDs, texts and
+positions agree. See `official-full-source-audit.json`. This closes the prior
+gap between subset-coverage checks and all-document official-source identity.
+
 - The extracted native Qdrant snapshot is 18,477,460,992 bytes with SHA256
   `2df5c889386db365e4d72d089f90bfb736c8a6a24d5bede4a10f727d9f0976e0`.
 - The existing Qdrant 1.16.0 musl release archive matches the delivered
