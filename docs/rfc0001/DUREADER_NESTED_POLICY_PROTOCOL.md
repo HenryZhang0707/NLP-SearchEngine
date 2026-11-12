@@ -66,6 +66,14 @@ preserved and must not be silently replaced. The gate remains experimental.
 
 ## Remaining gates
 
+All-query HTTP verification exposed two adjacent-order differences for the
+fixed CE-24 action when compared with a prefix of cached CE-40 scores.
+Different last-batch padding/shape in float16 can perturb near-tied logits.
+The complete HTTP run is retained as measured evidence, but the reused-score
+fixed-depth result is not considered exact serving parity. A separate CE-24
+capture is required for the corrected fixed-budget comparison. This affects
+neither the frozen gate parameters nor the need for a final isolated run.
+
 The 8-query real HTTP pilot completed all 10 policies. Every returned ordered
 document list matched its offline prediction (100% for every policy), including
 the learned gate decisions. This is a pilot only; it does not establish

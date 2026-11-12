@@ -14,12 +14,15 @@ from evaluation.merge_full_captures import read_capture
 from evaluation.study_rerank_actions import FrozenCrossEncoder
 
 
-def score(capture_dir, corpus, model, output, expected_corpus_sha256):
+def score(capture_dir, corpus, model, output, expected_corpus_sha256, budgets='28,40'):
     output = Path(output)
     if output.exists():
         raise FileExistsError(output)
+    budgets=[int(b) for b in budgets.split(',')]
+    if not budgets or len(set(budgets))!=len(budgets)or any(not 1<=b<=100 for b in budgets):
+        raise ValueError('invalid CE budgets')
     rows, source = read_capture(capture_dir)
-    wanted = {h['doc_id'] for r in rows for h in r['hybrid'][:40]}
+    wanted = {h['doc_id'] for r in rows for h in r['hybrid'][:max(budgets)]}
     documents = {}
     digest = hashlib.sha256()
     count = 0
@@ -40,7 +43,7 @@ def score(capture_dir, corpus, model, output, expected_corpus_sha256):
         raise ValueError('candidate documents missing from corpus')
     ce = FrozenCrossEncoder(model, device='cuda', batch_size=20, max_length=256)
     # Warm both budgets without labels; retain no warmup times.
-    for budget in (28,40):
+    for budget in budgets:
         for row in rows[:1]:
             ce.score(row['text'],[documents[h['doc_id']] for h in row['hybrid'][:budget]])
     output.mkdir(parents=True)
@@ -51,7 +54,7 @@ def score(capture_dir, corpus, model, output, expected_corpus_sha256):
                       'pool':[h['doc_id'] for h in row['hybrid'][:100]],
                       'global_docids':[h['docid'] for h in row['hybrid'][:100]],
                       'lexical':row['lexical'], 'dense':row['dense']}
-            for budget in (28,40):
+            for budget in budgets:
                 selected = result['pool'][:budget]
                 scores,elapsed = ce.score(row['text'],[documents[d] for d in selected])
                 result[f'ce{budget}']={'scores':scores,'pairs':len(selected),'component_ms':elapsed}
@@ -65,7 +68,7 @@ def score(capture_dir, corpus, model, output, expected_corpus_sha256):
                 'candidate_protocol_sha256':sha256_of(Path(capture_dir)/'protocol.json'),
                 'corpus_sha256':digest.hexdigest(),'ce':ce.info,
                 'scores_sha256':sha256_of(output/'scores.jsonl'),
-                'budgets':[28,40],'qrels_read':False,
+                'budgets':budgets,'qrels_read':False,
                 'latency_scope':'separately measured CE components; not HTTP latency'}
     (output/'protocol.json').write_text(json.dumps(protocol,indent=2)+'\n')
     return protocol
@@ -75,4 +78,5 @@ if __name__ == '__main__':
     p=argparse.ArgumentParser(__doc__)
     for name in ('capture-dir','corpus','model','output','expected-corpus-sha256'):
         p.add_argument('--'+name,required=True)
+    p.add_argument('--budgets',default='28,40')
     print(json.dumps(score(**vars(p.parse_args())),indent=2))

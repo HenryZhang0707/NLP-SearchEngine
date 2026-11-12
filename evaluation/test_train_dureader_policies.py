@@ -1,4 +1,5 @@
 import json
+import pytest
 
 from contracts.index_format import sha256_of
 from evaluation import train_dureader_policies as mod
@@ -40,3 +41,11 @@ def test_nested_oof_coverage_and_dev_predictions_frozen_before_labels(tmp_path,m
     assert result['random-20261113']['ce_pairs_mean']==result['learned-router']['ce_pairs_mean']
     assert result['fixed-pair-budget']['ce_component_ms'] is None
     assert result['learned-router']['e2e_http_ms'] is None
+    from evaluation.audit_dureader_policies import audit
+    audited=audit(train,dev,tq,dq,stats,output,tmp_path/'independent-audit')
+    assert audited['all_aggregate_quality_metrics_recomputed']
+    assert audited['outer_group_exclusion_verified']
+    (output/'models.json').write_text('{}')
+    with pytest.raises(ValueError,match='artifact hash mismatch'):
+        audit(train,dev,tq,dq,stats,output,tmp_path/'corrupt-audit')
+    assert not(tmp_path/'corrupt-audit').exists()
