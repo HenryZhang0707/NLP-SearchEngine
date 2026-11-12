@@ -24,11 +24,11 @@
 - [x] **RFC-0002 语义与规则 Router 基线**。DuReader 100k 的 1,020 条开发查询已完成 BM25、ANN Dense、固定 RRF、规则 Adaptive 与同源精确 Dense，另有 1,152 次同服务交错计时。质量、请求与 TREC 逐条核验，保留配对区间及 Router 的负结果。见[报告第 9 节](REPORT.md#9-协作开发集与-router-对照)；808 条全量留出另列。
 - [x] **RFC-0002 本地 20k 演示验收**。从已交接的快照恢复 20,000 个点，校验同一语料的压缩词法索引。真实浏览器走四模式，实测无效语法清除旧结果。HTTP 后端断开与恢复分别通过 10 项和 27 项检查。
 - [x] **RFC-0002 20k 路由日志对账**。50 条开发查询逐一运行四模式，200 条 HTTP 结果均匹配同一服务的日志。固定 RRF 调用向量 50 次，规则 Router 调用 9 次，无回退。单次顺序工程测量见[资源记录](evaluation/RESOURCES.md#新闻-20k-本地浏览器演示与恢复验收)。
-- [ ] **RFC-0002 自爬人工实测**。复用冻结的 20k 语料、划分、候选池与双索引。四份盲审包覆盖 8,281 对，其中 1,656 对有独立重叠安排。收到实际人审评分后，先报告裁决前一致率和分歧数量，再导入裁决、重评四模式并补充失败分析。现有辅助标注结果单列。
-- [x] **RFC-0001 两动作对照**。已完成规则与同向量调用次数随机对照、线性收益模型的独立训练与 100k 开发回放，并记录 20k 辅助标注上的在线工程验收。结果未证明规则优于同预算随机策略，也未证明线性收益模型优于规则。详见 [Router 对照](docs/contributions/rfc0001-router-budget.md)。
+- [ ] **RFC-0002 自爬人工实测**。复用冻结的 20k 语料、划分、候选池与双索引。四份离线盲审包已回读校验，覆盖 8,281 对，其中 1,656 对有独立重叠安排。收到四份完整评分后，报告裁决前一致率和分歧数量，发出只含分歧条目的裁决包，随后导入结果并重评四模式。现有辅助标注结果单列。
+- [x] **RFC-0001 两动作对照**。完成规则与同预算随机对照、线性收益模型独立训练和等预算回放。固定训练阈值与规则在 100k 开发集另有 2,040 次真实 HTTP 对照，向量调用为 715 对 748，质量与耗时证据支持保留现有默认规则。详见 [Router 对照](docs/contributions/rfc0001-router-budget.md)。
 - [ ] **RFC-0001 CE 策略集成与验证**。[PR #9](https://github.com/ShwStone/NLP-SearchEngine/pull/9) 承接 [Issue #3](https://github.com/ShwStone/NLP-SearchEngine/issues/3)，与当前主线存在冲突。与负责人对齐在线接口、CE 固定预算和等成本基线，保留实际 HTTP 质量、成本与误差；策略冻结后再在隔离留出集验证。两动作向量对照不替代这部分。
 - [x] **Windows 回归验证**。修复 checkpoint 子进程退出后锁释放的时序断言、CLI 子进程编码、原生路径断言和 JSON 解码异常的测试稳定性。完整 Windows unittest 运行 211 项，跳过两项 POSIX 专用用例，其余通过。
-- [ ] **待审分支归并**。[PR #2](https://github.com/ShwStone/NLP-SearchEngine/pull/2) 和 [PR #7](https://github.com/ShwStone/NLP-SearchEngine/pull/7) 与已合入实现重叠。只接收仍缺少且经当前主线验证的独立改动。
+- [x] **旧 PR 功能核对**。[PR #2](https://github.com/ShwStone/NLP-SearchEngine/pull/2) 的采集与界面改动、[PR #7](https://github.com/ShwStone/NLP-SearchEngine/pull/7) 的离线构建与读取能力已有覆盖。PR #7 的 PackedIndex 缓存淘汰、同词并发读取和读取失败后重试测试在当前代码上重放通过，可单独保留覆盖。
 
 ## 证据边界
 
