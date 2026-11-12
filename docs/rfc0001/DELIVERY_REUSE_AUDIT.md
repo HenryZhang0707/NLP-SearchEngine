@@ -78,6 +78,31 @@ Unicode regressions must be included in the final rerun before delivery.
 
 ## Outstanding acceptance work
 
+The compact full lexical archive is now independently extracted and audited:
+all seven compact file hashes match, and every one of 8,096,668 document IDs,
+titles, texts and relative positions matches the normalized full corpus and
+vector fingerprint. See `full-delivery-compact-audit.json`. This is not a claim
+that every posting was rederived from source text.
+
+The frozen delivery source at commit `dfa697687ddf1a0204d42a4c52992a0ac159212d`
+provides the compact reader. `evaluation.delivery_backend` checks both reader
+source hashes before loading them; it never silently imports an unrelated
+checkout. The float64 accelerator retains the reference BM25 term order and
+uses the reader's bounded postings cache. Full train capture and raw CE-28/40
+scoring are complete through this backend. Full dev compact capture is
+running, while independent sharded train/dev captures continue for parity.
+
+`evaluation.audit_capture_parity` requires identical query universe, ordered
+external/internal candidate IDs and scores for **every** query before marking
+the compact and sharded runs equivalent. Until those captures finish, this gate
+is pending. The compact batch runtime is never substituted for HTTP latency.
+
+`evaluation.continue_full_dureader` serializes fusion, CE scoring and nested
+training using only completed, hashed outputs. It checks upstream process
+identity while waiting, fails if a producer exits without publishing, and never
+restarts an unfinished producer or triggers shutdown. The automatic pipeline
+does not replace final audit, all-query serving validation or remote delivery.
+
 Completed full BM25 train/dev capture, fused candidate construction, CE and learned policy
 experiments, grouped nested/OOF supervision evidence, same-budget controls,
 isolated end-to-end HTTP measurements, paired confidence intervals, final
