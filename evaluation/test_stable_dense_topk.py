@@ -2,7 +2,7 @@ import unittest
 
 import torch
 
-from .stable_dense_topk import stable_dense_topk
+from evaluation.stable_dense_topk import stable_dense_topk
 
 
 class StableDenseTopKTests(unittest.TestCase):

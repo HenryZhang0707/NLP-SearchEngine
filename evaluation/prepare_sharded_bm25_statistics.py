@@ -27,7 +27,7 @@ def prepare(corpus_dir, index_dir, queries, output):
     for number, part in enumerate(parts):
         directory = Path(index_dir) / part.name
         manifest = verified(directory, f'dureader-full-shard-{number:03d}')
-        stats = json.loads((directory / 'stats.json').read_text())
+        stats = json.loads((directory / 'stats.json').read_text(encoding='utf-8'))
         lengths = stats['doc_lengths']
         if set(lengths) != {str(i) for i in range(manifest.n_docs)}:
             raise ValueError('document length coverage mismatch')
@@ -56,7 +56,7 @@ def prepare(corpus_dir, index_dir, queries, output):
               'source_record_parity_verified': False}
     # No output is published when any declared shard fails verification.
     output = Path(output)
-    with output.open('x') as handle:
+    with output.open('x', encoding='utf-8', newline='\n') as handle:
         json.dump(result, handle, ensure_ascii=False, indent=2)
         handle.write('\n')
     return result

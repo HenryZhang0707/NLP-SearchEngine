@@ -12,7 +12,7 @@ def test_global_shards_match_monolithic_with_unequal_df_and_lengths(tmp_path):
         '苹果 苹果 香蕉', '香蕉', '苹果', '汽车 汽车 汽车 汽车', '香蕉 汽车', '苹果 香蕉 汽车'])]
     def index(name, rows):
         source = tmp_path / (name + '.jsonl')
-        source.write_text(''.join(json.dumps(row, ensure_ascii=False) + '\n' for row in rows))
+        source.write_text(''.join(json.dumps(row, ensure_ascii=False) + '\n' for row in rows), encoding='utf-8')
         build(source, tmp_path / name, name)
         return DiskIndex(tmp_path / name)
     whole = index('whole', corpus)
@@ -57,7 +57,7 @@ def test_streaming_global_statistics_and_incomplete_build_rejection(tmp_path):
         rows = [dict(doc_id=f'{i}-{j}', title='', text=text) for j, text in enumerate(texts)]
         all_rows.extend(rows)
         path = source / f'part-{i:03d}'
-        path.write_text(''.join(json.dumps(r, ensure_ascii=False) + '\n' for r in rows))
+        path.write_text(''.join(json.dumps(r, ensure_ascii=False) + '\n' for r in rows), encoding='utf-8')
         build(path, indices / path.name, f'dureader-full-shard-{i:03d}')
     queries = tmp_path / 'queries.jsonl'
     queries.write_text(json.dumps(dict(query_id='q', text='苹果 汽车 不存在')) + '\n')

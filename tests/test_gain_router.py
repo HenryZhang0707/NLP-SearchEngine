@@ -20,7 +20,7 @@ def test_jsonl_preserves_unicode_separators_inside_documents():
     with tempfile.TemporaryDirectory() as tmp:
         path=Path(tmp)/'corpus.jsonl'
         rows=[{'doc_id':'a','text':'心肌\u2028梗死\u0085急救'}, {'doc_id':'b','text':'正常正文'}]
-        path.write_text(''.join(json.dumps(row,ensure_ascii=False)+'\n' for row in rows))
+        path.write_text(''.join(json.dumps(row,ensure_ascii=False)+'\n' for row in rows), encoding='utf-8')
         assert list(jsonl_rows(path))==rows
 
 

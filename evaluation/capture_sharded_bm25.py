@@ -17,7 +17,7 @@ from evaluation.sharded_bm25 import shard_topk, merge_topk
 def capture(index_dir, queries, statistics, output, k=200):
     if not 1 <= k <= 200:
         raise ValueError('k must be in 1..200')
-    stats = json.loads(Path(statistics).read_text())
+    stats = json.loads(Path(statistics).read_text(encoding='utf-8'))
     if stats['queries_sha256'] != sha256_of(queries):
         raise ValueError('query bytes differ from frozen statistics')
     if stats['analyzer_hash'] != analyzer.config_hash():
@@ -62,14 +62,14 @@ def capture(index_dir, queries, statistics, output, k=200):
                 'scope': 'offline batch candidate generation; not HTTP latency', 'qrels_read': False}
     output = Path(output)
     output.mkdir(parents=True, exist_ok=False)
-    with (output / 'capture.jsonl').open('w') as handle:
+    with (output / 'capture.jsonl').open('w', encoding='utf-8', newline='\n') as handle:
         for i, row in enumerate(rows):
             handle.write(json.dumps({'query_id': qids[i], 'text': row.get('query', row.get('text')),
                                     'explicit_constraints': parsed[i].get('explicit_constraints', False),
                                     'lexical': [{'doc_id': identities[i][d], 'docid': d, 'score': s}
                                                 for d, s in rankings[i]]}, ensure_ascii=False) + '\n')
     protocol['capture_sha256'] = sha256_of(output / 'capture.jsonl')
-    (output / 'protocol.json').write_text(json.dumps(protocol, indent=2) + '\n')
+    (output / 'protocol.json').write_text(json.dumps(protocol, indent=2) + '\n', encoding='utf-8', newline='\n')
     return protocol
 
 

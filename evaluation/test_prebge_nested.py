@@ -2,8 +2,8 @@
 import unittest
 import numpy as np
 
-from .prebge_nested import safe_partition,gate_mask
-from .study_bge_score_calibration import summary
+from evaluation.prebge_nested import safe_partition,gate_mask
+from evaluation.study_bge_score_calibration import summary
 
 
 class NestedScopeTests(unittest.TestCase):
