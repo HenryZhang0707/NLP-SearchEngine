@@ -1,6 +1,7 @@
 """Capture paired fixed RRF and cross-encoder controls through public HTTP."""
 
 import argparse
+from collections import Counter
 from contextlib import closing
 import hashlib
 import ipaddress
@@ -20,6 +21,7 @@ from uuid import uuid4
 
 from contracts.ce import GATE_DEPTH, GATE_FEATURE_NAMES
 
+from .ce_analysis import learned_diagnostics
 from .ce_budget import matched_random
 from .compare import paired_bootstrap
 from .evaluate import (
@@ -30,6 +32,7 @@ from .evaluate import (
 
 REQUEST = {"k": 100, "mode": "hybrid", "scorer": "bm25", "expander": "none"}
 CAPTURE_VERSION = 4
+RANDOM_LIVE_VERSION = 1
 SEED = 2026
 BOOTSTRAP_SAMPLES = 10000
 STAGES = ("lexical", "router", "encode", "vector", "fusion")
@@ -271,16 +274,20 @@ def publish(path, contents):
         pending.unlink()
 
 
+def publish_trec(out, name, run):
+    lines = (f"{qid} Q0 {doc_id} {rank} {score:.8f} {name}\n"
+             for qid, ranking in run.items()
+             for rank, (doc_id, score) in enumerate(ranking, 1))
+    publish(out / f"{name}.trec", "".join(lines).encode("utf-8"))
+
+
 def summarize(out, protocol, names, qrels, captured, random_plan=None):
     runs = {}
     arms = {}
     for name in names:
         run = {qid: data[name]["ranking"] for qid, (_, data) in captured.items()}
         runs[name] = run
-        lines = (f"{qid} Q0 {doc_id} {rank} {score:.8f} {name}\n"
-                 for qid, ranking in run.items()
-                 for rank, (doc_id, score) in enumerate(ranking, 1))
-        publish(out / f"{name}.trec", "".join(lines).encode("utf-8"))
+        publish_trec(out, name, run)
         epochs = {}
         ce_pairs = 0
         for epoch, data in captured.values():
@@ -322,7 +329,14 @@ def summarize(out, protocol, names, qrels, captured, random_plan=None):
             data["rrf"]["explicit_constraints"] for _, data in captured.values()),
     }
     if "learned" in names:
-        summary["matched_random_replay"] = random_replay(random_plan, qrels, runs)
+        random_run = {qid: runs["ce40" if active else "rrf"][qid]
+                      for qid, active in random_plan["random_actions"].items()}
+        publish_trec(out, "matched-random-replay", random_run)
+        diagnostics = learned_diagnostics(qrels, runs, random_plan, samples=BOOTSTRAP_SAMPLES, seed=SEED)
+        publish(out / "learned-diagnostics.json",
+                (json.dumps(diagnostics, ensure_ascii=False, indent=2, sort_keys=True,
+                            allow_nan=False) + "\n").encode("utf-8"))
+        summary["matched_random_replay"] = random_replay(random_plan, qrels, runs["learned"], random_run)
     publish(out / "summary.json", (json.dumps(summary, ensure_ascii=False, indent=2,
                                              sort_keys=True) + "\n").encode("utf-8"))
 
@@ -339,11 +353,9 @@ def freeze_random(captured):
             "learned_actions": selected, "random_actions": random_actions}
 
 
-def random_replay(plan, qrels, runs):
-    random_run = {qid: runs["ce40" if active else "rrf"][qid]
-                  for qid, active in plan["random_actions"].items()}
+def random_replay(plan, qrels, learned, random_run):
     intervals = {
-        metric: paired_bootstrap(qrels, random_run, runs["learned"], metric=metric,
+        metric: paired_bootstrap(qrels, random_run, learned, metric=metric,
                                  samples=BOOTSTRAP_SAMPLES, seed=SEED).to_dict()
         for metric in ("ndcg", "recall", "mrr", "map")
     }
@@ -352,11 +364,141 @@ def random_replay(plan, qrels, runs):
             "learned_minus_random": intervals}
 
 
+def json_digest(value):
+    digest = hashlib.sha256()
+    encoder = json.JSONEncoder(sort_keys=True, ensure_ascii=False, allow_nan=False)
+    for chunk in encoder.iterencode(value):
+        digest.update(chunk.encode("utf-8"))
+    return digest.hexdigest()
+
+
+def random_live_schedule(records, plan):
+    """Counterbalance first position within each pair of planned actions."""
+    starts = {}
+    rng = random.Random(plan["seed"])
+    for record in records:
+        learned = plan["learned_actions"][record.qid]
+        random_active = plan["random_actions"][record.qid]
+        stratum = (learned, random_active)
+        if stratum not in starts:
+            starts[stratum] = bool(rng.getrandbits(1))
+        control = "ce40" if random_active else "rrf"
+        order = ("learned", control) if starts[stratum] else (control, "learned")
+        starts[stratum] = not starts[stratum]
+        yield record, control, order
+
+
+def random_live_pair(client, arms, identity, record, control, order, reference):
+    rows = {}
+    for name in order:
+        depth, base = arms[name]
+        try:
+            observed = search(client, base, depth, record, identity["common"]["retrieval"],
+                              identity["rerankers"][name])
+        except (OSError, ValueError, TypeError) as error:
+            raise EvaluationError(f"live qid={record.qid!r}, arm={name}: {error}") from error
+        expected = reference[name]
+        if ([tuple(item) for item in observed["ranking"]]
+                != [tuple(item) for item in expected["ranking"]]
+                or any(observed[key] != expected[key]
+                       for key in ("ce_pairs", "explicit_constraints", "features"))):
+            raise EvaluationError(f"live qid={record.qid!r}, arm={name}: differs from frozen capture")
+        rows["learned" if name == "learned" else "random"] = {
+            key: observed[key] for key in ("ce_pairs", "http_ms")
+        }
+    return {"control": control, "order": list(order), **rows}
+
+
+def measure_random(out, client, arms, records, warmup, capture_protocol, captured, plan):
+    arms = {name: arms[name] for name in ("rrf", "ce40", "learned")}
+    frozen_identity = capture_protocol["identities"]
+    identity = {"common": frozen_identity["common"], "rerankers": {
+        name: frozen_identity["rerankers"][name] for name in arms
+    }}
+    live_protocol = {
+        "version": RANDOM_LIVE_VERSION, "request": REQUEST, "identities": identity,
+        "capture_protocol_sha256": json_digest(capture_protocol),
+        "capture_rows_sha256": json_digest(captured),
+        "random_plan_sha256": json_digest(plan),
+        "order": "alternate_within_action_strata_v1",
+        "control": "client_dispatch_to_fixed_rrf_or_ce40",
+        "latency": "http_open_through_body_read_ms",
+    }
+    schedule = list(random_live_schedule(records, plan))
+    with closing(sqlite3.connect(out / "matched-random-live.sqlite3")) as db:
+        saved = journal(db, live_protocol)
+        if list(saved) != [record.qid for record, _, _ in schedule[:len(saved)]]:
+            raise EvaluationError("live random journal contains unexpected query IDs or order")
+        for record, control, order in schedule[:len(saved)]:
+            _, row = saved[record.qid]
+            reference = captured[record.qid][1]
+            if (row.get("control") != control or row.get("order") != list(order)
+                    or any(row.get(name, {}).get("ce_pairs") != reference[arm]["ce_pairs"]
+                           for name, arm in (("learned", "learned"), ("random", control)))
+                    or any(type(row.get(name, {}).get("http_ms")) not in (float, int)
+                           or not math.isfinite(row[name]["http_ms"]) or row[name]["http_ms"] < 0
+                           for name in ("learned", "random"))):
+                raise EvaluationError(f"live random journal has invalid pair for qid={record.qid!r}")
+        if len(saved) < len(schedule):
+            if check_services(client, arms) != identity:
+                raise EvaluationError("live random service identity differs from frozen capture")
+            for i, record in enumerate(warmup):
+                capture_query(client, arms, record, i, list(arms), identity)
+            epoch = uuid4().hex
+            for i, (record, control, order) in enumerate(schedule[len(saved):], len(saved) + 1):
+                pair = random_live_pair(client, arms, identity, record, control, order,
+                                        captured[record.qid][1])
+                if i == len(schedule) and check_services(client, arms) != identity:
+                    with db:
+                        db.execute("INSERT INTO invalid_epochs VALUES (?, ?)",
+                                   (epoch, "service identity changed before final live pair commit"))
+                    raise EvaluationError("service identity changed during live random measurement")
+                with db:
+                    db.execute("INSERT INTO queries VALUES (?, ?, ?)", (
+                        record.qid, epoch, json.dumps(pair, allow_nan=False),
+                    ))
+                saved[record.qid] = (epoch, pair)
+                if i % 100 == 0:
+                    print(f"Measured {i}/{len(schedule)} live random pairs", flush=True)
+
+    pairs = [row for _, row in saved.values()]
+    work = {name: Counter(row[name]["ce_pairs"] for row in pairs)
+            for name in ("learned", "random")}
+    total = {name: sum(count * n_queries for count, n_queries in counts.items())
+             for name, counts in work.items()}
+    if work["learned"] != work["random"] or any(count != plan["ce_pairs"] for count in total.values()):
+        raise EvaluationError("observed live random and learned CE work does not match the plan")
+    by_epoch = {}
+    for epoch, row in saved.values():
+        by_epoch.setdefault(epoch, []).append(row)
+    epochs = {}
+    for epoch, rows in by_epoch.items():
+        epochs[epoch] = {
+            "n_queries": len(rows), "covers_all_queries": len(rows) == len(records),
+            "learned_first": sum(row["order"][0] == "learned" for row in rows),
+            "ce_pairs": {name: sum(row[name]["ce_pairs"] for row in rows)
+                         for name in ("learned", "random")},
+            "http_ms": {name: distribution([row[name]["http_ms"] for row in rows])
+                        for name in ("learned", "random")},
+            "paired_learned_minus_random_http_ms": distribution([
+                row["learned"]["http_ms"] - row["random"]["http_ms"] for row in rows
+            ]),
+        }
+    path = out / "matched-random-live.json"
+    result = {"protocol": live_protocol, "ce_pairs": total, "queries_by_ce_pair_count": work,
+              "latency_by_epoch": epochs}
+    publish(path, (json.dumps(result, ensure_ascii=False, sort_keys=True, indent=2,
+                              allow_nan=False) + "\n").encode("utf-8"))
+    return path
+
+
 def main(argv=None):
     cli = argparse.ArgumentParser(description=__doc__)
     cli.add_argument("--baseline", required=True)
     cli.add_argument("--rerank", action="append", nargs=2, metavar=("DEPTH", "URL"), required=True)
     cli.add_argument("--learned", help="Optional digest-bound CE40 gate endpoint")
+    cli.add_argument("--measure-random", action="store_true",
+                     help="Measure paired HTTP latency against the frozen matched random plan")
     for name in ("queries", "warmup-queries", "qrels", "out"):
         cli.add_argument(f"--{name}", type=Path, required=True)
     args = cli.parse_args(argv)
@@ -369,6 +511,8 @@ def main(argv=None):
         if "ce40" not in arms:
             cli.error("--learned requires a fixed CE40 endpoint")
         arms["learned"] = (GATE_DEPTH, endpoint(args.learned))
+    if args.measure_random and not args.learned:
+        cli.error("--measure-random requires --learned")
     if len({base for _, base in arms.values()}) != len(arms):
         cli.error("each arm requires its own endpoint")
 
@@ -433,6 +577,9 @@ def main(argv=None):
         publish(args.out / "matched-random-plan.json",
                 (json.dumps(random_plan, sort_keys=True, ensure_ascii=False, indent=2)
                  + "\n").encode("utf-8"))
+    if args.measure_random:
+        print(measure_random(args.out, client, arms, records, warmup, protocol, captured,
+                             random_plan))
     if sha256(args.qrels) != fingerprints["qrels"]:
         raise EvaluationError("qrels changed during capture")
     qrels = load_qrels(args.qrels)

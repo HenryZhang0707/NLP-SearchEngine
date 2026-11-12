@@ -96,7 +96,7 @@ digest. Keep fixed CE40 available and add fixed CE28 for the four-arm comparison
 ```bash
 python -m evaluation.ce_http \
   --baseline http://127.0.0.1:8000 --rerank 28 http://127.0.0.1:8028 \
-  --rerank 40 http://127.0.0.1:8040 --learned http://127.0.0.1:8041 \
+  --rerank 40 http://127.0.0.1:8040 --learned http://127.0.0.1:8041 --measure-random \
   --queries data/queries.dev.jsonl --qrels data/qrels.dev.tsv \
   --warmup-queries data/queries.warmup.jsonl --out runs/ce-dev
 ```
@@ -106,8 +106,21 @@ gate and comparison settings fixed. The learned arm records real HTTP latency
 and CE pair counts; report latency by capture epoch after a resume.
 `matched-random-plan.json` freezes a seeded random assignment at exactly the
 observed learned arm's total pair count, using each query's actual fixed CE40
-capacity. Its quality results in `summary.json` replay observed fixed RRF/CE40
-rankings. No random arm runs over HTTP, so this replay has no measured latency.
+capacity. Its quality results in `summary.json` and its TREC file replay
+observed fixed RRF/CE40 rankings. `learned-diagnostics.json` reports paired
+quality differences from each fixed CE arm, missed positive gains, applied
+losses and the two-action oracle. The oracle uses qrels after capture and
+is only an upper reference for these two observed actions.
+
+`--measure-random` separately sends each query to the learned service and
+the fixed endpoint selected by the frozen random plan. It counterbalances
+request order, checks every observed ranking and CE count against the original
+capture, and writes measured wall times to `matched-random-live.json`.
+The comparison times the HTTP requests through their body reads; client-side
+endpoint selection is outside this timing. The separate SQLite journal can
+resume after a restart on new ports with matching service identities. With
+this flag omitted, random replay quality is still available, but no random
+latency is measured.
 
 ### Frozen unsupported-request policy and coverage
 
