@@ -452,6 +452,10 @@ endpoints with `adaptive` and different policy versions for a Router comparison.
 Both endpoints must expose the same index, vector and effective search configuration.
 For a strict rerun, copy each arm's `identity_sha256` from the prior verified
 report. It covers the index, vector, search configuration and policy objects.
+An `adaptive` arm whose policy can execute the dense route must set
+`allow_adaptive_dense: true` and provide its frozen `identity_sha256`. The flag
+defaults to `false`. The verified report records enabled arms, and verification
+still checks that their responses and tagged server logs agree for every request.
 Requests use BM25 and expansion `none`. When a dense arm is present, choose a
 panel it can execute successfully and record any exclusions when freezing the plan.
 Within each repeat the runner walks the listed query IDs and rotates which arm goes

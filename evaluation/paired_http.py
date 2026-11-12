@@ -64,12 +64,18 @@ def load_protocol(plan_path, query_path):
     labels = set()
     for arm in arms:
         required = {"label", "endpoint", "mode", "policy_version"}
-        require(isinstance(arm, dict) and required <= set(arm) <= required | {"identity_sha256"}
-                and all(isinstance(value, str) and value for value in arm.values()),
+        require(isinstance(arm, dict)
+                and required <= set(arm) <= required | {"identity_sha256", "allow_adaptive_dense"}
+                and all(isinstance(arm[field], str) and arm[field] for field in required),
                 "Invalid arm schema")
         if "identity_sha256" in arm:
-            require(DIGEST.fullmatch(arm["identity_sha256"]), "Invalid arm identity SHA256")
+            identity = arm["identity_sha256"]
+            require(isinstance(identity, str) and DIGEST.fullmatch(identity), "Invalid arm identity SHA256")
         label, mode, endpoint = arm["label"], arm["mode"], arm["endpoint"]
+        allow_adaptive_dense = arm.get("allow_adaptive_dense", False)
+        require(type(allow_adaptive_dense) is bool, "allow_adaptive_dense must be a boolean")
+        require(not allow_adaptive_dense or (mode == "adaptive" and "identity_sha256" in arm),
+                "allow_adaptive_dense requires an adaptive arm with a frozen identity_sha256")
         require(LABEL.fullmatch(label) and not RESERVED_FILENAME.fullmatch(label)
                 and label.lower() not in labels and mode in MODES, "Invalid or duplicate arm label or mode")
         url = urlsplit(endpoint)
@@ -189,6 +195,7 @@ def collect(plan, digest, queries, out):
             results, latency, routing = _request_search(
                 arm["endpoint"], queries[entry["qid"]], k=plan["depth"], mode=arm["mode"],
                 scorer="bm25", expander="none", timeout=plan["timeout_s"], request_tag=entry["tag"],
+                allow_adaptive_dense=arm.get("allow_adaptive_dense", False),
             )
             require(not routing.fallback, "Fallback observed in a no-fallback measurement")
             outcome = {"event": "OUTCOME", "tag": entry["tag"], "status": 200,
@@ -220,7 +227,7 @@ def read_journal(path, plan, digest):
     validate_identities(plan, before)
     attempts = list(schedule(plan, epoch))
     require(len(events) == 3 + 2 * len(attempts), "Client journal request coverage differs from plan")
-    labels = {arm["label"]: arm["mode"] for arm in plan["arms"]}
+    arms = {arm["label"]: arm for arm in plan["arms"]}
     outcomes = {}
     for index, entry in enumerate(attempts):
         begin, outcome = events[2 + 2 * index:4 + 2 * index]
@@ -233,7 +240,9 @@ def read_journal(path, plan, digest):
                 and outcome["event"] == "OUTCOME" and outcome["tag"] == tag
                 and type(outcome["status"]) is int and outcome["status"] == 200,
                 f"Invalid journal outcome for {tag}")
-        routing = QueryRouting.from_response(outcome["routing"], labels[entry["label"]])
+        arm = arms[entry["label"]]
+        routing = QueryRouting.from_response(outcome["routing"], arm["mode"],
+                                             allow_adaptive_dense=arm.get("allow_adaptive_dense", False))
         require(not routing.fallback, f"Fallback observed for {tag}")
         doc_ids = outcome.get("doc_ids")
         if entry["phase"] == "measure":
@@ -332,7 +341,8 @@ def verify(plan, digest, journal, paths, run_dir=None):
                 and (startup["dataset"], startup["policy_version"]) == (dataset, arm["policy_version"])
                 and (row["dataset"], row["corpus_identity"], row["policy_version"]) ==
                     (dataset, plan["corpus_sha256"][:12], arm["policy_version"])
-                and QueryRouting.from_response(row, arm["mode"]) == routing,
+                and QueryRouting.from_response(row, arm["mode"],
+                                               allow_adaptive_dense=arm.get("allow_adaptive_dense", False)) == routing,
                 f"HTTP status, identity or routing disagreement for {tag}")
         if entry["phase"] == "measure":
             if entry["repeat"] == 0:
@@ -359,6 +369,7 @@ def verify(plan, digest, journal, paths, run_dir=None):
                 "server_log_sha256": logs[arm["endpoint"]][0],
                 "startup_line": startup_lines[arm["endpoint"]],
                 "identity_sha256": identity_digest(identities[label]),
+                **({"allow_adaptive_dense": True} if arm.get("allow_adaptive_dense") else {}),
                 "warmup_requests": len(plan["warmup_query_ids"]),
                 "vector_attempts": vector_attempts[label], "vector_uses": vector_uses[label],
                 "route_counts": dict(route_counts[label]),
