@@ -29,3 +29,37 @@ python3 -m evaluation.router_budget \
 ```
 
 `lexical-only-qids.json` 是预先冻结的查询 ID 数组。把 adaptive 的请求 journal 放在收据旁边。本次 8M 与新闻 20k 结果 SHA-256 分别为 `3f5e34c7ce9af53d96056425bd7d925f3fbefbd789f52522e3a4d996eb4c0f86`、`425120e87b8e4566f83445e67cc545de6f6fb174431d835583d58003807fd583`。运行、标注和结果收据保存在 Git 外。
+
+## BM25 优先的线性收益预测
+
+候选 B 使用线上第一阶段已经得到的五项特征，包括词项数与命中数的 `log1p`、词表覆盖率、首两名相对分差及分差缺失标记。监督目标为逐查询 hybrid 与 lexical 的 nDCG@10 差。仅在训练查询上做标准化、拟合 `alpha=1` 的岭回归并校准向量触发阈值，训练调用数与规则相同。显式词法约束沿用引擎的词法路径。
+
+在同一新闻 20k 语料、BGE/Qdrant 快照、候选池 200、RRF 60 和 `hnsw_ef=256` 下，用已有辅助标注的 50 条 dev 查询训练和校准，在原 150 条 test 查询上回顾性验证。两个 split 的查询 ID 和归一化查询文本均无重叠。提取特征时，200 条查询的前 100 个词法文档与原始 TREC 顺序一致。训练阶段规则与学习阈值各调用向量 9 次。
+
+150 条查询的预测先封存。等预算回放按预测增益降序、查询 ID 升序，选与原规则相同的 32 条走 hybrid。训练阈值在该批查询上触发 31 次。等预算质量差来自 10,000 次配对 bootstrap，seed 为 2026。
+
+| 指标 | 规则 | 学习型等预算回放 | 学习型减规则及 95% CI |
+| --- | ---: | ---: | --- |
+| nDCG@10 | 0.90825 | 0.90434 | −0.00391 [−0.02599, +0.01594] |
+| Recall@10 | 0.87314 | 0.87950 | +0.00636 [−0.01613, +0.02907] |
+| MRR@10 | 0.97556 | 0.95578 | −0.01978 [−0.04512, +0.00300] |
+| MAP@100 | 0.85141 | 0.84540 | −0.00601 [−0.02916, +0.01417] |
+
+四项区间均跨过 0。固定 lexical 的 nDCG@10 为 0.91676。等预算回放需要预先知道整批查询和预算，在线单请求使用冻结训练阈值。该历史辅助标注试验尚不能支持上线收益，独立人工标注仍待完成。100k 的 CE 动作、学习排序器和成本分配沿用 [PR #9](https://github.com/ShwStone/NLP-SearchEngine/pull/9) 的协作主线。
+
+在恢复的同一 20k Qdrant 快照上，通过真实 `POST /search` 复验了冻结阈值。150 次请求全部返回 HTTP 200，31 次向量调用均成功且无回退。逐查询的决策与文档排序均和回放一致。在线验收收据摘要为 `3db6d6ec5e9df809a7132b4c0e285c8260d307a2a0b33c4d65ef7c9ef327726e`。
+
+特征导出回执绑定原始查询、词法 TREC、特征文件和实际语料指纹。训练入口验证回执，再将语料、候选池、RRF 和特征版本绑定到模型。在线引擎启动时校验实际语料和配置。回放同时要求冻结的实验身份及三臂 TREC、指标和请求日志的摘要。历史 JSONL 请求证据缺少逐请求配置，该边界随结果记录。
+
+```bash
+python3 scripts/export_router_features.py --index compact --queries train.tsv \
+  --lexical-run train.lexical.trec --expected-corpus-sha256 "$CORPUS_SHA" \
+  --output train.features.jsonl > train.features-receipt.json
+python3 -m evaluation.train_router_gain --train-features train.features.jsonl \
+  --feature-receipt train.features-receipt.json \
+  --train-queries train.tsv --train-qrels train.qrels.tsv \
+  --lexical-run train.lexical.trec --hybrid-run train.hybrid.trec \
+  --adaptive-receipt train.adaptive.trec.requests.json --output-model gain.json
+```
+
+用 `scripts/replay_router_gain.py freeze` 的 `--experiment-binding` 和 `--feature-receipt` 生成留出决策，再用 `score` 加载留出标注、三臂排序及 `--lexical-requests/--hybrid-requests/--adaptive-requests` 请求证据。在线试验在本地配置 `NLP_ROUTER_GAIN_MODEL`、`NLP_ROUTER_GAIN_SHA256`，显式选择工厂 `online.linear_gain_router:load_gain_router`。模型摘要 `46688933af468104b9b79862b97f752a535c9b895f36c05605d65f8595d14eb9`，回放结果摘要 `e953eaf4abf5f8cf38657cf70d3f9363bf084d10c645964de6ae50545ec70a8a`。训练模型、特征、查询和运行记录保存在 Git 外。
