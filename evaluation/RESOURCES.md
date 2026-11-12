@@ -68,6 +68,8 @@ Qdrant 适配器和快照发布逻辑已在 `offline/vector_build.py`、`online/
 
 ## 团队自爬新闻测试集
 
+冻结版本的采集与清洗口径、查询隔离诊断、池化判定覆盖及复验命令见 [新华网 20k 数据卡](../docs/contributions/rfc0002-news20k-dataset-card.md)。
+
 2026-11-03，新华网 `clean-news/v1` 抓取任务达到 `TARGET_REACHED`，清洗及精确/近重复去重后共有 **20,000** 篇有效文章。该语料独立于官方 DuReader 前缀试验，采用同域、robots fail-closed、深度 6、每次请求间隔 1 秒和单响应 1,000,000 字节上限。语料与 sidecar 的最终 SHA256 已重新核验，原始响应缓存、数据和索引均不进入 Git。
 
 | 最终产物 | 字节数 | SHA256 |
