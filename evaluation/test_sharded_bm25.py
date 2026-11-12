@@ -45,3 +45,32 @@ def test_resume_rejects_corrupt_completed_shard(tmp_path):
         f.write('\n')
     with pytest.raises(ValueError, match='corrupt'):
         verified(output, 'dureader-full-shard-000')
+
+
+def test_streaming_global_statistics_and_incomplete_build_rejection(tmp_path):
+    from evaluation.prepare_sharded_bm25_statistics import prepare
+    source = tmp_path / 'sources'
+    indices = tmp_path / 'indices'
+    source.mkdir()
+    all_rows = []
+    for i, texts in enumerate([['苹果 苹果', '香蕉'], ['汽车', '苹果 香蕉 汽车']]):
+        rows = [dict(doc_id=f'{i}-{j}', title='', text=text) for j, text in enumerate(texts)]
+        all_rows.extend(rows)
+        path = source / f'part-{i:03d}'
+        path.write_text(''.join(json.dumps(r, ensure_ascii=False) + '\n' for r in rows))
+        build(path, indices / path.name, f'dureader-full-shard-{i:03d}')
+    queries = tmp_path / 'queries.jsonl'
+    queries.write_text(json.dumps(dict(query_id='q', text='苹果 汽车 不存在')) + '\n')
+    full = tmp_path / 'all.jsonl'
+    full.write_text(''.join(json.dumps(r) + '\n' for r in all_rows))
+    build(full, tmp_path / 'whole', 'whole')
+    whole = DiskIndex(tmp_path / 'whole')
+    stats = prepare(source, indices, queries, tmp_path / 'global.json')
+    assert stats['n_docs'] == whole.n_docs
+    assert stats['avgdl'] == whole.avgdl
+    assert stats['dfs'] == {t.term: whole.df(t.term) for t in analyzer.analyze('苹果 汽车 不存在')}
+    assert [s['offset'] for s in stats['shards']] == [0, 2]
+    (source / 'part-002').write_text('{}\n')
+    with pytest.raises(FileNotFoundError):
+        prepare(source, indices, queries, tmp_path / 'incomplete.json')
+    assert not (tmp_path / 'incomplete.json').exists()
