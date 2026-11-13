@@ -219,6 +219,14 @@ def _load_reviews(
     return _Reviews(pairs, packet_raw, reviewed, disputes, seen_files, receipt)
 
 
+def _dispute_material(reviews: _Reviews, packet: Path) -> tuple[bytes, bytes]:
+    rows = [row for _, row in _jsonl(reviews.packet_raw, packet)
+            if row["pair_id"] in reviews.disputes]
+    public = b"".join(_json_bytes(row) for row in rows)
+    template = b"".join(_json_bytes({"pair_id": row["pair_id"], "relevance": None}) for row in rows)
+    return public, template
+
+
 def prepare_adjudication(
     packet: Path, private_map: Path, plan: Path, plan_sha256: str,
     reviewer_files: Sequence[tuple[str, Path]], dispute_packet: Path,
@@ -238,11 +246,7 @@ def prepare_adjudication(
     }
     companion_outputs = []
     if reviews.disputes:
-        rows = [row for _, row in _jsonl(reviews.packet_raw, packet)
-                if row["pair_id"] in reviews.disputes]
-        public = b"".join(_json_bytes(row) for row in rows)
-        template = b"".join(_json_bytes({"pair_id": row["pair_id"], "relevance": None})
-                            for row in rows)
+        public, template = _dispute_material(reviews, packet)
         result["dispute_packet"] = {"filename": dispute_packet.name, "sha256": _sha256(public)}
         result["adjudication_template"] = {
             "filename": adjudication_template.name, "sha256": _sha256(template),
@@ -263,14 +267,35 @@ def prepare_adjudication(
     return result
 
 
+def _verify_preparation(path: Path, expected_sha256: str, packet: Path, reviews: _Reviews) -> dict:
+    raw = path.read_bytes()
+    digest = _check_sha256(raw, expected_sha256, "pre-adjudication receipt")
+    prepared = _object(raw, "pre-adjudication receipt")
+    for field, value in reviews.receipt.items():
+        if prepared.get(field) != value:
+            raise EvaluationError(f"pre-adjudication receipt: frozen {field} differs from final input")
+    material = {"dispute_packet": None, "adjudication_template": None}
+    if reviews.disputes:
+        public, template = _dispute_material(reviews, packet)
+        material = {"dispute_packet": _sha256(public), "adjudication_template": _sha256(template)}
+    for field, digest_expected in material.items():
+        row = prepared.get(field)
+        matches = row is None if digest_expected is None else (
+            isinstance(row, dict) and row.get("sha256") == digest_expected)
+        if field not in prepared or not matches:
+            raise EvaluationError(f"pre-adjudication receipt: frozen {field} differs from final input")
+    return {"filename": path.name, "sha256": digest}
+
+
 def import_human_judgments(
     packet: Path, private_map: Path, plan: Path, plan_sha256: str,
     reviewer_files: Sequence[tuple[str, Path]], qrels: Path, receipt: Path,
-    *, adjudication: Path | None = None,
+    *, adjudication: Path | None = None, preparation: tuple[Path, str] | None = None,
 ) -> dict:
     """Export fully covered and adjudicated judgments to two fresh files."""
     _check_fresh_outputs(qrels, receipt)
     reviews = _load_reviews(packet, private_map, plan, plan_sha256, reviewer_files)
+    preparation_receipt = _verify_preparation(*preparation, packet, reviews) if preparation is not None else None
     disputes = reviews.disputes
     if disputes and adjudication is None:
         raise EvaluationError(f"adjudication is required for {len(disputes)} disputed pairs")
@@ -287,6 +312,7 @@ def import_human_judgments(
     qrels_raw = "".join(f"{qid}\t0\t{doc_id}\t{grade}\n" for qid, doc_id, grade in rows).encode("utf-8")
     result = {
         **reviews.receipt,
+        **({"pre_adjudication": preparation_receipt} if preparation_receipt is not None else {}),
         "adjudication": adjudication_receipt,
         "qrels": {"filename": qrels.name, "sha256": _sha256(qrels_raw)},
     }
@@ -314,6 +340,8 @@ and the receipt private so the exported qrels can be traced to their submissions
     parser.add_argument("--reviewer", action="append", nargs=2, metavar=("REVIEWER_ID", "JSONL"),
                         required=True, help="repeat for each reviewer in the frozen plan")
     parser.add_argument("--adjudication", type=Path, help="explicit adjudication JSONL for disputed pairs")
+    parser.add_argument("--pre-adjudication", nargs=2, metavar=("PRIVATE_REPORT", "SHA256"),
+                        help="bind final import to a previously verified preparation receipt")
     parser.add_argument("--qrels", type=Path, help="fresh TREC qrels path")
     parser.add_argument("--receipt", type=Path, help="fresh private provenance JSON path")
     parser.add_argument("--prepare-adjudication", nargs=3, type=Path,
@@ -321,8 +349,8 @@ and the receipt private so the exported qrels can be traced to their submissions
                         help="prepare blind adjudication instead of exporting qrels")
     args = parser.parse_args(argv)
     if args.prepare_adjudication:
-        if any(path is not None for path in (args.qrels, args.receipt, args.adjudication)):
-            parser.error("--prepare-adjudication cannot be combined with --qrels, --receipt or --adjudication")
+        if any(path is not None for path in (args.qrels, args.receipt, args.adjudication, args.pre_adjudication)):
+            parser.error("--prepare-adjudication cannot be combined with final import arguments")
     elif args.qrels is None or args.receipt is None:
         parser.error("--qrels and --receipt are required unless preparing adjudication")
     inputs = (args.packet, args.private_map, args.plan, args.plan_sha256,
@@ -331,8 +359,9 @@ and the receipt private so the exported qrels can be traced to their submissions
         if args.prepare_adjudication:
             result = prepare_adjudication(*inputs, *args.prepare_adjudication)
         else:
+            preparation = (Path(args.pre_adjudication[0]), args.pre_adjudication[1]) if args.pre_adjudication else None
             result = import_human_judgments(*inputs, args.qrels, args.receipt,
-                                            adjudication=args.adjudication)
+                                            adjudication=args.adjudication, preparation=preparation)
     except (OSError, UnicodeError, EvaluationError) as error:
         parser.exit(2, f"annotation intake failed: {error}\n")
     print(json.dumps({key: result[key] for key in ("pair_count", "overlap_pair_count", "disputed_pair_count")}))

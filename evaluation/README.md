@@ -559,7 +559,9 @@ dispute packet and matching template. The packet retains the original blind
 order and contains `pair_id`, `query`, `title` and `text` for disputed pairs.
 Copy the template to a new file, replace every `null` grade with an integer
 `0/1/2`, and keep the completed file private. When every overlap is unanimous,
-the command writes the private report alone.
+the command writes the private report alone. Record the private report's SHA256
+before sending the adjudication materials. Use it at final import to verify
+the exact reviewer submissions and the reconstructed dispute material.
 
 Import the completed judgments to create qrels:
 
@@ -569,6 +571,7 @@ python -m evaluation.annotation_intake \
   --plan data/review/private/plan.json --plan-sha256 "$FROZEN_PLAN_SHA256" \
   --reviewer reviewer-a data/review/private/reviewer-a.jsonl \
   --reviewer reviewer-b data/review/private/reviewer-b.jsonl \
+  --pre-adjudication data/review/private/pre-adjudication.json "$TRUSTED_PRE_ADJUDICATION_SHA256" \
   --adjudication data/review/private/adjudication.jsonl \
   --qrels data/review/news-human.qrels.tsv --receipt data/review/private/intake.json
 ```

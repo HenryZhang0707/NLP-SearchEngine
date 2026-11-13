@@ -5,6 +5,7 @@
 证据写入调用方指定的 JSON 路径；事件里的查询与请求体都来自调用方参数，
 工具本身不读取、不写入任何凭据。
 向量 profile 可用三个 ``--expect-embedding-*`` 参数绑定发布清单中的编码器身份。
+四个 ``--expect-query-encoder-*`` 参数核验实际查询编码器，并启用同实例检查。
 
 三个阶段的语义（同一个服务进程保持运行）：
 
@@ -36,6 +37,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 SCOPE = "公开 HTTP 工程验收；不是质量基准，也不是 HNSW 性能或容量结论"
 INSTANCE_HEADER = "X-Search-Instance"
 INSTANCE_ID = re.compile(r"[0-9a-f]{32}")
+RUNTIME_LABEL = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,63}")
 TIMINGS_KEYS = frozenset({"lexical", "router", "encode", "vector", "fusion"})
 SCORE_KIND_BY_EXECUTED = {
     "lexical": ("bm25", "tfidf"),
@@ -58,6 +60,14 @@ class EmbeddingExpectation:
 
 
 @dataclass(frozen=True)
+class QueryEncoderRuntimeExpectation:
+    implementation: str
+    device: str
+    dtype: str
+    inventory_sha256: str
+
+
+@dataclass(frozen=True)
 class Expectation:
     """调用方声明的服务身份；缺失的期望不会被默默跳过。"""
 
@@ -71,6 +81,7 @@ class Expectation:
     policy_version: str | None
     vector_configured: bool
     embedding: EmbeddingExpectation | None = None
+    query_encoder_runtime: QueryEncoderRuntimeExpectation | None = None
 
     def expected_vector_used(self, mode):
         return VECTOR_USED_BY_MODE[mode]
@@ -91,7 +102,10 @@ class Probe:
         self.run_tag = run_tag
         self.timeout = timeout
         self.expected_instance_id = expect_instance_id
-        self.require_instance_id = require_instance_id or expect_instance_id is not None
+        runtime = expectation.query_encoder_runtime
+        self.expected_query_encoder_runtime = asdict(runtime) if runtime is not None else None
+        self.require_instance_id = (require_instance_id or expect_instance_id is not None
+                                    or runtime is not None)
         self.instance_id = None
         self.open = build_opener(NoRedirect()).open if self.require_instance_id else urlopen
         self.events = []
@@ -133,6 +147,12 @@ class Probe:
                 raise AssertionError(f"HTTP {path} 返回非法 JSON: {error}") from error
         else:
             body = raw.decode("utf-8", "replace")[:2000]
+        if path == "/index/info" and self.expected_query_encoder_runtime is not None:
+            retrieval = body.get("retrieval") if isinstance(body, dict) else None
+            runtime = retrieval.get("query_encoder_runtime") if isinstance(retrieval, dict) else None
+            assert runtime == self.expected_query_encoder_runtime, (
+                "query_encoder_runtime 缺失或与发布期望不一致"
+            )
         self.events.append({"path": path, "request": payload, "status": status,
                             "wall_ms": wall_ms, "body": body})
         assert status == expected, f"HTTP {path} 状态 {status}，期望 {expected}: {body!r}"
@@ -475,6 +495,12 @@ def _fixed_revision(value):
     return revision
 
 
+def _runtime_label(value):
+    if not RUNTIME_LABEL.fullmatch(value):
+        raise argparse.ArgumentTypeError("必须是 1 至 64 位查询编码器运行时标识")
+    return value
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         description="在线服务只读 HTTP 验收（RFC-0003）：healthy / down / recovered 三阶段")
@@ -494,6 +520,14 @@ def build_parser():
                         help="发布清单中的固定编码器 revision")
     parser.add_argument("--expect-embedding-dimension", type=_positive_int,
                         help="发布清单中的编码维度")
+    parser.add_argument("--expect-query-encoder-implementation", type=_runtime_label,
+                        help="获准发布配置的编码器实现；四个运行时参数须同时提供")
+    parser.add_argument("--expect-query-encoder-device", type=_runtime_label,
+                        help="获准发布配置的查询编码器设备")
+    parser.add_argument("--expect-query-encoder-dtype", type=_runtime_label,
+                        help="获准发布配置的查询编码器权重精度")
+    parser.add_argument("--expect-query-encoder-inventory-sha256", type=_sha256_digest,
+                        help="获准发布模型的清单摘要")
     parser.add_argument("--expect-candidate-k", type=_positive_int, default=200)
     parser.add_argument("--expect-rrf-c", type=_positive_float, default=60.0)
     parser.add_argument("--expect-policy-version", help="可选：要求回显的 policy_version")
@@ -538,6 +572,16 @@ def main(argv=None):
                          "--expect-embedding-revision 和 --expect-embedding-dimension")
         embedding = EmbeddingExpectation(*embedding_values)
 
+    runtime_values = (args.expect_query_encoder_implementation, args.expect_query_encoder_device,
+                      args.expect_query_encoder_dtype, args.expect_query_encoder_inventory_sha256)
+    runtime = None
+    if any(value is not None for value in runtime_values):
+        if args.lexical_only:
+            parser.error("--lexical-only 不接受查询编码器运行时参数")
+        if any(value is None for value in runtime_values):
+            parser.error("必须同时给出四个 --expect-query-encoder-* 参数")
+        runtime = QueryEncoderRuntimeExpectation(*runtime_values)
+
     expectation = Expectation(
         dataset=args.expect_dataset,
         n_docs=args.expect_n_docs,
@@ -549,6 +593,7 @@ def main(argv=None):
         policy_version=args.expect_policy_version,
         vector_configured=not args.lexical_only,
         embedding=embedding,
+        query_encoder_runtime=runtime,
     )
     probe = Probe(args.endpoint, expectation=expectation, query=args.query,
                   oov_query=args.oov_query, run_tag=args.run_tag, timeout=args.timeout,
@@ -566,6 +611,8 @@ def main(argv=None):
     expected_identity = asdict(expectation)
     if embedding is None:
         expected_identity.pop("embedding")
+    if runtime is None:
+        expected_identity.pop("query_encoder_runtime")
     evidence = {
         "status": "FAIL" if failures else "PASS",
         "endpoint": probe.base,
