@@ -538,8 +538,8 @@ def _request_search(endpoint: str, query: str, *, k: int, mode: str, scorer: str
     return results, latency_ms, routing
 
 
-def _decode_search_response(body: bytes, mode: str, *, allow_adaptive_dense: bool = False
-                            ) -> tuple[list[tuple[str, float]], QueryRouting]:
+def _decode_search_response(body: bytes, mode: str, *, allow_adaptive_dense: bool = False,
+                            allow_hybrid_rerank: bool = False) -> tuple[list[tuple[str, float]], QueryRouting]:
     try:
         value = json.loads(body)
     except (ValueError, UnicodeError) as error:
@@ -547,7 +547,8 @@ def _decode_search_response(body: bytes, mode: str, *, allow_adaptive_dense: boo
     if not isinstance(value, dict) or not isinstance(value.get("results"), list):
         raise EvaluationError("搜索服务响应缺少 results 数组")
     timings = value.get("timings_ms")
-    if mode == "hybrid" and ("rerank" in value or isinstance(timings, dict) and "rerank" in timings):
+    if (mode == "hybrid" and not allow_hybrid_rerank
+            and ("rerank" in value or (isinstance(timings, dict) and "rerank" in timings))):
         raise EvaluationError("Use evaluation.ce_http for a CE-enabled hybrid response")
     results: list[tuple[str, float]] = []
     seen: set[str] = set()

@@ -145,7 +145,7 @@ def search(client, base, depth, record, identity, reranker_identity=None):
     response, raw, latency = http_json(client, base, "/search", {
         **REQUEST, "query": record.query,
     })
-    ranking, routing = _decode_search_response(raw, "hybrid")
+    ranking, routing = _decode_search_response(raw, "hybrid", allow_hybrid_rerank=depth > 0)
     items = response["results"]
     route_info = response["routing"]
     parsed = response.get("parsed")
