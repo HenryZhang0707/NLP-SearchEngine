@@ -21,7 +21,7 @@ from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_ope
 from uuid import uuid4
 
 from contracts.api import SEARCH_INSTANCE_HEADER
-from contracts.ce import GATE_DEPTH, GATE_FEATURE_NAMES
+from contracts.ce import GATE_DEPTH, GATE_FEATURE_NAMES, gate_binding
 from contracts.retrieval import valid_query_encoder_runtime
 
 from .ce_analysis import learned_diagnostics
@@ -29,7 +29,7 @@ from .ce_budget import matched_random
 from .compare import paired_bootstrap
 from .evaluate import (
     EvaluationError, _decode_search_response, _percentile, evaluate_run,
-    load_qrels, load_queries,
+    _unique_json_object, load_qrels, load_queries,
 )
 
 
@@ -143,6 +143,31 @@ def check_services(client, arms):
             raise EvaluationError("RRF baseline has an enabled reranker")
         identities[name] = reranker
     return {"common": common, "rerankers": identities}
+
+
+def check_fit_receipt(path, expected_sha256, identity):
+    """Bind a learned-arm capture to its frozen training runtime and gate."""
+    raw = path.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != expected_sha256:
+        raise EvaluationError("fit receipt SHA256 differs from the frozen digest")
+    try:
+        receipt = json.loads(raw, object_pairs_hook=_unique_json_object)
+        if type(receipt["schema_version"]) is not int or receipt["schema_version"] != 1:
+            raise ValueError("unsupported schema version")
+        training = receipt["capture_identities"]
+        train_retrieval = training["common"]["retrieval"]
+        train_model = training["rerankers"]["ce40"]["model"]
+        retrieval = identity["common"]["retrieval"]
+        learned = identity["rerankers"]["learned"]
+        runtime = train_retrieval.get("query_encoder_runtime")
+        matches_gate = receipt["model_sha256"] == learned["gate_sha256"]
+        matches_retrieval = gate_binding(train_retrieval, train_model) == gate_binding(retrieval, learned["model"])
+    except (AttributeError, KeyError, TypeError, ValueError) as error:
+        raise EvaluationError("fit receipt lacks the expected training and learned-arm identities") from error
+    if not matches_gate or not matches_retrieval:
+        raise EvaluationError("learned arm differs from the fitted gate or its retrieval binding")
+    if not valid_query_encoder_runtime(runtime) or runtime != retrieval.get("query_encoder_runtime"):
+        raise EvaluationError("query encoder runtime differs from the frozen training capture")
 
 
 def search(client, base, depth, record, identity, reranker_identity=None):
@@ -548,6 +573,8 @@ def main(argv=None):
                      help="Verify that every HTTP response in an epoch comes from the same service instances")
     cli.add_argument("--require-encoder-runtime", action="store_true",
                      help="Require matching query encoder runtime identity in all profiles")
+    cli.add_argument("--fit-receipt", nargs=2, metavar=("JSON", "SHA256"),
+                     help="Bind a learned capture to a frozen train_ce_gate receipt and digest")
     for name in ("queries", "warmup-queries", "qrels", "out"):
         cli.add_argument(f"--{name}", type=Path, required=True)
     args = cli.parse_args(argv)
@@ -562,6 +589,8 @@ def main(argv=None):
         arms["learned"] = (GATE_DEPTH, endpoint(args.learned))
     if args.measure_random and not args.learned:
         cli.error("--measure-random requires --learned")
+    if args.fit_receipt and (not args.learned or not re.fullmatch(r"[a-f0-9]{64}", args.fit_receipt[1])):
+        cli.error("--fit-receipt requires --learned and a lowercase SHA256 digest")
     if len({base for _, base in arms.values()}) != len(arms):
         cli.error("each arm requires its own endpoint")
 
@@ -598,10 +627,14 @@ def main(argv=None):
         identities = completed_identity(db, len(records))
         if identities is None:
             identities = check_services(client, arms)
-        if args.require_encoder_runtime:
+        if args.require_encoder_runtime or args.fit_receipt:
             if not valid_query_encoder_runtime(identities["common"]["retrieval"].get("query_encoder_runtime")):
                 raise EvaluationError("capture is missing a verified query encoder runtime identity")
             protocol["require_encoder_runtime"] = True
+        if args.fit_receipt:
+            fit_path, fit_sha256 = args.fit_receipt
+            check_fit_receipt(Path(fit_path), fit_sha256, identities)
+            protocol["fit_receipt_sha256"] = fit_sha256
         protocol["identities"] = identities
         captured = journal(db, protocol)
         if list(captured) != query_ids[:len(captured)] or any(
