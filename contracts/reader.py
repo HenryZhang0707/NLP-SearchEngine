@@ -19,8 +19,16 @@ class Document:
     offsets: list = field(default_factory=list)  # 每个 token 的 (char_start, char_end)，高亮用
 
 
-class IndexReader(Protocol):
+class DocumentSource(Protocol):
+    """Ordered original documents, independent of any lexical index artifacts."""
+
     n_docs: int
+
+    def doc(self, docid: int) -> Document:
+        """Return original fields for the internal row ID in 0..n_docs-1."""
+
+
+class IndexReader(DocumentSource, Protocol):
     avgdl: float
 
     def postings(self, term: str) -> Optional[list]:
@@ -30,7 +38,7 @@ class IndexReader(Protocol):
         """包含该词项的文档数；不存在返回 0。"""
 
     def doc_length(self, docid: int) -> int:
-        """该文档索引时的 token 数。"""
+        """该文档索引时的非负 token 数；无 token 文档保留 ID 和空 offsets。"""
 
     def doc(self, docid: int) -> Document:
         """取文档原文与 offsets。"""

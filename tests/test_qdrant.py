@@ -10,9 +10,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from contracts.index_format import sha256_of
 from contracts.retrieval import (
     VECTOR_BUILD_METADATA_KEY, EmbeddingSpec, RetrievalUnavailable, VectorManifest,
 )
+from offline.build_hybrid import build_hybrid
+from offline.provenance import PROVENANCE_FILE, REPORT_FILE
 from offline.vector_build import QdrantSnapshotWriter, build_vectors
 from online.memory_index import MemoryIndex
 from online.vector_index import QdrantVectorIndex
@@ -61,6 +64,10 @@ class _Client:
     def create_snapshot(self, collection_name):
         self.snapshots.append(collection_name)
         return SimpleNamespace(name="build.snapshot")
+
+    def delete_collection(self, collection_name):
+        del self.collections[collection_name]
+        del self.records[collection_name]
 
     def query_points(self, collection_name, query, limit, with_payload, **kwargs):
         assert with_payload is True
@@ -180,6 +187,37 @@ def test_qdrant_actual_hnsw_settings_must_match_declared_manifest():
         QdrantVectorIndex(manifest, 'http://fixture')
         config.hnsw_config.m = 32
         _raises(ValueError, lambda: QdrantVectorIndex(manifest, 'http://fixture'))
+
+
+def test_qdrant_hybrid_bundle_stages_snapshot_and_can_retry_failed_publication():
+    client = _Client()
+    corpus = Path(__file__).resolve().parents[1] / "fixtures" / "tiny_corpus.jsonl"
+    with tempfile.TemporaryDirectory() as directory, _sdk(client):
+        root = Path(directory)
+        bundle = root / "bundle"
+        writer = QdrantSnapshotWriter("http://fixture", bundle)
+
+        def download(*args, **kwargs):
+            assert not bundle.exists()
+            return io.BytesIO(b"snapshot bytes")
+
+        def build_bundle():
+            return build_hybrid(corpus, bundle, "fixture", _Encoder(), writer, "new-build")
+
+        with patch("urllib.request.urlopen", side_effect=download):
+            with patch("offline.build_hybrid.write_provenance", side_effect=OSError("test failure")):
+                _raises(OSError, build_bundle)
+            assert not bundle.exists()
+            assert list(root.iterdir()) == []
+            assert client.collections == {}
+            result = build_bundle()
+
+        assert writer.snapshot_dir == bundle
+        assert list(root.iterdir()) == [bundle]
+        assert {path.name for path in bundle.iterdir()} == {
+            "bm25", "build.snapshot", "vector_manifest.json", PROVENANCE_FILE, REPORT_FILE,
+        }
+        assert sha256_of(bundle / "build.snapshot") == result["vector"]["snapshot_files"]["build.snapshot"]
 
 
 def test_qdrant_reader_rejects_stale_build_identity_even_at_same_dimension():

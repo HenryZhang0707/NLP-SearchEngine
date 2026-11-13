@@ -5,8 +5,8 @@
    否则拒绝启动（并行期 90% 的"查不到东西"都是分词器不一致）；
 2. 各文件 sha256 与 manifest 一致（可选关闭，CI 冒烟时省时间）。
 
-骨架版直接全量读进内存；10 万文档的性能优化（平坦化 numpy postings、
-按需加载）是性能联调阶段的事，接口不变。
+v1 兼容路径全量读进内存；compact-v1 目录自动选择按需读取的 PackedIndex，
+在线调用方仍只依赖 DiskIndex 入口和 IndexReader 协议。
 """
 
 import json
@@ -22,6 +22,17 @@ from contracts.reader import Document
 
 
 class DiskIndex:
+    def __new__(cls, index_dir, verify_checksums: bool = True):
+        root = Path(index_dir)
+        if cls is DiskIndex and (root / "compact.json").exists():
+            if (root / "manifest.json").exists():
+                raise ValueError("ambiguous index directory: both v1 and compact manifests")
+            from .packed_index import PackedIndex
+            # Compact is a production artifact: its full checksum gate cannot
+            # be disabled using the legacy v1 compatibility option.
+            return PackedIndex(root)
+        return super().__new__(cls)
+
     def __init__(self, index_dir, verify_checksums: bool = True):
         index_dir = Path(index_dir)
         self._manifest = load_manifest(index_dir)

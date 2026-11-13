@@ -5,13 +5,14 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 from evaluation.evaluate import EvaluationError, load_queries
-from evaluation.prepare_dureader import main, prepare_dureader
+from evaluation.prepare_dureader import _load_index_map, main, prepare_dureader
 
 
 class DuReaderPreparationTests(unittest.TestCase):
@@ -50,6 +51,75 @@ class DuReaderPreparationTests(unittest.TestCase):
             self.assertEqual(len((out / "corpus.jsonl").read_text(encoding="utf-8").splitlines()), 4)
             self.assertEqual(len((out / "qrels.dev.tsv").read_text(encoding="utf-8").splitlines()), 2)
             self.assertEqual(manifest["split"], "dev")
+            expected = {
+                "corpus.jsonl": "".join(
+                    f'{{"doc_id":"p{i}","title":"","text":"passage {i}"}}\n'
+                    for i in range(4)
+                ).encode("utf-8"),
+                "queries.dev.jsonl": b'{"qid":"q1","query":"first?"}\n{"qid":"q2","query":"second?"}\n',
+                "qrels.dev.tsv": b'q1 0 p0 1\nq2 0 p1 1\n',
+            }
+            for name, content in expected.items():
+                self.assertEqual((out / name).read_bytes(), content)
+                self.assertEqual(manifest["files"][name]["sha256"],
+                                 hashlib.sha256(content).hexdigest())
+            self.assertEqual((out / "dataset_manifest.json").read_bytes(),
+                             (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
+                             .replace("\n", os.linesep).encode("utf-8"))
+
+    def test_late_bad_passage_cleans_staging_and_preserves_empty_target(self):
+        for existing_empty in (False, True):
+            with self.subTest(existing_empty=existing_empty), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory) / "release"
+                out = Path(directory) / "out"
+                self._release(root)
+                if existing_empty:
+                    out.mkdir()
+                (root / "passage-collection" / "part-03").write_text(
+                    "bad final passage\n", encoding="utf-8"
+                )
+                with self.assertRaisesRegex(EvaluationError, "至少需要 3 列"):
+                    prepare_dureader(root, out)
+                self.assertEqual(out.exists(), existing_empty)
+                if existing_empty:
+                    self.assertEqual(list(out.iterdir()), [])
+                self.assertEqual(list(Path(directory).glob(".out.prepare-*")), [])
+
+    def test_existing_output_is_not_overwritten(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "release"
+            out = Path(directory) / "out"
+            self._release(root)
+            out.mkdir()
+            sentinel = out / "corpus.jsonl"
+            sentinel.write_bytes(b"protected existing output\n")
+            with self.assertRaisesRegex(EvaluationError, "输出目录"):
+                prepare_dureader(root, out)
+            self.assertEqual(sentinel.read_bytes(), b"protected existing output\n")
+            self.assertEqual([p.name for p in out.iterdir()], ["corpus.jsonl"])
+            self.assertEqual(list(Path(directory).glob(".out.prepare-*")), [])
+
+    def test_index_map_rejects_noncontinuous_duplicate_and_illegal_keys(self):
+        invalid = [
+            '{"0":"p0","2":"p1"}',
+            '{"1":"p0"}',
+            '{"0":"p0","00":"p1"}',
+            '{"0":"p0","0":"p1"}',
+            '{"-1":"p0"}',
+            '{"x":"p0"}',
+            '{"²":"p0"}',
+            '{"0":"p0","1":"p0"}',
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "map.json"
+            for content in invalid:
+                with self.subTest(content=content):
+                    path.write_text(content, encoding="utf-8")
+                    with self.assertRaises(EvaluationError):
+                        _load_index_map(path)
+            # Continuity is independent of the JSON object's insertion order.
+            path.write_text('{"1":"p1","0":"p0"}', encoding="utf-8")
+            self.assertEqual(_load_index_map(path), ({1: "p1", 0: "p0"}, {"p0", "p1"}))
 
     def test_query_jsonl_roundtrips_line_breaks_without_phantom_ids(self):
         queries = [

@@ -53,6 +53,7 @@ def test_injected_router_preserves_constraints_request_validation_and_fallback()
     class Probe:
         policy_version='test-only-statistics'
         requires_statistics=True
+        feature_version=FEATURE_VERSION
         calls=0
         def decide(self,features):
             self.calls+=1

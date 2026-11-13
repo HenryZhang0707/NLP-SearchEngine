@@ -7,9 +7,18 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 
+const nodes = Object.fromEntries([
+  "#search-form", "#query", "#mode", "#k", "#submit", "#status", "#error",
+  "#results", "#observability", "#summary", "#routing", "#timings", "#index-summary",
+  "#index-identity", "#identity-facts",
+].map((selector) => [selector, {
+  addEventListener() {}, innerHTML: "", textContent: "", hidden: false, value: "",
+}]));
+const clipboard = { written: null };
 const context = vm.createContext({
-  document: { querySelector: () => ({ addEventListener() {} }) },
+  document: { querySelector: (selector) => nodes[selector] },
   fetch: async () => { throw new Error("No network in UI tests"); },
+  navigator: { clipboard: { writeText: async (value) => { clipboard.written = value; } } },
 });
 vm.runInContext(
   fs.readFileSync(path.join(__dirname, "../web/app.js"), "utf8"),
@@ -57,4 +66,204 @@ test("Unicode handling preserves HTML escaping and empty snippets", () => {
     '<mark class="original">&lt;script&gt;</mark>&amp;😀',
   );
   assert.equal(highlightedSnippet(""), '<span class="muted">无摘要</span>');
+});
+
+async function successfulSearch() {
+  nodes["#query"].value = "检索";
+  nodes["#mode"].value = "hybrid";
+  nodes["#k"].value = "10";
+  context.fetch = async () => ({
+    ok: true,
+    json: async () => ({
+      api_version: "2.0", took_ms: 2, routing: { executed_mode: "hybrid" },
+      timings_ms: { vector: 1 },
+      results: [{ rank: 1, doc_id: "previous-doc", title: "旧结果", score: 1,
+        snippet: "检索", highlights: [{ start: 0, end: 2 }] }],
+    }),
+  });
+  await context.search({ preventDefault() {} });
+  assert.equal(nodes["#observability"].hidden, false);
+  assert.match(nodes["#routing"].innerHTML, /hybrid/);
+  assert.match(nodes["#results"].innerHTML, /previous-doc/);
+}
+
+function assertFailedSearchIsCleared() {
+  assert.equal(nodes["#summary"].textContent, "");
+  assert.equal(nodes["#routing"].innerHTML, "");
+  assert.equal(nodes["#timings"].innerHTML, "");
+  assert.equal(nodes["#observability"].hidden, true);
+  assert.equal(nodes["#results"].innerHTML, "");
+  assert.equal(nodes["#submit"].disabled, false);
+  assert.equal(nodes["#error"].hidden, false);
+}
+
+test("HTTP failures clear the previous successful search facts", async () => {
+  await successfulSearch();
+  context.fetch = async () => ({
+    ok: false, status: 503, json: async () => ({ error: "vector unavailable" }),
+  });
+  await context.search({ preventDefault() {} });
+  assertFailedSearchIsCleared();
+  assert.equal(nodes["#error"].textContent, "vector unavailable");
+});
+
+test("render failures clear partially rendered routing and timing facts", async () => {
+  await successfulSearch();
+  context.fetch = async () => ({
+    ok: true,
+    json: async () => ({ routing: { executed_mode: "dense" }, timings_ms: { vector: 99 },
+      results: [{ rank: 1, doc_id: "bad-result", snippet: "检索", highlights: {} }] }),
+  });
+  await context.search({ preventDefault() {} });
+  assertFailedSearchIsCleared();
+});
+
+const FINGERPRINT = "1480ab10cbefcb57bc1132871420b1f88d18ac5f260150080953f9441377a861";
+const ANALYZER_HASH = "12bee770ee080a665c95862486cc711c658b8d5bbacf6e06dce6d9cc01fc0926";
+const REVISION = "7999e1d3359715c523056ef9478215996d62a620";
+
+function fullIndexInfo() {
+  return {
+    schema_version: 1,
+    dataset: "rfc4-clean-news-20k",
+    n_docs: 20000,
+    analyzer: { name: "simple-bigram", version: "0.1.0", config_hash: ANALYZER_HASH },
+    bm25: { k1: 1.2, b: 0.75, idf: "log1p-lucene" },
+    retrieval: {
+      vector_ready: true,
+      index_identity: {
+        dataset: "rfc4-clean-news-20k", n_docs: 20000, schema_version: 1,
+        analyzer_hash: ANALYZER_HASH, corpus_sha256: FINGERPRINT,
+        bm25: { k1: 1.2, b: 0.75, idf: "log1p-lucene" },
+      },
+      vector_identity: {
+        corpus_sha256: FINGERPRINT, n_docs: 20000, schema_version: 1,
+        embedding: {
+          model_id: "BAAI/bge-small-zh-v1.5", revision: REVISION, dimension: 512,
+          query_prefix: "为这个句子生成表示以用于检索相关文章：",
+        },
+        collection: "news_rfc4_clean20k", backend: "qdrant-hnsw",
+        index_params: { m: 16, ef_construct: 100, full_scan_threshold: 10 },
+        search: { hnsw_ef: 256, exact: false, timeout_s: 30.0 },
+      },
+      search_config: { candidate_k: 200, rrf_c: 60.0 },
+      policy: { name: "rule", policy_version: "rules-v1", requires_statistics: false },
+    },
+  };
+}
+
+test("index identity renders manifest, vector and serving facts", () => {
+  const html = context.renderIdentityFacts(fullIndexInfo());
+  assert.match(html, /rfc4-clean-news-20k/);
+  assert.match(html, /news_rfc4_clean20k/);
+  assert.match(html, /qdrant-hnsw/);
+  assert.match(html, /BAAI\/bge-small-zh-v1\.5/);
+  assert.match(html, /512/);
+  assert.match(html, /k1=1\.2 · b=0\.75 · idf=log1p-lucene/);
+  assert.match(html, /m=16 · ef_construct=100 · full_scan_threshold=10/);
+  assert.match(html, /ef=256 · exact=否 · timeout=30 s/);
+  assert.match(html, /candidate_k=200 · RRF c=60/);
+  assert.match(html, /rule · 版本=rules-v1 · 需要统计=否/);
+  assert.match(html, /为这个句子生成表示以用于检索相关文章：/);
+});
+
+test("vector readiness is labelled as startup configuration, not live health", () => {
+  const summaryText = context.indexSummaryText(fullIndexInfo());
+  assert.match(summaryText, /rfc4-clean-news-20k · 20000 篇文档/);
+  assert.match(summaryText, /向量启动时已配置 · 非实时健康/);
+  assert.doesNotMatch(summaryText, /已就绪|就绪/);
+  assert.match(context.renderIdentityFacts(fullIndexInfo()),
+    /启动时已配置（启动校验，非后端实时健康）/);
+
+  const lexicalInfo = { dataset: "tiny", n_docs: 10, retrieval: { vector_ready: false } };
+  assert.match(context.indexSummaryText(lexicalInfo), /仅词法模式/);
+  assert.match(context.renderIdentityFacts(lexicalInfo), /未配置（仅词法模式）/);
+  assert.doesNotMatch(context.indexSummaryText({ retrieval: {} }), /已就绪|就绪/);
+  assert.match(context.indexSummaryText({ retrieval: {} }), /向量状态未知/);
+});
+
+test("index identity escapes every served value", () => {
+  const info = fullIndexInfo();
+  info.retrieval.index_identity.dataset = '<img src=x onerror="alert(1)">';
+  info.retrieval.vector_identity.collection = "<script>alert('x')</script>";
+  info.retrieval.vector_identity.embedding.query_prefix = "\"><b>&";
+  const html = context.renderIdentityFacts(info);
+  assert.doesNotMatch(html, /<img|<script|<b>/);
+  assert.match(html, /&lt;img src=x onerror=&quot;alert\(1\)&quot;&gt;/);
+  assert.match(html, /&lt;script&gt;alert\(&#39;x&#39;\)&lt;\/script&gt;/);
+  assert.match(html, /&quot;&gt;&lt;b&gt;&amp;/);
+});
+
+test("index identity degrades safely when optional blocks are missing", () => {
+  const empty = context.renderIdentityFacts({});
+  assert.doesNotMatch(empty, /undefined|null|NaN/);
+  assert.match(empty, /—/);
+  assert.match(empty, /未提供/);
+  assert.equal(context.indexSummaryText({}), "未知数据集 · ? 篇文档 · 向量状态未知");
+
+  // Legacy /index/info shape: lexical manifest + retrieval.config only.
+  const legacy = context.renderIdentityFacts({
+    dataset: "tiny", n_docs: 10,
+    analyzer: { name: "simple-bigram", version: "0.1.0", config_hash: ANALYZER_HASH },
+    retrieval: {
+      vector_ready: false, vector_manifest: null,
+      config: { candidate_k: 200, rrf_c: 60.0, policy_version: "rules-v1" },
+    },
+  });
+  assert.doesNotMatch(legacy, /undefined|null|NaN/);
+  assert.match(legacy, /tiny/);
+  assert.match(legacy, /candidate_k=200 · RRF c=60/);
+  assert.match(legacy, /版本=rules-v1/);
+  assert.match(legacy, /12bee770ee08…/);
+
+  // Pre-identity vector_manifest is still usable for backend/model facts.
+  const legacyVector = context.renderIdentityFacts({
+    dataset: "tiny", n_docs: 10,
+    retrieval: {
+      vector_ready: true,
+      vector_manifest: {
+        corpus_sha256: FINGERPRINT, n_docs: 10,
+        embedding: { model_id: "BAAI/bge-small-zh-v1.5", revision: REVISION, dimension: 512 },
+        collection: "news_rfc4_clean20k", backend: "qdrant-hnsw",
+      },
+    },
+  });
+  assert.match(legacyVector, /news_rfc4_clean20k/);
+  assert.match(legacyVector, /BAAI\/bge-small-zh-v1\.5/);
+  assert.match(legacyVector, /1480ab10cbef…/);
+});
+
+test("identity fingerprint keeps its full value for copying", async () => {
+  const html = context.renderIdentityFacts(fullIndexInfo());
+  const copyValues = [...html.matchAll(/data-copy="([^"]+)"/g)].map((match) => match[1]);
+  assert.ok(copyValues.includes(FINGERPRINT), "full corpus fingerprint is copyable");
+  assert.ok(copyValues.includes(REVISION), "full embedding revision is copyable");
+  assert.doesNotMatch(html, new RegExp(`data-copy="[^"]*…`), "copy values are never truncated");
+
+  const button = { textContent: "复制", getAttribute: () => FINGERPRINT };
+  clipboard.written = null;
+  await context.copyIdentityValue(button);
+  assert.equal(clipboard.written, FINGERPRINT);
+  assert.equal(button.textContent, "已复制");
+
+  const failing = { textContent: "复制", getAttribute: () => FINGERPRINT };
+  context.navigator.clipboard.writeText = async () => { throw new Error("denied"); };
+  await context.copyIdentityValue(failing);
+  assert.equal(failing.textContent, "复制失败");
+  context.navigator.clipboard.writeText = async (value) => { clipboard.written = value; };
+});
+
+test("index info is rendered on load and cleared when the request fails", async () => {
+  context.fetch = async () => ({ ok: true, json: async () => fullIndexInfo() });
+  await context.loadIndexInfo();
+  assert.equal(nodes["#index-identity"].hidden, false);
+  assert.equal(nodes["#index-summary"].textContent,
+    "rfc4-clean-news-20k · 20000 篇文档 · 向量启动时已配置 · 非实时健康");
+  assert.match(nodes["#identity-facts"].innerHTML, /news_rfc4_clean20k/);
+
+  context.fetch = async () => ({ ok: false, status: 503, json: async () => ({}) });
+  await context.loadIndexInfo();
+  assert.equal(nodes["#index-summary"].textContent, "索引信息暂不可用");
+  assert.equal(nodes["#identity-facts"].innerHTML, "");
+  assert.equal(nodes["#index-identity"].hidden, true);
 });

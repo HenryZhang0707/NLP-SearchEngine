@@ -89,11 +89,16 @@ class Manifest:
             )
         except KeyError as e:
             raise ValueError(f"manifest 缺字段: {e}") from e
-        if m.schema_version != SCHEMA_VERSION:
+        if type(m.schema_version) is not int or m.schema_version != SCHEMA_VERSION:
             raise ValueError(
                 f"schema_version={m.schema_version}，本代码只支持 {SCHEMA_VERSION}；"
                 "请先确认两侧 contracts/ 版本一致"
             )
+        if type(m.n_docs) is not int or m.n_docs < 0:
+            raise ValueError("manifest n_docs 必须是非负整数")
+        if (type(m.avgdl) not in (int, float) or not math.isfinite(m.avgdl)
+                or m.avgdl < 0):
+            raise ValueError("manifest avgdl 必须是有限非负数")
         return m
 
 
@@ -110,12 +115,18 @@ def load_manifest(index_dir: Path) -> Manifest:
         return Manifest.from_dict(json.load(f))
 
 
-def verify_files(index_dir: Path, manifest: Manifest) -> None:
-    """校验各文件 sha256 与 manifest 一致（加载索引时调用）。"""
+def verify_files(index_dir: Path, manifest: Manifest, *, require_hashes: bool = False) -> None:
+    """校验各文件 sha256；生产交付可要求每个文件都有摘要。
+
+    默认保持旧 v1 产物兼容。正式发布校验必须传入 ``require_hashes=True``。
+    """
     for name in REQUIRED_FILES:
         p = Path(index_dir) / name
         if not p.exists():
             raise ValueError(f"索引缺文件: {p}")
         expected = manifest.files.get(name)
+        if require_hashes and (not isinstance(expected, str) or len(expected) != 64
+                                or any(ch not in "0123456789abcdef" for ch in expected)):
+            raise ValueError(f"{name} 缺少有效 SHA256；生产交付不得使用兼容旧产物")
         if expected is not None and sha256_of(p) != expected:
             raise ValueError(f"{name} 校验和不匹配：索引文件与 manifest 不是同一次构建")

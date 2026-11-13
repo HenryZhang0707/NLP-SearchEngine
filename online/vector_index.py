@@ -29,6 +29,10 @@ class MemoryVectorIndex:
     def manifest(self) -> VectorManifest:
         return self._manifest
 
+    @property
+    def search_config(self) -> dict:
+        return {"hnsw_ef": None, "exact": True, "timeout_s": None}
+
     def search(self, query_vector: Sequence[float], limit: int) -> list[VectorHit]:
         validate_vector(query_vector, self._manifest.embedding)
         if type(limit) is not int or limit <= 0:
@@ -42,20 +46,29 @@ class MemoryVectorIndex:
 class QdrantVectorIndex:
     """Read-only Qdrant adapter with manifest/collection compatibility checks."""
 
-    def __init__(self, manifest: VectorManifest, url: str, *, ef=None, exact=False):
+    def __init__(self, manifest: VectorManifest, url: str, *, hnsw_ef: int | None = None,
+                 timeout_s: float = 30.0, ef: int | None = None, exact: bool = False):
+        if ef is not None:
+            if hnsw_ef is not None and hnsw_ef != ef:
+                raise ValueError("ef and hnsw_ef must agree")
+            hnsw_ef = ef
+        if type(exact) is not bool:
+            raise ValueError("exact must be boolean")
+        if hnsw_ef is not None and (type(hnsw_ef) is not int or hnsw_ef <= 0):
+            raise ValueError("hnsw_ef must be a positive integer")
+        if (type(timeout_s) is bool or not isinstance(timeout_s, (int, float))
+                or not math.isfinite(timeout_s) or timeout_s <= 0):
+            raise ValueError("timeout_s must be a positive finite number of seconds")
         if manifest.backend != "qdrant-hnsw":
             raise ValueError("Qdrant 适配器需要 qdrant-hnsw manifest")
-        if ef is not None and (type(ef) is not int or ef <= 0):
-            raise ValueError('ef must be a positive integer')
-        if type(exact) is not bool:
-            raise ValueError('exact must be boolean')
-        self.search_params = {'hnsw_ef': ef, 'exact': exact}
         try:
             from qdrant_client import QdrantClient
         except ImportError as error:
             raise RetrievalUnavailable("QdrantVectorIndex 需要安装 qdrant-client") from error
         self._manifest = manifest
-        self._client = QdrantClient(url=url, timeout=30.0)
+        self.search_params = {"hnsw_ef": hnsw_ef, "exact": exact}
+        self._timeout_s = float(timeout_s)
+        self._client = QdrantClient(url=url, timeout=self._timeout_s)
         self._collection = manifest.collection
         try:
             info = self._client.get_collection(self._collection)
@@ -74,11 +87,11 @@ class QdrantVectorIndex:
             raise ValueError("Qdrant collection 缺少构建元数据；请使用 1.16+ 服务和客户端重建")
         if metadata[VECTOR_BUILD_METADATA_KEY] != manifest.build_metadata():
             raise ValueError("Qdrant collection 构建元数据与 manifest 不一致，请加载同版本产物")
-        if manifest.index_params:
-            actual = getattr(config, 'hnsw_config', None)
-            if any(getattr(actual, key, None) != value
-                   for key, value in manifest.index_params.items()):
-                raise ValueError('Qdrant actual HNSW build parameters mismatch')
+        actual_hnsw = getattr(config, "hnsw_config", None)
+        if any(type(getattr(actual_hnsw, name, None)) is not type(expected)
+               or getattr(actual_hnsw, name, None) != expected
+               for name, expected in manifest.index_params.items()):
+            raise ValueError("Qdrant actual HNSW build parameters mismatch")
         try:
             count = self._client.count(collection_name=self._collection, exact=True).count
         except Exception as error:
@@ -89,31 +102,36 @@ class QdrantVectorIndex:
     def manifest(self) -> VectorManifest:
         return self._manifest
 
+    @property
+    def search_config(self) -> dict:
+        return {**self.search_params, "timeout_s": self._timeout_s}
+
     def search(self, query_vector: Sequence[float], limit: int) -> list[VectorHit]:
         validate_vector(query_vector, self._manifest.embedding)
         if type(limit) is not int or limit <= 0:
             raise ValueError("limit 必须是正整数")
         try:
-            extra = {}
             params = self.search_params
-            if (not isinstance(params, dict) or set(params) != {'hnsw_ef', 'exact'} or
-                    (params['hnsw_ef'] is not None and
-                     (type(params['hnsw_ef']) is not int or params['hnsw_ef'] <= 0)) or
-                    type(params['exact']) is not bool):
-                raise ValueError('invalid Qdrant search parameters')
-            if params['hnsw_ef'] is not None or params['exact']:
+            if (not isinstance(params, dict) or set(params) != {"hnsw_ef", "exact"}
+                    or (params["hnsw_ef"] is not None
+                        and (type(params["hnsw_ef"]) is not int or params["hnsw_ef"] <= 0))
+                    or type(params["exact"]) is not bool):
+                raise ValueError("invalid Qdrant search parameters")
+            search_options = {}
+            if params["hnsw_ef"] is not None or params["exact"]:
                 from qdrant_client import models
-                extra['search_params'] = models.SearchParams(**params)
+
+                search_options["search_params"] = models.SearchParams(**params)
             if hasattr(self._client, "query_points"):
                 response = self._client.query_points(
                     collection_name=self._collection, query=list(query_vector), limit=limit,
-                    with_payload=True, **extra,
+                    with_payload=True, **search_options,
                 )
                 points = getattr(response, "points", response)
             else:
                 points = self._client.search(
                     collection_name=self._collection, query_vector=list(query_vector),
-                    limit=limit, with_payload=True, **extra,
+                    limit=limit, with_payload=True, **search_options,
                 )
         except Exception as error:
             raise RetrievalUnavailable(f"Qdrant 查询失败: {error}") from error

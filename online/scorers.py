@@ -20,7 +20,10 @@ def bm25(reader: IndexReader, terms: list, k1: float | None = None, b: float | N
     k1 = spec.k1 if k1 is None else k1
     b = spec.b if b is None else b
     BM25Spec(k1=k1, b=b)  # 同时校验显式覆盖参数
-    cand = _candidate_docs(reader, terms, match_all) if candidate_docs is None else set(candidate_docs)
+    # In the default OR case every scoring posting belongs to the union;
+    # avoid constructing that union (and reading each posting list twice).
+    cand = (set(candidate_docs) if candidate_docs is not None else
+            _candidate_docs(reader, terms, True) if match_all else None)
     scores = defaultdict(float)
     n = reader.n_docs
     term_weights = term_weights or {}
@@ -29,8 +32,8 @@ def bm25(reader: IndexReader, terms: list, k1: float | None = None, b: float | N
         if df == 0:
             continue
         idf = math.log(1 + (n - df + 0.5) / (df + 0.5))
-        for docid, tf, _ in reader.postings(term):
-            if docid not in cand:
+        for docid, tf in _term_frequencies(reader, term):
+            if cand is not None and docid not in cand:
                 continue
             dl = reader.doc_length(docid)
             scores[docid] += term_weights.get(term, 1.0) * idf * tf * (k1 + 1) / (tf + k1 * (1 - b + b * dl / reader.avgdl))
@@ -41,7 +44,8 @@ def tfidf(reader: IndexReader, terms: list, match_all: bool = False,
           candidate_docs: set[int] | None = None,
           term_weights: dict[str, float] | None = None) -> dict:
     """兼容的 TF-IDF 基线：tf 取 1+log，idf 取 log(N/df)。"""
-    cand = _candidate_docs(reader, terms, match_all) if candidate_docs is None else set(candidate_docs)
+    cand = (set(candidate_docs) if candidate_docs is not None else
+            _candidate_docs(reader, terms, True) if match_all else None)
     scores = defaultdict(float)
     n = reader.n_docs
     term_weights = term_weights or {}
@@ -50,23 +54,34 @@ def tfidf(reader: IndexReader, terms: list, match_all: bool = False,
         if df == 0:
             continue
         idf = math.log(n / df)
-        for docid, tf, _ in reader.postings(term):
-            if docid not in cand:
+        for docid, tf in _term_frequencies(reader, term):
+            if cand is not None and docid not in cand:
                 continue
             scores[docid] += term_weights.get(term, 1.0) * (1 + math.log(tf)) * idf
     return dict(scores)
+
+
+def _term_frequencies(reader: IndexReader, term: str):
+    """Use ordered (docid, tf) pairs without decoding optional positions."""
+    frequencies = getattr(reader, "term_frequencies", None)
+    if callable(frequencies):
+        return frequencies(term)
+    postings = reader.postings(term)
+    if postings is None:
+        return None
+    return ((docid, tf) for docid, tf, _ in postings)
 
 
 def _candidate_docs(reader: IndexReader, terms: list, match_all: bool = False) -> set:
     """普通查询取词项并集；仅显式要求 match_all 时取交集。"""
     sets = []
     for t in terms:
-        pl = reader.postings(t)
+        pl = _term_frequencies(reader, t)
         if pl is None:
             if match_all:
                 return set()
             continue
-        sets.append({docid for docid, _, _ in pl})
+        sets.append({docid for docid, _ in pl})
     if not sets:
         return set()
     return set.intersection(*sets) if match_all else set.union(*sets)
