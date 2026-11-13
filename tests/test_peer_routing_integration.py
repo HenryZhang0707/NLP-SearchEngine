@@ -195,6 +195,22 @@ class PeerRoutingIntegrationTests(unittest.TestCase):
                 "--warmup-queries", str(root / "warmup.tsv"), "--out", str(out),
                 "--require-instance-id", "--require-encoder-runtime", "--measure-random",
             ]
+            fit_receipt = root / "fit-receipt.json"
+            fit_identity = engine().info()
+            fit_identity["query_encoder_runtime"]["device"] = "cuda:0"
+            fit = {"schema_version": 1, "model_sha256": gate.sha256,
+                   "capture_identities": {"common": {"retrieval": fit_identity},
+                                          "rerankers": {"ce40": {"model": ce_scorer().identity}}}}
+            fit_receipt.write_text(json.dumps(fit), encoding="utf-8")
+            with patch.object(ce_http, "capture_query", side_effect=AssertionError("capture attempted")):
+                with self.assertRaisesRegex(EvaluationError, "fit receipt SHA256 differs"):
+                    ce_http.main([*args, "--fit-receipt", str(fit_receipt), "0" * 64])
+                with self.assertRaisesRegex(EvaluationError, "differs from the frozen training capture"):
+                    ce_http.main([*args, "--fit-receipt", str(fit_receipt), ce_http.sha256(fit_receipt)])
+            fit_identity["query_encoder_runtime"] = self.encoder.query_encoder_runtime
+            fit_receipt.write_text(json.dumps(fit), encoding="utf-8")
+            fit_digest = ce_http.sha256(fit_receipt)
+            args.extend(["--fit-receipt", str(fit_receipt), fit_digest])
             capture = ce_http.capture_query
 
             def restart_before_second_query(client, arms, record, *rest):
@@ -214,6 +230,7 @@ class PeerRoutingIntegrationTests(unittest.TestCase):
             summary = json.loads((out / "summary.json").read_bytes())
             self.assertEqual(summary["protocol"]["identities"]["common"]["retrieval"]["query_encoder_runtime"],
                              self.encoder.query_encoder_runtime)
+            self.assertEqual(summary["protocol"]["fit_receipt_sha256"], fit_digest)
             instances = list(summary["service_instances_by_epoch"].values())
             self.assertEqual(len(instances), 2)
             self.assertNotEqual(instances[0]["ce40"], instances[1]["ce40"])

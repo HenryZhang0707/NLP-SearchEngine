@@ -103,6 +103,7 @@ python -m evaluation.ce_http \
   --baseline http://127.0.0.1:8000 --rerank 28 http://127.0.0.1:8028 \
   --rerank 40 http://127.0.0.1:8040 --learned http://127.0.0.1:8041 --measure-random \
   --require-instance-id --require-encoder-runtime \
+  --fit-receipt runs/ce-train/fit-receipt.json "$FIT_RECEIPT_SHA256" \
   --queries data/queries.dev.jsonl --qrels data/qrels.dev.tsv \
   --warmup-queries data/queries.warmup.jsonl --out runs/ce-dev
 ```
@@ -119,6 +120,9 @@ journals can be replayed with their original options.
 `--require-encoder-runtime` binds the loaded query encoder identity in all arms.
 Use the same option and services when resuming a capture. An existing journal
 from a service that did not expose the runtime cannot establish this provenance.
+Record the training receipt's SHA256 when freezing the gate. `--fit-receipt`
+checks that digest and compares the learned arm with the recorded gate,
+retrieval binding and actual training query encoder before admitting the capture.
 `matched-random-plan.json` freezes a seeded random assignment at exactly the
 observed learned arm's total pair count, using each query's actual fixed CE40
 capacity. Its quality results in `summary.json` and its TREC file replay
