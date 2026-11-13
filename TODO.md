@@ -29,6 +29,8 @@
 - [ ] **RFC-0002 自爬人工实测**。复用冻结的 20k 语料、划分、候选池与双索引。四份离线盲审包已回读校验，覆盖 8,281 对，其中 1,656 对有独立重叠安排。收齐四份完整评分后准备裁决、导入正式 qrels、重评四模式并报告判定覆盖和配对区间。现有辅助标注结果单列。
 - [ ] **RFC-0002 公开 20k 部署复验**。部署负责人切换获准发布的冻结双索引后，用[验收命令](docs/contributions/rfc0003-online-acceptance.md#公开部署切换后的发布身份复验)验证索引、编码器、同一服务实例、四种检索模式和错误路径。
 - [x] **RFC-0001 两动作对照**。完成规则与同预算随机对照、线性收益模型独立训练和等预算回放。固定训练阈值与规则在 100k 开发集另有 2,040 次真实 HTTP 对照，向量调用为 715 对 748，质量与耗时证据支持保留现有默认规则。详见 [Router 对照](docs/contributions/rfc0001-router-budget.md)。
+- [x] **RFC-0001 Router 预算、消融与分组复验**。冻结检索排名，比较等向量调用预算、特征移除和按查询组重采样。保留规则、学习模型、随机期望及事后最优分配的证据。见[Router 预算报告](docs/contributions/rfc0001-router-budget.md#开发集向量调用预算曲线)。
+- [x] **RFC-0002 ANN 参数敏感性**。在同一 100k 快照及开发划分上对照 `hnsw_ef=128/256`，记录一致指标、约束拒绝和延迟比较边界。见[ANN 对照](docs/contributions/rfc0002-ann-ef-sensitivity.md)。
 - [ ] **RFC-0001 与 RFC-0002 合并评审**。[PR #9](https://github.com/ShwStone/NLP-SearchEngine/pull/9) 的上游 PR 仍显示冲突；本联合候选保留它的检索配置绑定，同时接入 [PR #11](https://github.com/ShwStone/NLP-SearchEngine/pull/11) 的线性 Router 和逐请求配对评测。由 PR 作者或维护者选择合并顺序，再检查待合并分支与最新主线。
 - [ ] **RFC-0001 CE 独立留出复验**。[Issue #3](https://github.com/ShwStone/NLP-SearchEngine/issues/3) 的两动作比较和 PR #9 已报告的 CE 开发集对照各自保留。独立留出复验需要原始词法索引、向量快照及冻结策略的身份核验；按固定 CE 和等成本对照记录真实 HTTP 质量、成本及失败情况，不用开发集或两动作结果替代。
 - [x] **Windows 回归验证**。修复 checkpoint 子进程退出后锁释放的时序断言、CLI 子进程编码、原生路径断言和 JSON 解码异常的测试稳定性。完整 Windows unittest 运行 211 项，跳过两项 POSIX 专用用例，其余通过。

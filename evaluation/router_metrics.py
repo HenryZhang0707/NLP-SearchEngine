@@ -5,6 +5,27 @@ import random
 import statistics
 
 
+GROUP_BOOTSTRAP_SEED = 20261027
+GROUP_BOOTSTRAP_SAMPLES = 2000
+
+
+def group_bootstrap(values, groups, samples=GROUP_BOOTSTRAP_SAMPLES):
+    """Resample groups while retaining query weighting within each draw."""
+    import numpy as np
+
+    unique = np.unique(groups)
+    blocks = [np.flatnonzero(groups == group) for group in unique]
+    totals = np.array([values[block].sum() for block in blocks])
+    sizes = np.array([len(block) for block in blocks])
+    rng = np.random.default_rng(GROUP_BOOTSTRAP_SEED)
+    means = []
+    for _ in range(samples):
+        selected = rng.integers(0, len(blocks), len(blocks))
+        means.append(float(totals[selected].sum() / sizes[selected].sum()))
+    return dict(mean=float(values.mean()), ci95=np.quantile(means, [.025, .975]).tolist(),
+                unit="resampled query groups")
+
+
 def metrics(ids, relevance):
     relevant = {doc for doc, grade in relevance.items() if grade > 0}
     top = ids[:10]
