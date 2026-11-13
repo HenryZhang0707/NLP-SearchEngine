@@ -1,6 +1,7 @@
 """Download a pinned model and verify a local model inventory."""
 
 import argparse
+import hashlib
 import json
 import shutil
 import subprocess
@@ -42,6 +43,9 @@ def verify_model(directory, spec):
     for name in FILES:
         if inventory["files"].get(name) != PINNED_SHA256[name] or sha256_of(root / name) != PINNED_SHA256[name]:
             raise ValueError(f"local model checksum mismatch: {name}")
+    verified = {"model_id": spec.model_id, "revision": spec.revision, "files": PINNED_SHA256}
+    return hashlib.sha256(json.dumps(verified, sort_keys=True, separators=(",", ":"))
+                          .encode("utf-8")).hexdigest()
 
 
 def download(directory, proxy=None):
