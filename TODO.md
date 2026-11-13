@@ -5,6 +5,7 @@
 - 搜索引擎的核心契约已有回归覆盖，包括词法索引、布尔与位置过滤、稳定分页、HTTP API、Router/RRF/RM3，以及向量失败时的错误和 adaptive 回退。
 - **自爬语料**。清洗去重后冻结 20,000 篇，dev/test 为 50/150 个查询。8,281 条池化判定含 200 条已绑定身份的种子判定和 8,081 条 assistant 全文复核，来源随数据记录。A1、compact、真实 BGE 向量和 Qdrant 快照恢复已验收。
 - **自爬四模式**。150 条测试查询经公开 `/search` 契约各执行一次 lexical、dense、hybrid、adaptive，共 600 次请求。TREC、路由、延迟和配对 bootstrap 已核验，详见 [REPORT.md](REPORT.md) 与 [资源记录](evaluation/RESOURCES.md)。
+- **自爬数据复验与维护**。[新华网 20k 数据卡](docs/contributions/rfc0002-news20k-dataset-card.md)记录冻结数据、划分隔离、判定来源和排名覆盖。审计和撤回预演可在授权副本上只读执行；独立人工复核、正文发布权限及公开 20k 部署仍待确认。
 - **官方数据**。核验公开 RocketQA DuReader-Retrieval 资源，冻结 8,096,668 篇、2,000 条 official-dev 查询、9,839 条 qrels。内部划分 train/dev/holdout=172/1020/808，holdout 在正式质量评测前冻结。`prepare_dataset --queries-only` 已在 Windows 和固定原生运行时逐字节复建六份划分文件。
 - **官方全量词法**。十片合并原生终态 PASS，8,096,668 篇、8,578,589 个词项、13 个 A1/compact 文件、有序语料指纹及正常 `DiskIndex` 读取验收通过。原生收据链已独立复核；恢复耗时和历史失败边界见资源记录。
 - **官方全量向量**。固定 BGE 的 162 个向量块覆盖全部文档。Qdrant HNSW 的 8,096,668 点快照已在两个独立空实例恢复。16 条固定 ANN 查询的 Top-200 与原实例一致，exact 同分边界另经全量扫描校验。收据和资源边界见 [资源记录](evaluation/RESOURCES.md)。
@@ -32,6 +33,9 @@
 - [ ] **RFC-0001 CE 策略集成与验证**。[PR #9](https://github.com/ShwStone/NLP-SearchEngine/pull/9) 承接 [Issue #3](https://github.com/ShwStone/NLP-SearchEngine/issues/3)，与当前主线存在冲突。与负责人对齐在线接口、CE 固定预算和等成本基线，保留实际 HTTP 质量、成本与误差；策略冻结后再在隔离留出集验证。两动作向量对照不替代这部分。
 - [x] **Windows 回归验证**。修复 checkpoint 子进程退出后锁释放的时序断言、CLI 子进程编码、原生路径断言和 JSON 解码异常的测试稳定性。完整 Windows unittest 运行 211 项，跳过两项 POSIX 专用用例，其余通过。
 - [x] **旧 PR 功能核对**。[PR #2](https://github.com/ShwStone/NLP-SearchEngine/pull/2) 的采集与界面改动、[PR #7](https://github.com/ShwStone/NLP-SearchEngine/pull/7) 的离线构建与读取能力已有覆盖。已补回通用 SentenceTransformer 的批次配置，以及 Qdrant 逐批写入和失败后仅清理新集合的回归。PackedIndex 并发、缓存和失败重试覆盖在 Router 联合候选中独立验证。
+
+- [x] **RFC-0002 自爬实测复评工具**。从盲审包、完整评分与分歧裁决生成可核验的 qrels，沿用冻结的四臂 HTTP 排名，在 150 条测试查询上复算判定覆盖和配对区间。见[复评命令](docs/contributions/rfc0002-news20k-dataset-card.md#人工评分复评)。
+- [ ] **RFC-0002 自爬实测结果**。回收四份完整盲审评分，完成分歧裁决，冻结人工 qrels 和导入凭据，再用复评工具生成正式结果。
 
 ## 证据边界
 
