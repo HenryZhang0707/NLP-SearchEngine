@@ -22,6 +22,7 @@ from uuid import uuid4
 
 from contracts.api import SEARCH_INSTANCE_HEADER
 from contracts.ce import GATE_DEPTH, GATE_FEATURE_NAMES
+from contracts.retrieval import valid_query_encoder_runtime
 
 from .ce_analysis import learned_diagnostics
 from .ce_budget import matched_random
@@ -113,6 +114,9 @@ def check_services(client, arms):
         }
         if common is None:
             common = stable
+        if ("query_encoder_runtime" in retrieval
+                and not valid_query_encoder_runtime(retrieval["query_encoder_runtime"])):
+            raise EvaluationError(f"{name} has an invalid query encoder runtime identity")
         if stable != common:
             raise EvaluationError(f"{name} service identity differs from baseline")
         reranker = retrieval.get("reranker")
@@ -542,6 +546,8 @@ def main(argv=None):
                      help="Measure paired HTTP latency against the frozen matched random plan")
     cli.add_argument("--require-instance-id", action="store_true",
                      help="Verify that every HTTP response in an epoch comes from the same service instances")
+    cli.add_argument("--require-encoder-runtime", action="store_true",
+                     help="Require matching query encoder runtime identity in all profiles")
     for name in ("queries", "warmup-queries", "qrels", "out"):
         cli.add_argument(f"--{name}", type=Path, required=True)
     args = cli.parse_args(argv)
@@ -592,6 +598,10 @@ def main(argv=None):
         identities = completed_identity(db, len(records))
         if identities is None:
             identities = check_services(client, arms)
+        if args.require_encoder_runtime:
+            if not valid_query_encoder_runtime(identities["common"]["retrieval"].get("query_encoder_runtime")):
+                raise EvaluationError("capture is missing a verified query encoder runtime identity")
+            protocol["require_encoder_runtime"] = True
         protocol["identities"] = identities
         captured = journal(db, protocol)
         if list(captured) != query_ids[:len(captured)] or any(

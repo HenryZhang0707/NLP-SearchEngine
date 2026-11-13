@@ -683,6 +683,8 @@ def main(argv=None):
         "vector_identity": info.get("vector_identity"),
         "search_config": info.get("search_config"),
         "policy": info.get("policy"),
+        **({"query_encoder_runtime": info["query_encoder_runtime"]}
+           if "query_encoder_runtime" in info else {}),
         **({"reranker": info["reranker"]} if "reranker" in info else {}),
     })
     print(f"索引已加载（{engine.reader.n_docs} 篇），监听 {actual_host}:{actual_port}",

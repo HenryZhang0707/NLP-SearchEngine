@@ -78,6 +78,7 @@ loads plain JSON. Use two new output paths in an existing directory.
 ```bash
 python -m evaluation.ce_http \
   --baseline http://127.0.0.1:8000 --rerank 40 http://127.0.0.1:8040 \
+  --require-encoder-runtime \
   --queries data/queries.train.jsonl --qrels data/qrels.train.tsv \
   --warmup-queries data/queries.warmup.jsonl --out runs/ce-train
 python -m evaluation.train_ce_gate \
@@ -101,7 +102,7 @@ digest. Keep fixed CE40 available and add fixed CE28 for the four-arm comparison
 python -m evaluation.ce_http \
   --baseline http://127.0.0.1:8000 --rerank 28 http://127.0.0.1:8028 \
   --rerank 40 http://127.0.0.1:8040 --learned http://127.0.0.1:8041 --measure-random \
-  --require-instance-id \
+  --require-instance-id --require-encoder-runtime \
   --queries data/queries.dev.jsonl --qrels data/qrels.dev.tsv \
   --warmup-queries data/queries.warmup.jsonl --out runs/ce-dev
 ```
@@ -115,6 +116,9 @@ stops the current invocation before committing a mixed query. A new invocation
 can resume the journal in a separate latency epoch. Both the fixed-arm summary
 and live random summary record the observed service instances by epoch. Legacy
 journals can be replayed with their original options.
+`--require-encoder-runtime` binds the loaded query encoder identity in all arms.
+Use the same option and services when resuming a capture. An existing journal
+from a service that did not expose the runtime cannot establish this provenance.
 `matched-random-plan.json` freezes a seeded random assignment at exactly the
 observed learned arm's total pair count, using each query's actual fixed CE40
 capacity. Its quality results in `summary.json` and its TREC file replay
@@ -450,7 +454,7 @@ For a new paired measurement, freeze a JSON plan with these fields:
 
 | Field | Value |
 | --- | --- |
-| `schema_version` | `1` |
+| `schema_version` | `2` for new runtime-bound measurements. Use `1` to verify historical journals under their original identity rules. |
 | `queries_sha256`, `corpus_sha256` | SHA-256 of the exact query file and the expected corpus identity from `/index/info` |
 | `query_ids`, `warmup_query_ids` | Ordered, disjoint ID arrays from that file. Preselect the measured queries. Include warmup query records in the same file. |
 | `repeats`, `depth`, `timeout_s` | Positive repeat count, retrieval depth and request timeout in seconds. Use depth 100 for MAP@100. |
@@ -459,8 +463,13 @@ For a new paired measurement, freeze a JSON plan with these fields:
 Use one vector-ready endpoint with four modes for a mode comparison, or two
 endpoints with `adaptive` and different policy versions for a Router comparison.
 Both endpoints must expose the same index, vector and effective search configuration.
+Version 2 also binds the query encoder implementation, loaded device, weight dtype
+and available verified model inventory to both the HTTP identity and the server
+startup event. CPU and CUDA arms have different runtime identities.
+Record hardware models and load separately when interpreting latency.
 For a strict rerun, copy each arm's `identity_sha256` from the prior verified
-report. It covers the index, vector, search configuration and policy objects.
+report from the same schema version. Version 1 digests cover the index, vector,
+search configuration and policy objects. Version 2 adds the encoder runtime.
 For a policy that can route adaptive requests to dense retrieval, set
 `allow_adaptive_dense: true` on the adaptive arm and pin its `identity_sha256`.
 The paired verifier checks the selected route in both the response and the

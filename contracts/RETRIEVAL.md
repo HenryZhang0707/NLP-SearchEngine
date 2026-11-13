@@ -210,6 +210,7 @@ engine = SearchEngine(reader, encoder=query_encoder, vectors=vector_reader,
 |---|---|---|
 | `index_identity` | `{dataset, n_docs, schema_version, analyzer_hash, corpus_sha256, bm25}` | `corpus_sha256` 复用启动时已对齐核验的向量指纹；纯词法部署可为 `null`，不为此额外做全量扫描。`bm25` 只回显产物中实际已知的 `k1`/`b`/`idf`，产物未声明时为 `null`，不补造实验参数 |
 | `vector_identity` | `null`，或 `VectorManifest.to_dict()` 再加 `search={hnsw_ef, exact, timeout_s}` | 内存精确替身回显 `hnsw_ef=null, exact=true, timeout_s=null`。`exact=false` 只表示允许 ANN，不证明本次查询实际走了 HNSW |
+| `query_encoder_runtime` | 可选的 `{implementation, device, dtype, inventory_sha256}` | 查询编码器实现、加载后的设备及权重 dtype。BGE 本地目录通过固定文件校验后回显规范化清单的摘要。没有本地清单证明时，摘要为 `null`。启动日志与本接口同源回显 |
 | `search_config` | `{candidate_k, rrf_c}` | 与 `config` 中同名服务级参数一致 |
 | `policy` | `{name, policy_version, requires_statistics}` | `policy_version` 必须是实际生效策略的版本，不能是用配置默认值拼出的标签；`requires_statistics` 为布尔值 |
 | `reranker` | 可选的 `{depth, candidate_source, model}`，启用实验特征或门控时可附加配置身份 | hybrid 重排能力和模型身份，包含固定版本和摘要；学习门控额外绑定 `gate_sha256` |

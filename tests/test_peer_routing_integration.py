@@ -145,6 +145,9 @@ class PeerRoutingIntegrationTests(unittest.TestCase):
         return hashlib.sha256(raw).hexdigest()
 
     def test_ce_capture_resumes_in_a_new_epoch_after_same_config_restart(self):
+        self.encoder.query_encoder_runtime = {
+            "implementation": "fixture", "device": "cpu", "dtype": "float32", "inventory_sha256": None,
+        }
         def ce_scorer():
             scorer = RecordingScorer()
             scorer.identity = {**scorer.identity, "weights_sha256": "a" * 64,
@@ -170,6 +173,17 @@ class PeerRoutingIntegrationTests(unittest.TestCase):
                     engine(HybridReranker(ce_scorer(), depth=40, gate=gate)), io.StringIO()),
             }
             urls = {name: f"http://127.0.0.1:{service.server_port}" for name, service in profiles.items()}
+            gpu_encoder = FixtureEncoder()
+            gpu_encoder.query_encoder_runtime = {**self.encoder.query_encoder_runtime, "device": "cuda:0"}
+            mismatched = self.start_service(SearchEngine(
+                self.reader, gpu_encoder, self.vectors,
+                reranker=HybridReranker(ce_scorer(), depth=40, capture_features=True),
+            ), io.StringIO())
+            with self.assertRaisesRegex(EvaluationError, "service identity differs from baseline"):
+                ce_http.check_services(ce_http.http_client(True), {
+                    "rrf": (0, urls["rrf"]),
+                    "ce40": (40, f"http://127.0.0.1:{mismatched.server_port}"),
+                })
             (root / "queries.tsv").write_text("q1\tphone\nq2\tphone alpha missing\n", encoding="utf-8")
             (root / "warmup.tsv").write_text("w1\tcamera\n", encoding="utf-8")
             (root / "qrels.tsv").write_text("q1 0 z 1\nq2 0 z 1\n", encoding="utf-8")
@@ -179,7 +193,7 @@ class PeerRoutingIntegrationTests(unittest.TestCase):
                 "--rerank", "40", urls["ce40"], "--learned", urls["learned"],
                 "--queries", str(root / "queries.tsv"), "--qrels", str(root / "qrels.tsv"),
                 "--warmup-queries", str(root / "warmup.tsv"), "--out", str(out),
-                "--require-instance-id", "--measure-random",
+                "--require-instance-id", "--require-encoder-runtime", "--measure-random",
             ]
             capture = ce_http.capture_query
 
@@ -198,6 +212,8 @@ class PeerRoutingIntegrationTests(unittest.TestCase):
 
             ce_http.main(args)
             summary = json.loads((out / "summary.json").read_bytes())
+            self.assertEqual(summary["protocol"]["identities"]["common"]["retrieval"]["query_encoder_runtime"],
+                             self.encoder.query_encoder_runtime)
             instances = list(summary["service_instances_by_epoch"].values())
             self.assertEqual(len(instances), 2)
             self.assertNotEqual(instances[0]["ce40"], instances[1]["ce40"])
