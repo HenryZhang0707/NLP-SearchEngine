@@ -53,7 +53,7 @@ def distribution(counts):
     return {"min": min(counts), "median": median(counts), "max": max(counts)}
 
 
-def corpus_stats(directory, receipt):
+def corpus_stats(directory, receipt, *, visit_sidecar=None):
     corpus = directory / "corpus.jsonl"
     sidecar = directory / "article_sidecar.jsonl"
     check_hash(corpus, receipt["corpus_sha256"])
@@ -72,6 +72,8 @@ def corpus_stats(directory, receipt):
     selectors = Counter()
     captures = 0
     for row in jsonl(sidecar):
+        if visit_sidecar is not None:
+            visit_sidecar(row)
         outcome = row["outcome"]
         outcomes[outcome] += 1
         captures += len(row["captures"])
@@ -190,7 +192,8 @@ def exact_body_overlap(path, documents, freeze):
             "official_corpus_sha256": digest.hexdigest()}
 
 
-def qrel_stats(directory, pool_directory, queries, splits, documents, query_hash, corpus_hash):
+def qrel_stats(directory, pool_directory, queries, splits, documents, query_hash, corpus_hash,
+               *, all_pairs=False):
     manifest = read_json(directory / "manifest.json", QRELS_MANIFEST_SHA256)
     require(manifest["corpus_sha256"] == corpus_hash and manifest["selected_queries_sha256"] == query_hash,
             "Qrels refer to different inputs")
@@ -232,7 +235,7 @@ def qrel_stats(directory, pool_directory, queries, splits, documents, query_hash
     require(len(judgments) == len(pair_sets["all"]) and
             {(row["query_id"], row["doc_id"]): row["relevance"] for row in judgments} == pair_sets["all"],
             "Source judgments differ from pooled qrels")
-    return results, pair_sets["test"]
+    return results, pair_sets["all" if all_pairs else "test"]
 
 
 def ranked_coverage(directory, qrels, qrel_hash, test_ids):

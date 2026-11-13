@@ -18,7 +18,9 @@
 
 ## 当前团队任务（以 592700e 为基线）
 
-- [x] **RFC-0004 离线交付**。全量词法、向量与评测证据已通过 [PR #8](https://github.com/ShwStone/NLP-SearchEngine/pull/8) 合入，关闭 [Issue #6](https://github.com/ShwStone/NLP-SearchEngine/issues/6)。待审 [PR #7](https://github.com/ShwStone/NLP-SearchEngine/pull/7) 的离线实现大量重叠，先核对仍有价值的 reader 测试与贡献记录。
+- [x] **RFC-0002 自爬数据维护预演**。使用冻结清单核验撤回对来源查询、候选池和判定的影响，保留幸存查询划分；[数据卡](docs/contributions/rfc0002-news20k-dataset-card.md#撤回和更新)记录更正、重建与回收流程。独立隐私复核及正文发布权限仍需确认。
+
+- [x] **RFC-0004 离线交付**。全量词法、向量与评测证据已通过 [PR #8](https://github.com/ShwStone/NLP-SearchEngine/pull/8) 合入，关闭 [Issue #6](https://github.com/ShwStone/NLP-SearchEngine/issues/6)。[PR #7](https://github.com/ShwStone/NLP-SearchEngine/pull/7) 中尚缺的读取回归覆盖单独保留，原 PR 由维护者决定如何处置。
 - [x] **RFC-0003 在线接线**。[PR #10](https://github.com/ShwStone/NLP-SearchEngine/pull/10) 合入启动身份、Router 接口、HTTP 请求保护、可观测性与 UI 身份面板，关闭 [Issue #5](https://github.com/ShwStone/NLP-SearchEngine/issues/5)。已有两套真实索引的[工程验收](docs/contributions/rfc0003-online-acceptance.md)。
 - [x] **RFC-0002 共享集复建与词法参考**。重建 [DuReader 100k v1.0](https://huggingface.co/datasets/ShwStone/dureader-mini-100k/tree/v1.0)，逐文件复核发布哈希。手写 BM25 与 BM25S 在冻结的 1,020 条 dev 查询上逐排名一致，保存了两份深度 100 的 TREC run、输入校验和四项配对区间，详见[资源记录](evaluation/RESOURCES.md#dureader-100k-协作开发集词法对照)。
 - [x] **RFC-0002 语义与规则 Router 基线**。DuReader 100k 的 1,020 条开发查询已完成 BM25、ANN Dense、固定 RRF、规则 Adaptive 与同源精确 Dense，另有 1,152 次同服务交错计时。质量、请求与 TREC 逐条核验，保留配对区间及 Router 的负结果。见[报告第 9 节](REPORT.md#9-协作开发集与-router-对照)；808 条全量留出另列。
@@ -34,7 +36,7 @@
 - [ ] **RFC-0001 CE 策略验证**。按有效 ANN 设置复跑 100k dev，复用固定候选池和 RRF。将固定 CE 深度、学习策略及实测同预算随机策略放在同一服务实例上配对比较。冻结后在 808 条隔离留出验证质量、成本和区间。 [Issue #3](https://github.com/ShwStone/NLP-SearchEngine/issues/3)
 - [ ] **RFC-0001 历史原生结果复跑**。向实验负责人取得固定版本的 M3 模型清单和原生特征加载器，核对哈希与运行环境后重跑对应 HTTP 确认。排序校准和增强特征实验各自需要原始依赖。 [复核边界](docs/contributions/rfc0001-final-router.md#复核入口)
 - [x] **Windows 回归验证**。修复 checkpoint 子进程退出后锁释放的时序断言、CLI 子进程编码、原生路径断言和 JSON 解码异常的测试稳定性。完整 Windows unittest 运行 211 项，跳过两项 POSIX 专用用例，其余通过。
-- [x] **旧 PR 功能核对**。[PR #2](https://github.com/ShwStone/NLP-SearchEngine/pull/2) 的采集与界面改动、[PR #7](https://github.com/ShwStone/NLP-SearchEngine/pull/7) 的离线构建与读取能力已有覆盖。PR #7 的 PackedIndex 缓存淘汰、同词并发读取和读取失败后重试测试在当前代码上重放通过，可单独保留覆盖。
+- [x] **旧 PR 功能核对**。[PR #2](https://github.com/ShwStone/NLP-SearchEngine/pull/2) 的采集与界面改动、[PR #7](https://github.com/ShwStone/NLP-SearchEngine/pull/7) 的离线构建与读取能力已有覆盖。核心测试保留 PackedIndex 缓存淘汰、同词并发合并及读失败重试，并校验启动失败不会泄漏文件和 SQLite 句柄。
 
 ## 证据边界
 
