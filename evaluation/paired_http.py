@@ -20,6 +20,8 @@ from urllib.parse import urlsplit
 from urllib.request import urlopen
 from uuid import uuid4
 
+from contracts.retrieval import valid_query_encoder_runtime
+
 from .compare import _percentile
 from .evaluate import EvaluationError, QueryRouting, _request_search, load_queries
 from .serving_cost import MODES, STAGES, distribution, milliseconds, read_object, require, sha256
@@ -40,7 +42,7 @@ def load_protocol(plan_path, query_path):
     require(set(plan) == {
         "schema_version", "queries_sha256", "corpus_sha256", "query_ids",
         "warmup_query_ids", "repeats", "depth", "timeout_s", "arms",
-    } and type(plan["schema_version"]) is int and plan["schema_version"] == 1,
+    } and type(plan["schema_version"]) is int and plan["schema_version"] in (1, 2),
         "Invalid plan schema")
     query_raw = query_path.read_bytes()
     require(plan["queries_sha256"] == sha256(query_raw), "Query file SHA256 differs from plan")
@@ -106,7 +108,7 @@ def schedule(plan, epoch):
                     }
 
 
-def service_identity(value, corpus, policy_version):
+def service_identity(value, corpus, policy_version, *, schema_version=1):
     identity = {field: value[field] for field in IDENTITY_FIELDS}
     require(all(isinstance(item, dict) and item for item in identity.values()),
             "Missing index, vector, search or policy identity")
@@ -116,6 +118,10 @@ def service_identity(value, corpus, policy_version):
     require(identity["vector_identity"]["corpus_sha256"] == corpus
             and identity["policy"]["policy_version"] == policy_version,
             "Vector corpus or effective policy version differs from plan")
+    if schema_version == 2:
+        runtime = value.get("query_encoder_runtime")
+        require(valid_query_encoder_runtime(runtime), "Missing or invalid query encoder runtime identity")
+        identity["query_encoder_runtime"] = runtime
     return identity
 
 
@@ -130,14 +136,15 @@ def validate_identities(plan, identities):
             "Client service identity coverage differs from plan")
     shared = None
     for arm in plan["arms"]:
-        identity = service_identity(identities[arm["label"]], plan["corpus_sha256"], arm["policy_version"])
+        identity = service_identity(identities[arm["label"]], plan["corpus_sha256"], arm["policy_version"],
+                                    schema_version=plan.get("schema_version", 1))
         if "identity_sha256" in arm:
             require(identity_digest(identity) == arm["identity_sha256"],
                     f"Effective service identity differs from the frozen digest for {arm['label']}")
-        common = {field: identity[field] for field in IDENTITY_FIELDS if field != "policy"}
+        common = {field: value for field, value in identity.items() if field != "policy"}
         if shared is None:
             shared = common
-        require(common == shared, "Arms use different index, vector or search identity")
+        require(common == shared, "Arms use different index, vector, search or query encoder runtime identity")
         require(type(common["search_config"]["candidate_k"]) is int
                 and plan["depth"] <= common["search_config"]["candidate_k"],
                 "Requested depth exceeds the effective candidate pool")
@@ -156,7 +163,8 @@ def get_identities(plan):
                 value = read_object(response.read())
             retrieval = value["retrieval"]
             require(retrieval["vector_ready"] is True, "Expected a vector-ready HTTP endpoint")
-            by_endpoint[endpoint] = service_identity(retrieval, plan["corpus_sha256"], arm["policy_version"])
+            by_endpoint[endpoint] = service_identity(retrieval, plan["corpus_sha256"], arm["policy_version"],
+                                                     schema_version=plan.get("schema_version", 1))
         identities[arm["label"]] = by_endpoint[endpoint]
     validate_identities(plan, identities)
     return identities
@@ -323,7 +331,8 @@ def verify(plan, digest, journal, paths, run_dir=None):
         (line, startup), row = logged[tag]
         if endpoint not in startup_lines:
             startup_lines[endpoint] = line
-            require(service_identity(startup, plan["corpus_sha256"], arm["policy_version"]) == identities[label],
+            require(service_identity(startup, plan["corpus_sha256"], arm["policy_version"],
+                                     schema_version=plan.get("schema_version", 1)) == identities[label],
                     f"Client and server startup identity differ for {label}")
         require(line == startup_lines[endpoint], f"Endpoint {label} spans multiple server startups")
         require(log_epochs.setdefault(log_digest, line) == line, "A shared server log spans multiple startups")
@@ -354,6 +363,8 @@ def verify(plan, digest, journal, paths, run_dir=None):
     report = {
         "status": "VERIFIED", "epoch": epoch, "plan_sha256": digest, "journal_sha256": journal_digest,
         "corpus_sha256": plan["corpus_sha256"], "paired_client_latency": comparisons,
+        **({"query_encoder_runtime": next(iter(identities.values()))["query_encoder_runtime"]}
+           if plan.get("schema_version", 1) == 2 else {}),
         "arms": {
             label: {
                 "server_log_sha256": logs[arm["endpoint"]][0],

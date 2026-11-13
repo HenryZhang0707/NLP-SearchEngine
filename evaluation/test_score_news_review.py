@@ -58,7 +58,7 @@ class NewsReviewScoringTests(unittest.TestCase):
         self.intake = self.root / "intake.json"
         self.output = self.root / "scores.json"
 
-    def bind_intake(self, *, adjudicate=True):
+    def bind_intake(self, *, adjudicate=True, prepared=True):
         digest = put(self.qrels, "".join(f"{qid}\t0\t{doc}\t{grade}\n"
                                         for (qid, doc), grade in self.grades.items()))
         return put(self.intake, {
@@ -68,6 +68,7 @@ class NewsReviewScoringTests(unittest.TestCase):
             "private_map": {"sha256": score_news_review.REVIEW_MAP_SHA256},
             "pair_count": len(self.grades), "overlap_pair_count": 2,
             "disputed_pair_count": 1,
+            **({"pre_adjudication": {"sha256": "c" * 64}} if prepared else {}),
             "adjudication": {"pair_count": 1, "sha256": "a" * 64} if adjudicate else None,
             "reviewers": {name: {"pair_count": count, "sha256": "b" * 64}
                           for name, count in score_news_review.REVIEW_ASSIGNMENTS.items()},
@@ -82,6 +83,7 @@ class NewsReviewScoringTests(unittest.TestCase):
         self.run_cli(self.bind_intake())
         result = json.loads(self.output.read_bytes())
         self.assertEqual(result["test_queries"], 2)
+        self.assertEqual(result["identity"]["pre_adjudication_sha256"], "c" * 64)
         self.assertEqual(result["test_queries_without_positive"], 1)
         self.assertEqual(result["test_grade_counts"], {"0": 1, "2": 1})
         self.assertEqual(result["metrics"]["adaptive"]["ndcg_at_10"], .5)
@@ -104,4 +106,9 @@ class NewsReviewScoringTests(unittest.TestCase):
     def test_rejects_unadjudicated_receipt_even_with_matching_digest(self):
         with self.assertRaisesRegex(ValueError, "adjudication does not cover"):
             self.run_cli(self.bind_intake(adjudicate=False))
+        self.assertFalse(self.output.exists())
+
+    def test_rejects_intake_without_bound_preparation(self):
+        with self.assertRaisesRegex(ValueError, "lacks the frozen pre-adjudication receipt"):
+            self.run_cli(self.bind_intake(prepared=False))
         self.assertFalse(self.output.exists())

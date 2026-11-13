@@ -74,8 +74,16 @@ $PY -B -m evaluation.evaluate --qrels <qrels> --queries <queries> --endpoint <ur
 
 部署负责人切换到冻结的新闻双索引后，使用现有 HTTP 探针验收公开站点。语料、
 Qdrant collection 与编码器来自[冻结发布配置](../online-serving.md)，检索参数与
-规则策略沿用上表。三个编码器参数须同时提供，探针会逐项核对回显，并将预期身份
-写入收据。该命令只执行 healthy 阶段。
+规则策略沿用上表。三个 `--expect-embedding-*` 参数核对索引清单声明的编码器身份。
+将命令中的四个 `QUERY_ENCODER_*` 变量设为获准发布配置的实现、实际设备、权重精度
+和模型清单 SHA-256。四个运行时参数须同时提供。探针对每次 `/index/info` 回显逐项
+核对运行时，并要求每个 HTTP 响应来自同一服务实例。收据记录预期身份、匹配的回显
+及通过验收的实例 ID。该命令只执行 healthy 阶段。
+
+固定 BGE 实现回显 `bge-cls-torch`，FP32 权重回显 `float32`，设备使用部署配置中
+预期的运行时标识（如 `cpu`）。清单摘要使用 `adapters.model_files.verify_model` 验证
+获准模型文件后返回的规范化摘要。该函数按固定 JSON 格式重编码型号、revision 和文件
+摘要，因此直接对 `model_inventory.json` 文件计算 SHA-256 会得到不同值。
 
 ```bash
 python3 scripts/online_acceptance.py \
@@ -87,6 +95,10 @@ python3 scripts/online_acceptance.py \
   --expect-embedding-model-id BAAI/bge-small-zh-v1.5 \
   --expect-embedding-revision 7999e1d3359715c523056ef9478215996d62a620 \
   --expect-embedding-dimension 512 \
+  --expect-query-encoder-implementation "$QUERY_ENCODER_IMPLEMENTATION" \
+  --expect-query-encoder-device "$QUERY_ENCODER_DEVICE" \
+  --expect-query-encoder-dtype "$QUERY_ENCODER_DTYPE" \
+  --expect-query-encoder-inventory-sha256 "$QUERY_ENCODER_INVENTORY_SHA256" \
   --query '秦山核电如何在发电的同时生产医用同位素？' \
   --run-tag news20k-public-release --out /tmp/accept/news20k-public.json
 ```

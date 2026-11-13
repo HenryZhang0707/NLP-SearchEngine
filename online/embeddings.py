@@ -33,8 +33,16 @@ class SentenceTransformerEncoder:
         try:
             self._model = SentenceTransformer(model_id, revision=revision)
             self._model.max_seq_length = max_tokens
+            parameter = next(self._model.parameters(), None)
         except Exception as error:
             raise RetrievalUnavailable(f"无法加载 embedding 模型: {error}") from error
+        if parameter is not None:
+            self.query_encoder_runtime = {
+                "implementation": "sentence-transformers",
+                "device": str(parameter.device),
+                "dtype": str(parameter.dtype).removeprefix("torch."),
+                "inventory_sha256": None,
+            }
 
     def _encode(self, texts: list[str]) -> list[list[float]]:
         try:

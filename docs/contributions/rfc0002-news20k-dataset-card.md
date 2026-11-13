@@ -39,7 +39,7 @@
 
 ## 人工评分复评
 
-冻结的盲审包每行包含 `pair_id`、查询、标题和正文。协调者保管原始映射和四人分配计划，评分者提交各自分配中的每一行，格式为 `{"pair_id":"...","relevance":0}`，等级只能取 0、1 或 2。将以下参数设置为已交付的盲审包、私有映射、计划及其预先记录的 SHA-256。
+四份盲审包已准备并完成本地 SHA-256 回读。盲审包每行包含 `pair_id`、查询、标题和正文。协调者在取得内容访问授权后提供对应材料，并保留签收记录、原始映射和四人分配计划。评分者提交各自分配中的每一行，格式为 `{"pair_id":"...","relevance":0}`，等级只能取 0、1 或 2。将以下参数设置为冻结的完整盲审包、私有映射、计划及其预先记录的 SHA-256。
 
 ```bash
 review_args=(
@@ -52,10 +52,11 @@ python -m evaluation.annotation_intake "${review_args[@]}" \
   --prepare-adjudication disputes.jsonl adjudication-template.jsonl pre-adjudication.json
 ```
 
-评分分歧由独立裁决者复核。把模板复制到新文件，将各行的空等级填为 0、1 或 2。没有分歧时省去下列命令的 `--adjudication` 参数。首次构建盲审包可用 `python -m evaluation.annotation_packet --help` 查看输入契约。
+协调者在分发裁决材料前记录 `pre-adjudication.json` 的 SHA-256。评分分歧由独立裁决者复核。把模板复制到新文件，将各行的空等级填为 0、1 或 2。没有分歧时省去 `--adjudication`，仍传入准备收据及其已记录的摘要。首次构建盲审包可用 `python -m evaluation.annotation_packet --help` 查看输入契约。
 
 ```bash
 python -m evaluation.annotation_intake "${review_args[@]}" \
+  --pre-adjudication pre-adjudication.json "$TRUSTED_PRE_ADJUDICATION_SHA256" \
   --adjudication adjudicated.jsonl --qrels news-human.qrels.tsv --receipt intake.json
 python -m evaluation.score_news_review "$NEWS_EVIDENCE_ROOT" \
   --qrels news-human.qrels.tsv --intake intake.json \

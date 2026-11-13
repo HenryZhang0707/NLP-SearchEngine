@@ -13,7 +13,7 @@ from contracts.api import ApiError, ResultItem, RoutingInfo, SearchRequest, Sear
 from contracts.reader import IndexReader
 from contracts.retrieval import (
     RetrievalConfig, RetrievalUnavailable, TextEncoder, VectorReader,
-    check_alignment, validate_vector,
+    check_alignment, valid_query_encoder_runtime, validate_vector,
 )
 
 from . import parser, scorers
@@ -37,6 +37,8 @@ class SearchEngine:
             raise ValueError("encoder 与 vectors 必须同时提供或同时省略")
         if vectors is not None:
             check_alignment(reader, vectors, encoder)
+        runtime = getattr(encoder, "query_encoder_runtime", None)
+        self._query_encoder_runtime = dict(runtime) if valid_query_encoder_runtime(runtime) else None
         self.router = RuleRouter(self.config) if router is None else router
         self.policy = router_identity(self.router)
         check_binding = getattr(self.router, "check_binding", None)
@@ -77,6 +79,8 @@ class SearchEngine:
                 "bm25": manifest.get("bm25"),
             },
             "vector_identity": vector_identity,
+            **({"query_encoder_runtime": dict(self._query_encoder_runtime)}
+               if self._query_encoder_runtime is not None else {}),
             "search_config": {"candidate_k": self.config.candidate_k,
                               "rrf_c": self.config.rrf_c},
             "policy": dict(self.policy),

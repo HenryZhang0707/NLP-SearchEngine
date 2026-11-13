@@ -38,6 +38,10 @@ ALL_DOC_IDS = [f"fake-doc-{index:02d}" for index in range(30)]
 ALLOWED_FIELDS = frozenset({"query", "mode", "k", "offset", "scorer", "expander", "run_tag"})
 MODES = ("lexical", "dense", "hybrid", "adaptive")
 INSTANCE = "a" * 32
+RUNTIME = {"implementation": "transformers", "device": "cpu", "dtype": "float32",
+           "inventory_sha256": "c" * 64}
+RUNTIME_ARGS = tuple(part for key, value in RUNTIME.items()
+                     for part in ("--expect-query-encoder-" + key.replace("_", "-"), value))
 
 
 class BadRequest(ValueError):
@@ -82,6 +86,7 @@ class FakeState:
         self.redirect_followed = False
         self.embedding_overrides = {}
         self.omit_embedding_from_vector_manifest = False
+        self.runtime_observations = iter(())
 
     def manifest(self):
         manifest = {
@@ -294,7 +299,11 @@ def make_handler(state):
                     "schema_version": 1, "analyzer_hash": state.analyzer_hash,
                 }})
             elif path == "/index/info":
-                self._send(200, {**state.manifest(), "retrieval": state.info()})
+                retrieval = state.info()
+                runtime = next(state.runtime_observations, None)
+                if runtime is not None:
+                    retrieval["query_encoder_runtime"] = runtime
+                self._send(200, {**state.manifest(), "retrieval": retrieval})
             elif state.serve_traversal and unquote(path) == "/static/../README.md":
                 self._send_bytes(200, b"leaked", "text/plain; charset=utf-8")
             else:
@@ -386,6 +395,7 @@ class OnlineAcceptanceTest(unittest.TestCase):
             self.assertIn(name, names)
         self.assertEqual(evidence["failures"], [])
         self.assertNotIn("instance_binding", evidence)
+        self.assertNotIn("query_encoder_runtime", evidence["expectation"])
         self.assertTrue(all(check["status"] == "PASS" for check in evidence["checks"]))
         search_events = [event for event in evidence["events"] if event["path"] == "/search"]
         self.assertTrue(search_events)
@@ -488,6 +498,45 @@ class OnlineAcceptanceTest(unittest.TestCase):
         status, evidence = self.run_probe(service.endpoint, extra=expected)
         self.assertEqual(status, 1)
         self.assertEqual(evidence["failures"], ["vector_identity"])
+
+    def test_release_runtime_is_bound_on_every_identity_observation(self):
+        service = self.service()
+        service.state.instance_id = INSTANCE
+        service.state.runtime_observations = iter((RUNTIME, RUNTIME))
+        status, evidence = self.run_probe(service.endpoint, extra=RUNTIME_ARGS)
+        self.assertEqual(status, 0)
+        self.assertEqual(evidence["expectation"]["query_encoder_runtime"], RUNTIME)
+        self.assertEqual(evidence["instance_binding"]["verified_id"], INSTANCE)
+        observed = [event["body"]["retrieval"]["query_encoder_runtime"]
+                    for event in evidence["events"] if event["path"] == "/index/info"]
+        self.assertEqual(observed, [RUNTIME, RUNTIME])
+
+        for wrong in (None, [], {**RUNTIME, "implementation": "other"},
+                      {**RUNTIME, "device": "cuda:0"}, {**RUNTIME, "dtype": "float16"},
+                      {**RUNTIME, "inventory_sha256": None},
+                      {**RUNTIME, "inventory_sha256": "e" * 64},
+                      {**RUNTIME, "unexpected": "extra"}):
+            with self.subTest(wrong=wrong):
+                service.state.runtime_observations = iter((RUNTIME, wrong))
+                status, evidence = self.run_probe(service.endpoint, extra=RUNTIME_ARGS)
+                self.assertEqual(status, 1)
+                self.assertEqual(evidence["failures"], ["vector_identity"])
+                self.assertIsNone(evidence["instance_binding"]["verified_id"])
+
+        service.state.runtime_observations = iter((None, RUNTIME))
+        status, evidence = self.run_probe(service.endpoint, extra=RUNTIME_ARGS)
+        self.assertEqual(status, 1)
+        self.assertEqual(evidence["failures"], ["index_identity"])
+
+    def test_release_runtime_requires_same_instance_on_nonidentity_responses(self):
+        service = self.service()
+        service.state.instance_id = INSTANCE
+        service.state.error_instance_id = "b" * 32
+        service.state.runtime_observations = iter((RUNTIME, RUNTIME))
+        status, evidence = self.run_probe(service.endpoint, extra=RUNTIME_ARGS)
+        self.assertEqual(status, 1)
+        self.assertIn("syntax_error", evidence["failures"])
+        self.assertIsNone(evidence["instance_binding"]["verified_id"])
 
     def test_down_phase_passes_when_backend_is_really_down(self):
         service = self.service(backend_up=False)
@@ -657,6 +706,22 @@ class ProbeIsolationTest(unittest.TestCase):
             (False, (*expected[:3], "LATEST", *expected[4:]), "固定 revision"),
             (False, (*expected[:-1], "0"), "必须是正整数"),
             (True, expected, "--lexical-only 不接受编码器身份参数"),
+        )
+        for lexical_only, extra, message in cases:
+            with self.subTest(lexical_only=lexical_only, extra=extra):
+                with contextlib.redirect_stderr(io.StringIO()) as stderr:
+                    with self.assertRaises(SystemExit) as raised:
+                        acceptance.main(probe_argv("http://127.0.0.1:1", "/dev/null",
+                                                   lexical_only=lexical_only, extra=extra))
+                self.assertEqual(raised.exception.code, 2)
+                self.assertIn(message, stderr.getvalue())
+
+    def test_runtime_options_reject_partial_invalid_and_lexical_expectations(self):
+        cases = (
+            (False, RUNTIME_ARGS[:-2], "必须同时给出四个"),
+            (False, (*RUNTIME_ARGS[:3], "path/to/device", *RUNTIME_ARGS[4:]), "运行时标识"),
+            (False, (*RUNTIME_ARGS[:-1], "latest"), "SHA256"),
+            (True, RUNTIME_ARGS, "--lexical-only 不接受查询编码器运行时参数"),
         )
         for lexical_only, extra, message in cases:
             with self.subTest(lexical_only=lexical_only, extra=extra):

@@ -87,11 +87,16 @@ def verify_intake(receipt):
     adjudication = receipt["adjudication"]
     require((not disputes and adjudication is None) or judgment_file(adjudication, disputes),
             "Intake adjudication does not cover the recorded disputes")
+    preparation = receipt.get("pre_adjudication")
+    require(isinstance(preparation, dict) and isinstance(preparation.get("sha256"), str)
+            and re.fullmatch(r"[0-9a-f]{64}", preparation["sha256"]) is not None,
+            "Intake lacks the frozen pre-adjudication receipt")
+    return preparation["sha256"]
 
 
 def load_review_grades(qrels, intake, expected_intake_sha256, pairs):
     receipt = read_json(intake, expected_intake_sha256)
-    verify_intake(receipt)
+    preparation_sha256 = verify_intake(receipt)
     payload = qrels.read_bytes()
     digest = hashlib.sha256(payload).hexdigest()
     require(digest == receipt["qrels"]["sha256"], "Qrels SHA-256 differs from the intake receipt")
@@ -103,12 +108,12 @@ def load_review_grades(qrels, intake, expected_intake_sha256, pairs):
                 "Invalid or repeated qrels row")
         grades[pair] = int(grade)
     require(set(grades) == pairs, "Qrels do not cover the exact frozen news pool")
-    return grades, digest
+    return grades, digest, preparation_sha256
 
 
 def score_news_review(evidence_root, qrels, intake, expected_intake_sha256):
     test_ids, pairs, state, runs = load_review_inputs(evidence_root)
-    grades, qrels_digest = load_review_grades(qrels, intake, expected_intake_sha256, pairs)
+    grades, qrels_digest, preparation_sha256 = load_review_grades(qrels, intake, expected_intake_sha256, pairs)
     test_qrels = {qid: {} for qid in sorted(test_ids)}
     for (qid, doc_id), grade in grades.items():
         if qid in test_qrels:
@@ -130,6 +135,7 @@ def score_news_review(evidence_root, qrels, intake, expected_intake_sha256):
                                                 for grade in rows.values()).items())),
         "identity": {
             "qrels_sha256": qrels_digest, "intake_sha256": expected_intake_sha256,
+            "pre_adjudication_sha256": preparation_sha256,
             "review_plan_sha256": REVIEW_PLAN_SHA256, "run_state_sha256": RUN_STATE_SHA256,
             "pool_manifest_sha256": state["pool_manifest_sha256"],
             "run_sha256": {arm: state["arms"][arm]["sha256"] for arm in NEWS_ARMS},

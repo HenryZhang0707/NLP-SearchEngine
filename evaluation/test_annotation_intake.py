@@ -65,12 +65,13 @@ class AnnotationIntakeTest(unittest.TestCase):
         self.plan.write_text(json.dumps(self.plan_value), encoding="utf-8")
         self.plan_sha256 = _sha256(self.plan)
 
-    def intake(self, *, adjudication=True, reviewer_files=None):
+    def intake(self, *, adjudication=True, reviewer_files=None, preparation=None):
         if reviewer_files is None:
             reviewer_files = [("a", self.first), ("b", self.second)]
         return import_human_judgments(
             self.packet, self.mapping, self.plan, self.plan_sha256, reviewer_files,
             self.qrels, self.receipt, adjudication=self.adjudication if adjudication else None,
+            preparation=preparation,
         )
 
     def assert_no_outputs(self):
@@ -124,6 +125,31 @@ class AnnotationIntakeTest(unittest.TestCase):
         self.assertFalse(self.dispute_packet.exists())
         self.assertFalse(self.template.exists())
         self.assertTrue(self.report.exists())
+        result = self.intake(adjudication=False, preparation=(self.report, _sha256(self.report)))
+        self.assertEqual(result["pre_adjudication"]["sha256"], _sha256(self.report))
+
+    def test_bound_preparation_rejects_modified_reviewer_without_dispute_change(self):
+        self.prepare()
+        digest = _sha256(self.report)
+        preparation = (self.report, digest)
+        original = self.first.read_bytes()
+        self.write_labels(self.first, [(self.a, 1), (self.b, 2)])
+        with self.assertRaisesRegex(EvaluationError, "frozen reviewers differs"):
+            self.intake(preparation=preparation)
+        self.assert_no_outputs()
+        self.first.write_bytes(original)
+        prepared = json.loads(self.report.read_bytes())
+        prepared["dispute_packet"]["sha256"] = "a" * 64
+        amended = self.report.with_name("different-preparation.json")
+        amended.write_text(json.dumps(prepared), encoding="utf-8")
+        with self.assertRaisesRegex(EvaluationError, "SHA256 mismatch"):
+            self.intake(preparation=(amended, digest))
+        with self.assertRaisesRegex(EvaluationError, "frozen dispute_packet differs"):
+            self.intake(preparation=(amended, _sha256(amended)))
+        self.assert_no_outputs()
+        self.intake(preparation=preparation)
+        self.assertEqual(json.loads(self.receipt.read_bytes())["pre_adjudication"],
+                         {"filename": self.report.name, "sha256": digest})
 
     def test_prepare_cli(self):
         out = StringIO()

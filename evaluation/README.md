@@ -369,7 +369,7 @@ For a new paired measurement, freeze a JSON plan with these fields:
 
 | Field | Value |
 | --- | --- |
-| `schema_version` | `1` |
+| `schema_version` | `2` for new runtime-bound measurements. Use `1` to verify historical journals under their original identity rules. |
 | `queries_sha256`, `corpus_sha256` | SHA-256 of the exact query file and the expected corpus identity from `/index/info` |
 | `query_ids`, `warmup_query_ids` | Ordered, disjoint ID arrays from that file. Preselect the measured queries. Include warmup query records in the same file. |
 | `repeats`, `depth`, `timeout_s` | Positive repeat count, retrieval depth and request timeout in seconds. Use depth 100 for MAP@100. |
@@ -378,8 +378,12 @@ For a new paired measurement, freeze a JSON plan with these fields:
 Use one vector-ready endpoint with four modes for a mode comparison, or two
 endpoints with `adaptive` and different policy versions for a Router comparison.
 Both endpoints must expose the same index, vector and effective search configuration.
+Version 2 also binds the query encoder implementation, loaded device, weight dtype
+and available verified model inventory to both HTTP identity and the server startup
+event. Record hardware models and load separately when interpreting latency.
 For a strict rerun, copy each arm's `identity_sha256` from the prior verified
-report. It covers the index, vector, search configuration and policy objects.
+report from the same schema version. Version 1 covers the index, vector, search
+configuration and policy objects. Version 2 adds the encoder runtime.
 Requests use BM25 and expansion `none`. When a dense arm is present, choose a
 panel it can execute successfully and record any exclusions when freezing the plan.
 Within each repeat the runner walks the listed query IDs and rotates which arm goes
@@ -464,7 +468,9 @@ dispute packet and matching template. The packet retains the original blind
 order and contains `pair_id`, `query`, `title` and `text` for disputed pairs.
 Copy the template to a new file, replace every `null` grade with an integer
 `0/1/2`, and keep the completed file private. When every overlap is unanimous,
-the command writes the private report alone.
+the command writes the private report alone. Record the private report's SHA256
+before sending the adjudication materials. Use it at final import to verify
+the exact reviewer submissions and the reconstructed dispute material.
 
 Import the completed judgments to create qrels:
 
@@ -474,6 +480,7 @@ python -m evaluation.annotation_intake \
   --plan data/review/private/plan.json --plan-sha256 "$FROZEN_PLAN_SHA256" \
   --reviewer reviewer-a data/review/private/reviewer-a.jsonl \
   --reviewer reviewer-b data/review/private/reviewer-b.jsonl \
+  --pre-adjudication data/review/private/pre-adjudication.json "$TRUSTED_PRE_ADJUDICATION_SHA256" \
   --adjudication data/review/private/adjudication.jsonl \
   --qrels data/review/news-human.qrels.tsv --receipt data/review/private/intake.json
 ```
