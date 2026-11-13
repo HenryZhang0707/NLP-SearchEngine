@@ -105,6 +105,16 @@ class ReplayGainTests(unittest.TestCase):
         self.assertAlmostEqual(one["uniform_fixed_budget_expectation"]["ndcg_at_10"], 2 / 3)
         self.assertAlmostEqual(full["gain_replay"]["ndcg_at_10"], 2 / 3)
 
+    def test_ablation_rejects_unpinned_or_changed_development_qrels(self):
+        self.args.development_ablation_inputs = self.root / "unused-map.json"
+        with self.assertRaisesRegex(EvaluationError, "frozen development qrels SHA256"):
+            score(self.args)
+        self.args.expected_development_qrels_sha256 = self.sha(self.args.qrels)
+        self.args.qrels.write_text("q 0 d 2\n", encoding="utf-8")
+        with self.assertRaisesRegex(EvaluationError, "frozen development qrels SHA256"):
+            score(self.args)
+        self.assertFalse(self.args.output.exists())
+
     def test_foreign_corpus_binding_rejected_by_frozen_identity(self):
         self.binding["corpus_sha256"] = "e" * 64
         self.write("binding.json", self.binding)

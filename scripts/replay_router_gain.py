@@ -16,7 +16,7 @@ from contracts.index_format import sha256_of
 from evaluation.compare import paired_bootstrap
 from evaluation.evaluate import QueryRouting, _metric_for_query, evaluate_run, load_qrels, load_queries
 from evaluation.router_budget import check_journal, parse_json, read_rankings, require, VECTOR_REASONS, LEXICAL_REASONS
-from evaluation.train_router_gain import load_train_features
+from evaluation.train_router_gain import FEATURE_GROUPS, load_train_features, model_json, train_router_gain
 from online.linear_gain_router import FEATURE_VERSION, LinearGainRouter
 
 
@@ -222,6 +222,82 @@ def development_budget_curve(rows, qrels, runs, rule_calls):
             "observed_rule_calls": rule_calls, "points": points}
 
 
+def development_feature_ablation(inputs_path, binding, rows, records, qrels, runs, learned, budget):
+    """Refit each intervention on the original training files and replay at equal cost."""
+    paths = read(inputs_path)
+    train_names = {"train_features", "train_queries", "train_qrels", "lexical_run",
+                   "hybrid_run", "adaptive_receipt", "feature_receipt"}
+    required = train_names | {"model", "development_features"}
+    require(isinstance(paths, dict) and set(paths) == required
+            and all(isinstance(value, str) and value for value in paths.values()),
+            "Invalid ablation input file mapping")
+    paths = {name: inputs_path.parent / value for name, value in paths.items()}
+    hashes = {name: sha256_of(path) for name, path in paths.items()}
+    require(hashes["model"] == binding["model_sha256"]
+            and hashes["development_features"] == binding["features_sha256"]
+            and hashes["train_queries"] == binding["training_queries_sha256"],
+            "Ablation inputs disagree with frozen model, features or training cohort")
+    model = read(paths["model"])
+    expected = {key: binding[key] for key in ("corpus_sha256", "candidate_k", "rrf_c", "feature_version")}
+    provenance = model["provenance"]
+    require(provenance["binding"] == expected and provenance["split_role"] == "train"
+            and all(provenance["inputs_sha256"].get(name) == hashes[name] for name in train_names),
+            "Ablation training files disagree with original model provenance")
+    train = load_queries(paths["train_queries"])
+    normalize = lambda text: "".join(text.casefold().split())
+    qids = {row.qid for row in records}
+    require(not qids.intersection(row.qid for row in train)
+            and not {normalize(row.query) for row in records}.intersection(normalize(row.query) for row in train),
+            "Ablation development cohort overlaps training")
+    features = load_train_features(paths["development_features"], qids)
+    training = {name: paths[name] for name in train_names}
+    alpha = provenance["fit"]["alpha"]
+    refitted = train_router_gain(**training, alpha=alpha)
+    require(model_json(refitted).encode("utf-8") == paths["model"].read_bytes(),
+            "Full model refit disagrees with archive")
+    full = LinearGainRouter.from_dict(model, hashes["model"])
+    eligible = [row["qid"] for row in rows if not row["explicit_constraints"]]
+    require(all(row["explicit_constraints"] == features[row["qid"]].explicit_constraints
+                and (row["explicit_constraints"] or row["predicted_gain"] == full.predict(features[row["qid"]]))
+                and row["threshold_vector"] == full.decide(features[row["qid"]]).use_vector for row in rows),
+            "Full model predictions disagree with frozen replay")
+
+    def allocate(policy):
+        return set(sorted(eligible, key=lambda qid: (-policy.predict(features[qid]), qid))[:budget])
+
+    full_calls = allocate(full)
+    require(full_calls == {row["qid"] for row in rows if row["fixed_budget_vector"]},
+            "Full model allocation disagrees with frozen replay")
+    ndcg_gains = {
+        qid: _metric_for_query(qrels[qid], runs["hybrid"].get(qid, ()), 10)[0]
+        - _metric_for_query(qrels[qid], runs["lexical"].get(qid, ()), 10)[0]
+        for qid in eligible
+    }
+
+    def diagnostics(calls):
+        return {"missed_positive_gain": sum(qid not in calls and gain > 0 for qid, gain in ndcg_gains.items()),
+                "called_negative_gain": sum(qid in calls and gain < 0 for qid, gain in ndcg_gains.items()),
+                "called_zero_gain": sum(qid in calls and gain == 0 for qid, gain in ndcg_gains.items())}
+
+    variants = {}
+    for group in FEATURE_GROUPS:
+        ablated = train_router_gain(**training, alpha=alpha, omit_feature_group=group)
+        ablated_digest = hashlib.sha256(model_json(ablated).encode("utf-8")).hexdigest()
+        policy = LinearGainRouter.from_dict(ablated, ablated_digest)
+        calls = allocate(policy)
+        rankings = {qid: runs["hybrid" if qid in calls else "lexical"].get(qid, []) for qid in qids}
+        deltas = {metric: asdict(paired_bootstrap(qrels, learned, rankings, metric=metric))
+                  for metric in ("ndcg", "recall", "mrr", "map")}
+        variants[group] = {"model_sha256": ablated_digest, "changed_actions": len(calls ^ full_calls),
+                           "vector_calls": len(calls), "minus_full": deltas, **diagnostics(calls)}
+    require(all(sha256_of(path) == hashes[name] for name, path in paths.items()),
+            "An ablation input changed during the analysis")
+    return {"scope": "exploratory_offline_development_ablation", "alpha": alpha,
+            "input_sha256": hashes, "vector_calls": budget, "eligible_queries": len(eligible),
+            "training_queries": len(train), "development_queries": len(records),
+            "full": diagnostics(full_calls), "variants": variants}
+
+
 def score(args):
     binding = load_binding(args.experiment_binding)
     require(sha256_of(args.predictions) == args.predictions_sha256, "Prediction SHA256 disagrees")
@@ -246,6 +322,11 @@ def score(args):
                 and ((explicit and gain is None and not row["threshold_vector"] and not row["fixed_budget_vector"])
                      or (not explicit and type(gain) in (float, int) and math.isfinite(gain))),
                 "Invalid or constraint-violating predictions")
+    qrels_sha256 = sha256_of(args.qrels)
+    ablation_inputs = getattr(args, "development_ablation_inputs", None)
+    if ablation_inputs is not None:
+        require(qrels_sha256 == getattr(args, "expected_development_qrels_sha256", None),
+                "Ablation requires the exact frozen development qrels SHA256")
     qrels = load_qrels(args.qrels)
     require(set(qrels) == universe, "Qrels do not cover the exact scoring universe")
     runs, summaries, evidence_formats = {}, {}, {}
@@ -300,12 +381,16 @@ def score(args):
     result = {"predictions_sha256": args.predictions_sha256, "queries": len(qids),
               "experiment_binding_sha256": sha256_of(args.experiment_binding),
               "experiment_binding": binding, "request_evidence_formats": evidence_formats,
-              "qrels_sha256": sha256_of(args.qrels),
+              "qrels_sha256": qrels_sha256,
               "vector_calls": {"rules": rule_calls, "gain_fixed_budget": rule_calls,
                                "gain_train_threshold": sum(row["threshold_vector"] for row in rows)},
               "metrics": summaries, "gain_fixed_budget_minus_rules": comparisons}
     if getattr(args, "development_budget_curve", False):
         result["development_budget_curve"] = development_budget_curve(rows, qrels, runs, rule_calls)
+    if ablation_inputs is not None:
+        result["development_feature_ablation"] = development_feature_ablation(
+            ablation_inputs, binding, rows, records, qrels, runs, learned["gain_fixed_budget"], rule_calls)
+        require(sha256_of(args.qrels) == qrels_sha256, "Development qrels changed during ablation")
     write(args.output, result)
     return result
 
@@ -328,7 +413,13 @@ def main(argv=None):
     verify.add_argument("--predictions-sha256", required=True)
     verify.add_argument("--development-budget-curve", action="store_true",
                         help="Add offline call-budget replay on the bound development split")
+    verify.add_argument("--development-ablation-inputs", type=Path,
+                        help="JSON mapping for the archived training files, model and dev features")
+    verify.add_argument("--expected-development-qrels-sha256",
+                        help="Frozen dev qrels digest required for feature ablation")
     args = cli.parse_args(argv)
+    if args.phase == "score" and bool(args.development_ablation_inputs) != bool(args.expected_development_qrels_sha256):
+        cli.error("feature ablation requires both the input mapping and frozen development qrels SHA256")
     result = freeze(args) if args.phase == "freeze" else score(args)
     print(json.dumps(result, ensure_ascii=True, allow_nan=False))
     return 0
