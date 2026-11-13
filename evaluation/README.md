@@ -57,6 +57,78 @@ separately. Repeated `--run` arguments preserve the per-attempt timing scopes.
 Standalone TREC runs contain no routing or latency evidence: those fields are
 `null`, not zero failures or zero latency.
 
+### Train and evaluate a CE40 gate
+
+Freeze train, development and independent holdout queries/qrels before capture.
+Keep their query IDs and normalized texts disjoint, and use a warmup set
+disjoint from all three. Use the same lexical/vector artifacts, retrieval
+parameters and fixed CE model throughout; see the [serving profiles](../docs/online-serving.md#学习门控-ce40).
+The evaluator requests 100 results in fixed hybrid mode with BM25 and no
+expansion, so set `candidate_k` to at least 100.
+
+Capture **only RRF and fixed CE40** for training, with `capture_features: true`
+on CE40 and no gate. Then fit from the completed SQLite capture and the exact
+train query/qrels files. The trainer requires scikit-learn; the online gate
+loads plain JSON. Use two new output paths in an existing directory.
+
+```bash
+python -m evaluation.ce_http \
+  --baseline http://127.0.0.1:8000 --rerank 40 http://127.0.0.1:8040 \
+  --queries data/queries.train.jsonl --qrels data/qrels.train.tsv \
+  --warmup-queries data/queries.warmup.jsonl --out runs/ce-train
+python -m evaluation.train_ce_gate \
+  --capture runs/ce-train/capture.sqlite3 \
+  --train-queries data/queries.train.jsonl --train-qrels data/qrels.train.tsv \
+  --model-out runs/ce-train/ce40-gate.json --receipt-out runs/ce-train/fit-receipt.json
+```
+
+The trainer checks the input digests and the exact set of paired queries.
+It skips explicit constraints and empty candidate pools. It standardizes the
+four BM25 features (`n_terms`, `vocab_coverage`, `relative_gap`, `candidate_hits`)
+and fits balanced logistic regression. A query is positive only if fixed CE40
+strictly improves nDCG@10 over RRF; ties and losses are nonpositive. Retain the
+receipt with the capture and model: it records input and model digests, service
+identities, fit settings, runtime and label counts.
+
+Start the learned profile on a separate port with the frozen JSON and receipt
+digest. Keep fixed CE40 available and add fixed CE28 for the four-arm comparison:
+
+```bash
+python -m evaluation.ce_http \
+  --baseline http://127.0.0.1:8000 --rerank 28 http://127.0.0.1:8028 \
+  --rerank 40 http://127.0.0.1:8040 --learned http://127.0.0.1:8041 --measure-random \
+  --require-instance-id \
+  --queries data/queries.dev.jsonl --qrels data/qrels.dev.tsv \
+  --warmup-queries data/queries.warmup.jsonl --out runs/ce-dev
+```
+
+Repeat with independent holdout files and a new output directory, leaving the
+gate and comparison settings fixed. The learned arm records real HTTP latency
+and CE pair counts; report latency by capture epoch after a resume.
+`--require-instance-id` checks the server-generated `X-Search-Instance` header
+on every identity and search response. A restart with identical configuration
+stops the current invocation before committing a mixed query. A new invocation
+can resume the journal in a separate latency epoch. Both the fixed-arm summary
+and live random summary record the observed service instances by epoch. Legacy
+journals can be replayed with their original options.
+`matched-random-plan.json` freezes a seeded random assignment at exactly the
+observed learned arm's total pair count, using each query's actual fixed CE40
+capacity. Its quality results in `summary.json` and its TREC file replay
+observed fixed RRF/CE40 rankings. `learned-diagnostics.json` reports paired
+quality differences from each fixed CE arm, missed positive gains, applied
+losses and the two-action oracle. The oracle uses qrels after capture and
+is only an upper reference for these two observed actions.
+
+`--measure-random` separately sends each query to the learned service and
+the fixed endpoint selected by the frozen random plan. It counterbalances
+request order, checks every observed ranking and CE count against the original
+capture, and writes measured wall times to `matched-random-live.json`.
+The comparison times the HTTP requests through their body reads; client-side
+endpoint selection is outside this timing. The separate SQLite journal can
+resume after a restart on new ports with matching service identities. With
+this flag omitted, random replay quality is still available, but no random
+latency is measured.
+
 ### Frozen unsupported-request policy and coverage
 
 The default remains strict: any HTTP error aborts evaluation. For a separately
@@ -380,6 +452,10 @@ endpoints with `adaptive` and different policy versions for a Router comparison.
 Both endpoints must expose the same index, vector and effective search configuration.
 For a strict rerun, copy each arm's `identity_sha256` from the prior verified
 report. It covers the index, vector, search configuration and policy objects.
+An `adaptive` arm whose policy can execute the dense route must set
+`allow_adaptive_dense: true` and provide its frozen `identity_sha256`. The flag
+defaults to `false`. The verified report records enabled arms, and verification
+still checks that their responses and tagged server logs agree for every request.
 Requests use BM25 and expansion `none`. When a dense arm is present, choose a
 panel it can execute successfully and record any exclusions when freezing the plan.
 Within each repeat the runner walks the listed query IDs and rotates which arm goes

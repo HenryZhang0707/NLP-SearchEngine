@@ -17,6 +17,7 @@ from contracts.retrieval import (
 )
 
 from . import parser, scorers
+from .ce_gate import features as ce_gate_features
 from .expanders import EXPANDERS
 from .fusion import rrf
 from .highlight import build_highlights
@@ -28,7 +29,7 @@ SNIPPET_LEN = 80
 class SearchEngine:
     def __init__(self, reader: IndexReader, encoder: TextEncoder | None = None,
                  vectors: VectorReader | None = None, config: RetrievalConfig | None = None,
-                 router: Router | None = None, bm25_accelerator=None):
+                 router: Router | None = None, bm25_accelerator=None, *, reranker=None):
         self.reader = reader
         self.encoder = encoder
         self.vectors = vectors
@@ -43,11 +44,18 @@ class SearchEngine:
         self.router = RuleRouter(self.config) if router is None else router
         self.policy = router_identity(self.router)
         check_binding = getattr(self.router, "check_binding", None)
+        check_retrieval_binding = getattr(self.router, "check_retrieval_binding", None)
         if callable(check_binding):
             check_binding(reader, self.config)
-        check_vector_binding = getattr(self.router, "check_vector_binding", None)
-        if callable(check_vector_binding):
-            check_vector_binding(reader, self.config, vectors)
+        if not callable(check_retrieval_binding):
+            check_retrieval_binding = getattr(self.router, "check_vector_binding", None)
+        if callable(check_retrieval_binding):
+            check_retrieval_binding(reader, self.config, vectors)
+        if reranker is not None and (vectors is None or reranker.depth > self.config.candidate_k):
+            raise ValueError("混合重排需要向量后端且深度不得超过 candidate_k")
+        self.reranker = reranker
+        if reranker is not None:
+            reranker.check_binding(self.info())
 
     def info(self) -> dict:
         """能力与配置回显，不把尚未实现的后端宣称为可用。
@@ -92,6 +100,7 @@ class SearchEngine:
             },
             "bm25_accelerator": ("compiled-float64-topk"
                                  if self.bm25_accelerator is not None else None),
+            **({"reranker": self.reranker.identity} if self.reranker is not None else {}),
         }
 
     def _decide(self, features: QueryFeatures) -> RouteDecision:
@@ -195,6 +204,14 @@ class SearchEngine:
         if req.mode != "lexical":
             ranked = ranked[:self.config.candidate_k]
 
+        rerank_features = None
+        rerank_feature_ms = 0.0
+        if (self.reranker is not None and self.reranker.records_features
+                and req.mode == "hybrid" and not explicit):
+            start = time.perf_counter()
+            rerank_features = ce_gate_features(self.reader, terms, ranked)
+            rerank_feature_ms = (time.perf_counter() - start) * 1000
+
         reason = f"forced_{req.mode}"
         use_vector = req.mode in ("dense", "hybrid")
         semantic_mode = "dense" if req.mode == "dense" else "hybrid"
@@ -237,10 +254,17 @@ class SearchEngine:
 
         results = []
         document_text = getattr(self.reader, "document_text", None)
+        read_document = document_text if callable(document_text) else self.reader.doc
+        rerank = None
+        if self.reranker is not None and req.mode == "hybrid" and not explicit and ranked:
+            start = time.perf_counter()
+            ranked, rerank = self.reranker.rerank(req.query, ranked, read_document,
+                                                features=rerank_features)
+            timings["rerank"] = rerank_feature_ms + (time.perf_counter() - start) * 1000
         for rank, (docid, score) in enumerate(ranked[req.offset:req.offset + req.k], req.offset + 1):
             # Rendering re-analyzes the original text; it does not consume the
             # stored token-offset table required by the conformance doc() API.
-            doc = document_text(docid) if callable(document_text) else self.reader.doc(docid)
+            doc = read_document(docid)
             results.append(ResultItem(
                 doc_id=doc.doc_id, rank=rank, score=score, title=doc.title,
                 snippet=doc.text[:SNIPPET_LEN], highlights=build_highlights(doc, set(terms)),
@@ -249,4 +273,5 @@ class SearchEngine:
                               score_kind, self.config.candidate_k,
                               self.policy["policy_version"])
         return SearchResponse(int((time.perf_counter() - t0) * 1000), parsed, expanded,
-                              results, routing, {k: round(v, 3) for k, v in timings.items()})
+                              results, routing, {k: round(v, 3) for k, v in timings.items()},
+                              rerank=rerank)

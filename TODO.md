@@ -33,8 +33,15 @@
 - [x] **RFC-0001 Router 与线上接口联合验证**。隔离候选结合 PR #9 的 `b2d6a87` 和 PR #11 的 `d2d30a6`，保留策略工厂、服务身份、显式约束、故障回退及有界排序。回环 HTTP 覆盖策略回显、正常和故障响应。真实小型 Qdrant 校验了 `hnsw_ef=128` 请求载荷、结果排序及索引身份。 [Router PR](https://github.com/ShwStone/NLP-SearchEngine/pull/9) · [评测 PR](https://github.com/ShwStone/NLP-SearchEngine/pull/11)
 - [x] **RFC-0001 全量词法分片源数据审计**。PR #9 的 81 个分片覆盖 8,096,668 篇，连续偏移及拼接语料 SHA-256 已核对。倒排语义、全局评分和检索质量需单独验收。 [分片说明](docs/rfc0001/FULL_SHARDED_PLAN.md)
 - [x] **RFC-0002 ANN 参数敏感性**。在同一 100k 快照和冻结 dev 上完成 Dense 与固定 RRF 的 ef=128/256 配对对照。记录四项指标、查询级区间、候选排名差异和旧 ef=256 TREC 前缀对账。 [结果与复验](docs/contributions/rfc0002-ann-ef-sensitivity.md)
-- [ ] **RFC-0001 CE 策略验证**。按有效 ANN 设置复跑 100k dev，复用固定候选池和 RRF。将固定 CE 深度、学习策略及实测同预算随机策略放在同一服务实例上配对比较。冻结后在 808 条隔离留出验证质量、成本和区间。 [Issue #3](https://github.com/ShwStone/NLP-SearchEngine/issues/3)
 - [ ] **RFC-0001 历史原生结果复跑**。向实验负责人取得固定版本的 M3 模型清单和原生特征加载器，核对哈希与运行环境后重跑对应 HTTP 确认。排序校准和增强特征实验各自需要原始依赖。 [复核边界](docs/contributions/rfc0001-final-router.md#复核入口)
+- [ ] **RFC-0002 公开 20k 部署复验**。公开站点目前回显 `tiny`、10 篇、向量未启用。部署负责人切换经校验的 20k 双索引后，再用公开地址验证索引身份、四种检索模式、显式约束和错误行为。
+- [ ] **RFC-0001 CE 策略集成与验证**。[PR #9](https://github.com/ShwStone/NLP-SearchEngine/pull/9) 承接 [Issue #3](https://github.com/ShwStone/NLP-SearchEngine/issues/3)，与当前主线存在冲突。与负责人对齐在线接口、CE 固定预算和等成本基线，保留实际 HTTP 质量、成本与误差；策略冻结后再在隔离留出集验证。两动作向量对照不替代这部分。
+  - [x] 联合候选保留现有 Router、显式约束和 BM25 加速路径；HTTP 回归验证开启 CE 时使用相同的 RRF 候选前缀、先重排再分页，并对显式约束跳过 CE。
+  - [x] 隔离候选中接入组员 BM25 收益策略，并用真实模型、同一 100k 索引验收固定 RRF/CE28 的公开 HTTP 路径。
+  - [x] 实现训练集专用的固定 RRF/CE40 采集和拟合入口；学习门控绑定索引、检索设置及 CE 模型，HTTP 回归覆盖触发、跳过和约束绕过。
+  - [x] 在 100k 的 172 条训练查询上完成真实 HTTP 采集和门控拟合，回读了计划及六份产物。真实服务小样本覆盖门控触发 40 对、主动跳过和显式约束绕过。训练回执 SHA-256 为 `e5f8dafe5421281e23639f4360d5c53830e16b285cbb0e621c4af871ac2fd124`。
+  - [ ] 用 1,020 条开发查询比较 RRF、固定 CE28/40、学习门控与实际 CE 评分对数相等的随机对照，保存同批质量、耗时与分支证据。
+  - [ ] 在交接过的 8M 双索引上，按同一协议和原训练划分另拟合全量门控，冻结后再评 808 条独立留出。100k 仅覆盖这批留出的 68/4,054 条判定对应文档，不作为其替代语料。分开报告两种索引上的质量、HTTP 耗时和错误分析。
 - [x] **Windows 回归验证**。修复 checkpoint 子进程退出后锁释放的时序断言、CLI 子进程编码、原生路径断言和 JSON 解码异常的测试稳定性。完整 Windows unittest 运行 211 项，跳过两项 POSIX 专用用例，其余通过。
 - [x] **旧 PR 功能核对**。[PR #2](https://github.com/ShwStone/NLP-SearchEngine/pull/2) 的采集与界面改动、[PR #7](https://github.com/ShwStone/NLP-SearchEngine/pull/7) 的离线构建与读取能力已有覆盖。核心测试保留 PackedIndex 缓存淘汰、同词并发合并及读失败重试，并校验启动失败不会泄漏文件和 SQLite 句柄。
 

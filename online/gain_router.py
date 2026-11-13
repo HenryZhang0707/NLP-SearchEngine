@@ -1,9 +1,14 @@
 """Opt-in, safely serialised BM25-first research policy. No training dependencies."""
 
 import hashlib
+import hmac
 import json
 import math
+import os
+import re
 from pathlib import Path
+
+from contracts.index_format import BM25Spec
 
 from .router import RouteDecision
 from .router_features import (
@@ -15,9 +20,11 @@ from .router_features import (
 class GainRouter:
     requires_statistics = True
 
-    def __init__(self, path, *, allow_transfer=False):
+    def __init__(self, path, *, allow_transfer=False, expected_sha256=None):
         raw = Path(path).read_bytes()
         self.sha256 = hashlib.sha256(raw).hexdigest()
+        if expected_sha256 is not None and not hmac.compare_digest(self.sha256, expected_sha256):
+            raise ValueError('gain router model SHA256 mismatch')
         self.policy_version = 'bm25-gain-v1-'+self.sha256[:12]
         self.allow_transfer = allow_transfer
         self.model = m = json.loads(raw)
@@ -75,28 +82,65 @@ class GainRouter:
                      else extract_statistics)
         return extractor(query, reader, terms, ranked)
 
-    def check_vector_binding(self, reader, config, vectors):
+    def check_retrieval_binding(self, reader, config, vectors):
         source = self.model['provenance']['source']
         expected = source['source_manifest']
         if config.candidate_k!=source['candidate_k'] or config.rrf_c!=source['rrf_c']:
             raise ValueError('gain router retrieval configuration mismatch')
-        if reader.manifest().get('bm25')!=expected.get('bm25'):
+        manifest = reader.manifest()
+        # Legacy readers and artifacts may omit BM25 defaults. Compare the
+        # settings used by the scorer, then bind the rest of the index identity.
+        try:
+            actual_bm25 = BM25Spec(**manifest.get('bm25', {}))
+            expected_bm25 = BM25Spec(**expected.get('bm25', {}))
+        except (TypeError, ValueError) as error:
+            raise ValueError('gain router invalid BM25 configuration') from error
+        if actual_bm25 != expected_bm25:
             raise ValueError('gain router BM25 configuration mismatch')
-        if not self.allow_transfer and reader.manifest()!=expected:
+        if not self.allow_transfer and (
+            {**manifest, 'bm25': actual_bm25.to_dict()}
+            != {**expected, 'bm25': expected_bm25.to_dict()}
+        ):
             raise ValueError('gain router index mismatch; explicit transfer required')
-        if vectors is None or vectors.manifest().to_dict()['embedding']!=source['vector_manifest']['embedding']:
+        if vectors is None:
+            raise ValueError('gain router requires a vector index')
+        actual_vector = vectors.manifest().to_dict()
+        expected_vector = source['vector_manifest']
+        if actual_vector['embedding'] != expected_vector['embedding']:
             raise ValueError('gain router embedding mismatch')
-        if vectors.manifest().index_params!=source['vector_manifest']['index_params']:
+        if actual_vector['index_params'] != expected_vector['index_params']:
             raise ValueError('gain router HNSW build parameters mismatch')
-        search_config = getattr(vectors, 'search_config', None)
-        if search_config is None:
-            search_params = getattr(vectors, 'search_params', None)
-        elif isinstance(search_config, dict) and {'hnsw_ef', 'exact'} <= search_config.keys():
-            search_params = {key: search_config[key] for key in ('hnsw_ef', 'exact')}
-        else:
-            raise ValueError('gain router ANN configuration is incomplete')
-        if search_params != source['vector_search_params']:
+        if actual_vector['backend'] != expected_vector['backend']:
+            raise ValueError('gain router vector backend mismatch')
+        if not self.allow_transfer and actual_vector != expected_vector:
+            raise ValueError('gain router vector manifest mismatch; explicit transfer required')
+
+        expected_search = source['vector_search_params']
+        required = {'hnsw_ef', 'exact'}
+        if (not isinstance(expected_search, dict) or not required <= expected_search.keys()
+                or expected_search.keys() - (required | {'timeout_s'})):
+            raise ValueError('gain router requires explicit ANN configuration')
+        expected_ef = expected_search['hnsw_ef']
+        exact = expected_search['exact']
+        if type(exact) is not bool:
+            raise ValueError('gain router requires a boolean exact search setting')
+        if not (exact and expected_ef is None) and (
+            type(expected_ef) is not int or expected_ef <= 0
+        ):
+            raise ValueError('gain router requires an explicit positive hnsw_ef for ANN')
+        actual_search = getattr(vectors, 'search_config', None)
+        if actual_search is None:
+            actual_search = getattr(vectors, 'search_params', None)
+        if (not isinstance(actual_search, dict)
+                or any(key not in actual_search or type(actual_search[key]) is not type(value)
+                       or actual_search[key] != value
+                       for key, value in expected_search.items() if key != 'timeout_s')
+                or ('timeout_s' in expected_search
+                    and ('timeout_s' not in actual_search
+                         or actual_search['timeout_s'] != expected_search['timeout_s']))):
             raise ValueError('gain router ANN configuration mismatch')
+
+    check_vector_binding = check_retrieval_binding
 
     def predict(self, features):
         m = self.model
@@ -142,3 +186,14 @@ class GainRouter:
             return RouteDecision(True,'no_lexical_hits')
         use = self.predict(features.statistics)>self.model['threshold']
         return RouteDecision(use,'predicted_hybrid_gain' if use else 'predicted_lexical_sufficient')
+
+
+def load_gain_router(config):
+    """Load a digest-pinned local model for the engine's retrieval binding check."""
+    path = os.environ.get('NLP_PEER_GAIN_MODEL')
+    digest = os.environ.get('NLP_PEER_GAIN_SHA256', '')
+    if not path:
+        raise ValueError('NLP_PEER_GAIN_MODEL must specify a local model path')
+    if not re.fullmatch(r'[0-9a-fA-F]{64}', digest):
+        raise ValueError('NLP_PEER_GAIN_SHA256 must specify a SHA256 hex digest')
+    return GainRouter(path, expected_sha256=digest.lower())
