@@ -1,7 +1,6 @@
 """Bounded-memory, resumable document encoding; no Qdrant index is claimed."""
 import argparse
 from dataclasses import asdict
-import fcntl
 from itertools import islice
 import json
 from pathlib import Path
@@ -9,6 +8,7 @@ import sys
 import time
 import numpy as np
 from contracts.index_format import sha256_of
+from evaluation.artifact_lock import exclusive_artifact_lock
 from evaluation.prepare_bm25_router import jsonl_rows
 
 
@@ -31,11 +31,12 @@ def encode_shard(source, out, encoder, chunk_size=1024):
         ids = [r['doc_id'] for r in batch]
         expected = dict(identity, offset=count, documents=len(batch))
         if metadata.exists():
-            record = json.loads(metadata.read_text())
+            record = json.loads(metadata.read_text(encoding='utf-8'))
             if any(record.get(k) != v for k, v in expected.items()):
                 raise ValueError('chunk identity mismatch')
             if (sha256_of(vector_path) != record['vectors_sha256'] or
-                    sha256_of(ids_path) != record['ids_sha256'] or json.loads(ids_path.read_text()) != ids):
+                    sha256_of(ids_path) != record['ids_sha256']
+                    or json.loads(ids_path.read_text(encoding='utf-8')) != ids):
                 raise ValueError('chunk corruption or ID mismatch')
             vectors = np.load(vector_path, mmap_mode='r', allow_pickle=False)
         else:
@@ -51,18 +52,19 @@ def encode_shard(source, out, encoder, chunk_size=1024):
                 np.save(handle, vectors, allow_pickle=False)
             pending.replace(vector_path)
             ids_pending = ids_path.with_suffix('.pending')
-            ids_pending.write_text(json.dumps(ids, ensure_ascii=False) + '\n')
+            ids_pending.write_text(json.dumps(ids, ensure_ascii=False) + '\n', encoding='utf-8', newline='\n')
             ids_pending.replace(ids_path)
             record = dict(expected, vectors_sha256=sha256_of(vector_path), ids_sha256=sha256_of(ids_path))
             pending = metadata.with_suffix('.pending')
-            pending.write_text(json.dumps(record, ensure_ascii=False, indent=2) + '\n')
+            pending.write_text(json.dumps(record, ensure_ascii=False, indent=2) + '\n',
+                               encoding='utf-8', newline='\n')
             pending.replace(metadata)
         chunks.append(record)
         count += len(batch)
         print(Path(source).name, 'encoded or verified', count, flush=True)
     report = dict(identity, documents=count, chunks=chunks, qdrant_built=False)
     pending = out / 'encoding-summary.pending'
-    pending.write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n')
+    pending.write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n', encoding='utf-8', newline='\n')
     pending.replace(out / 'encoding-summary.json')
     return report
 
@@ -76,12 +78,11 @@ def main():
     p.add_argument('--device', default='cuda')
     a = p.parse_args()
     a.out.mkdir(parents=True, exist_ok=True)
-    with (a.out / '.encode.lock').open('a') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    with exclusive_artifact_lock(a.out / '.encode.lock'):
         sys.path.append(str(a.adapter_root.resolve()))
         from adapters.embedding import BGEEncoder
         from contracts.retrieval import VectorManifest
-        spec = VectorManifest.from_dict(json.loads(a.vector_manifest.read_text())).embedding
+        spec = VectorManifest.from_dict(json.loads(a.vector_manifest.read_text(encoding='utf-8'))).embedding
         encoder = BGEEncoder(spec, str(a.model_path), a.device, batch_size=32)
         parts = sorted(a.corpus_dir.glob('part-*'))
         if a.limit_shards is not None:

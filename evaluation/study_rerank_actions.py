@@ -13,7 +13,7 @@ import time
 
 import numpy as np
 
-from .audit_router_ceiling import weighted_rrf
+from online.fusion import rrf
 from .prepare_bm25_router import jsonl_rows, metrics, sha
 from .router_metrics import percentile
 from .train_bm25_router import group_bootstrap
@@ -107,7 +107,9 @@ def pools_for(lexical, dense, identities, *, extended=False,dense_limits=None):
                 any(type(n) is not int or not 1<=n<=200 for n in dense_limits)):
             raise ValueError('invalid dense-only pool limits')
         return {f'dense-{size}':dense[:size] for size in dense_limits}
-    hybrid = weighted_rrf(lexical, dense, .5, 60., identities)
+    rankings = [[identities[doc_id] for doc_id in lane] for lane in (lexical, dense)]
+    external = {identities[doc_id]: doc_id for doc_id in set(lexical) | set(dense)}
+    hybrid = [external[docid] for docid, _ in rrf(rankings, c=60.0)]
     result = {}
     for name in POOLS + (EXTENDED_POOLS if extended else ()):
         kind, size = name.split('-')

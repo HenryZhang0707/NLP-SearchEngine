@@ -2,8 +2,8 @@
 import unittest
 import numpy as np
 
-from .prebge_nested import safe_partition,gate_mask
-from .study_bge_score_calibration import summary
+from evaluation.prebge_nested import safe_partition,gate_mask
+from evaluation.study_bge_score_calibration import summary
 
 
 class NestedScopeTests(unittest.TestCase):
@@ -32,3 +32,15 @@ class NestedScopeTests(unittest.TestCase):
 
 
 if __name__=='__main__':unittest.main()
+
+
+def test_ce_candidate_pools_use_online_rrf_and_internal_id_ties():
+    from evaluation.study_rerank_actions import pools_for
+
+    identities = {"first": 7, "second": 1, "third": 4}
+    tied = pools_for(["first", "second"], ["second", "first"], identities)
+    assert tied["hybrid-20"] == ["second", "first"]
+    assert tied["union-10"] == ["second", "first"]
+    mixed = pools_for(["first", "third"], ["third", "second"], identities)
+    assert mixed["hybrid-20"] == ["third", "first", "second"]
+    assert mixed["dense-10"] == ["third", "second"]

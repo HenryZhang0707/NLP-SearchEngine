@@ -164,7 +164,7 @@ class ServingConfigLoaderTests(unittest.TestCase):
         config = load_serving_config(path)
         base = path.parent
         self.assertEqual(config.index, (base / "../idx/$HOME").resolve())
-        self.assertTrue(str(config.index).endswith("idx/$HOME"))
+        self.assertEqual(config.index.parts[-2:], ("idx", "$HOME"))
         self.assertEqual(config.vector.manifest, (base / "~/vector/manifest.json").resolve())
         self.assertNotEqual(config.vector.manifest, Path.home() / "vector/manifest.json")
 
@@ -423,7 +423,7 @@ class ServingCliTests(unittest.TestCase):
     def test_legacy_defaults_keep_legacy_index_path(self):
         with self.cli() as mocks:
             server.main(["--index", "fixtures/tiny_index"])
-            mocks["DiskIndex"].assert_called_once_with("fixtures/tiny_index")
+            mocks["DiskIndex"].assert_called_once_with(str(Path("fixtures/tiny_index")))
             mocks["QdrantVectorIndex"].assert_not_called()
             mocks["SentenceTransformerEncoder"].assert_not_called()
             retrieval = mocks["SearchEngine"].call_args.args[3]
