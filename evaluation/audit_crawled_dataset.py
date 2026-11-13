@@ -8,8 +8,6 @@ from statistics import median
 import unicodedata
 from urllib.parse import urlsplit
 
-from .prepare_router_transfer import grams
-
 
 # Anchors from evaluation/RESOURCES.md and the local frozen evidence.
 RECEIPT_SHA256 = "e73861130be4da1ee1a1eef772e4d52bbb5837126a265b6650aadebade8e99a6"
@@ -103,9 +101,15 @@ def normalize(text):
                    if character.isalnum())
 
 
+def query_signature(text):
+    normalized = normalize(text)
+    bigrams = {normalized[i:i + 2] for i in range(len(normalized) - 1)}
+    return normalized, bigrams or {normalized}
+
+
 def overlap(left, right):
-    left = [(normalize(text), grams(text)) for text in left]
-    right = [(normalize(text), grams(text)) for text in right]
+    left = [query_signature(text) for text in left]
+    right = [query_signature(text) for text in right]
     require(all(normalized for normalized, _ in left + right), "Empty normalized query")
     exact = near = 0
     for left_text, left_grams in left:
