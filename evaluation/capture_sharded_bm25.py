@@ -62,7 +62,7 @@ def capture(index_dir, queries, statistics, output, k=200):
                 'scope': 'offline batch candidate generation; not HTTP latency', 'qrels_read': False}
     output = Path(output)
     output.mkdir(parents=True, exist_ok=False)
-    with (output / 'capture.jsonl').open('w') as handle:
+    with (output / 'capture.jsonl').open('w', encoding='utf-8', newline='\n') as handle:
         for i, row in enumerate(rows):
             handle.write(json.dumps({'query_id': qids[i], 'text': row.get('query', row.get('text')),
                                     'explicit_constraints': parsed[i].get('explicit_constraints', False),

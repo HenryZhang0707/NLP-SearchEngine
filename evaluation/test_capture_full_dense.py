@@ -18,7 +18,7 @@ def test_explicit_parameters_unicode_and_duplicate_point_rejection(tmp_path, mon
     (model/'model_inventory.json').write_text('{}')
     rows = [{'query_id':'q1','text':'苹果\u2028香蕉'},
             {'query_id':'q2','text':'苹果 AND 香蕉'}]
-    qp.write_text(''.join(json.dumps(r, ensure_ascii=False)+'\n' for r in rows))
+    qp.write_text(''.join(json.dumps(r, ensure_ascii=False)+'\n' for r in rows), encoding='utf-8')
     calls = []
     class Encoder:
         def __init__(self, *args, **kwargs):
@@ -48,6 +48,6 @@ def test_explicit_parameters_unicode_and_duplicate_point_rejection(tmp_path, mon
         assert result['qrels_read'] is False
         assert len(calls) == 1
         assert vars(calls[0]['search_params']) == {'hnsw_ef':128,'exact':False}
-        saved = [json.loads(l) for l in (output/'capture.jsonl').open()]
+        saved = list(mod.jsonl_rows(output/'capture.jsonl'))
         assert saved[0]['text'] == rows[0]['text']
         assert saved[1]['dense'] == []
