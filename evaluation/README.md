@@ -559,6 +559,26 @@ Each submission row contains only `pair_id` and an integer `relevance` in
 Omit `--adjudication` when the independent submissions agree on every
 overlapping pair. Keep the reviewer inputs, private map and receipt outside Git.
 
+For the frozen RFC-0002 news release, record the SHA-256 of the canonical
+intake receipt immediately after successful import and retain it independently
+of the copy supplied to scoring. The following command accepts that digest,
+the adjudicated all-query qrels, and the original news evidence directory
+described in the dataset card:
+
+```bash
+python -m evaluation.score_news_review "$NEWS_EVIDENCE_ROOT" \
+  --qrels data/review/news-human.qrels.tsv --intake data/review/private/intake.json \
+  --intake-sha256 "$TRUSTED_INTAKE_SHA256" --out data/review/news-human-test-summary.json
+```
+
+It verifies the frozen four-reviewer assignment, intake hashes, exact pool
+coverage, test split, and the four original HTTP TREC rankings. It scores the
+150 test queries, including queries without any positive grade, and reports
+judged coverage at 10 and 100. The paired adaptive-minus-hybrid intervals use
+10,000 query resamples with seed 20261028. The receipt digest verifies the
+identity of the coordinator's completed intake. Keep the intake and grades
+private. The scoring step reuses rankings and does not measure HTTP latency.
+
 ## Simple bounded crawler
 
 The legacy `evaluation.crawl_web` entry rejects all HTTP redirects before any
