@@ -29,15 +29,16 @@
 - [x] **RFC-0002 20k 路由日志对账**。50 条开发查询逐一运行四模式，200 条 HTTP 结果均匹配同一服务的日志。固定 RRF 调用向量 50 次，规则 Router 调用 9 次，无回退。单次顺序工程测量见[资源记录](evaluation/RESOURCES.md#新闻-20k-本地浏览器演示与恢复验收)。
 - [x] **RFC-0002 配对 HTTP 复验入口**。冻结查询、执行顺序和服务身份，通过日志对账验收，导出同批排名以便独立复算质量。既有 1,152 次四模式交错计时与 2,040 次规则/线性收益对照沿用各自的原始计划和回执。见[评测手册](evaluation/README.md#paired-live-http-measurements)。
 - [x] **RFC-0002 自爬数据卡与冻结集审计**。核对 20,000 篇有序文档、200 条来源绑定查询、8,281 对池化判定和四臂排名的判定覆盖。已重放历史划分，并核对新闻查询与全部 official-dev 查询的词面重叠，以及新闻正文与 8,096,668 篇官方 passage 的完整正文精确重叠。 [数据卡与复验](docs/contributions/rfc0002-news20k-dataset-card.md)
-- [ ] **RFC-0002 自爬人工实测**。复用冻结的 20k 语料、划分、候选池与双索引。四份离线盲审包已回读校验，覆盖 8,281 对，其中 1,656 对有独立重叠安排。收到四份完整评分后，报告裁决前一致率和分歧数量，发出只含分歧条目的裁决包，随后导入结果并重评四模式。现有辅助标注结果单列。
+- [x] **RFC-0002 盲审裁决与正式导入**。裁决准备和 qrels 导入使用同一冻结计划及提交校验。裁决包只包含分歧条目，私有报告记录重叠一致率、分歧数及绑定哈希。见[评测手册](evaluation/README.md#human-review-of-a-frozen-candidate-pool)。
+- [ ] **RFC-0002 自爬人工实测**。复用冻结的 20k 语料、划分、候选池与双索引。四份离线盲审包已回读校验，覆盖 8,281 对，其中 1,656 对有独立重叠安排。收齐四份完整评分后准备裁决、导入正式 qrels、重评四模式并报告判定覆盖和配对区间。现有辅助标注结果单列。
+- [ ] **RFC-0002 公开 20k 部署复验**。部署负责人切换获准发布的冻结双索引后，用[验收命令](docs/contributions/rfc0003-online-acceptance.md#公开部署切换后的发布身份复验)验证索引、编码器、同一服务实例、四种检索模式和错误路径。
 - [x] **RFC-0001 两动作对照**。完成规则与同预算随机对照、线性收益模型独立训练和等预算回放。固定训练阈值与规则在 100k 开发集另有 2,040 次真实 HTTP 对照，向量调用为 715 对 748，质量与耗时证据支持保留现有默认规则。详见 [Router 对照](docs/contributions/rfc0001-router-budget.md)。
 - [x] **RFC-0001 开发集预算曲线与决策复核**。在同一批冻结排序上复算多个向量调用预算，并比较同预算随机期望。重排质量保护的新版收据核对同一开发集、同一策略汇总和独立固定深度对照，只记录开发决策。 [预算曲线](docs/contributions/rfc0001-router-budget.md#开发集向量调用预算曲线) · [重排决策](docs/rfc0001/DUREADER_QUALITY_GUARD.md)
-- [x] **RFC-0001 Router 与线上接口联合验证**。隔离候选结合 PR #9 的 `98ef44d` 和 PR #11 的 `d2d30a6`，保留策略工厂、服务身份、显式约束、故障回退及有界排序。保留单一向量配置入口，Qdrant 的实际 HNSW 参数与清单不符时拒绝启动。真实小型 Qdrant 的 `hnsw_ef=128` 请求载荷、结果排序及索引身份已在上一版隔离候选校验。 [Router PR](https://github.com/ShwStone/NLP-SearchEngine/pull/9) · [评测 PR](https://github.com/ShwStone/NLP-SearchEngine/pull/11)
+- [x] **RFC-0001 Router 与线上接口联合验证**。隔离候选结合 PR #9 的 `c21ddef` 和 PR #11 的 `fb3a712`，保留策略工厂、服务身份、显式约束、故障回退及有界排序。保留单一向量配置入口，Qdrant 的实际 HNSW 参数与清单不符时拒绝启动。真实小型 Qdrant 的 `hnsw_ef=128` 请求载荷、结果排序及索引身份已在上一版隔离候选校验。 [Router PR](https://github.com/ShwStone/NLP-SearchEngine/pull/9) · [评测 PR](https://github.com/ShwStone/NLP-SearchEngine/pull/11)
 - [x] **RFC-0001 全量词法分片与候选核对**。PR #9 的 81 个分片覆盖 8,096,668 篇，连续偏移及拼接语料 SHA-256 已核对。队友还记录了分片与已交付 compact BM25 的 train/dev 候选一致性。 [分片说明](docs/rfc0001/FULL_SHARDED_PLAN.md) · [全量报告](docs/rfc0001/DUREADER_FULL_FINAL_REPORT.json)
 - [x] **RFC-0001 独立固定预算对照**。队友在 1,020 条 dev 查询上独立执行固定 CE 对照。100k 的学习策略相对固定 CE-24 的 nDCG@10 差值为 `+0.00653`，分组 95% CI 跨零；8M 相对固定 CE-33 为 `-0.01708`，分组 95% CI `[-0.02450,-0.01022]`。离线质量保护选择固定 CE-33，因而没有保留路由节省。该报告未使用 808 条留出，也不代表线上默认策略已改变。 [质量保护决策](docs/rfc0001/DUREADER_QUALITY_GUARD.md)
 - [x] **RFC-0002 ANN 参数敏感性**。在同一 100k 快照和冻结 dev 上完成 Dense 与固定 RRF 的 ef=128/256 配对对照。记录四项指标、查询级区间、候选排名差异和旧 ef=256 TREC 前缀对账。 [结果与复验](docs/contributions/rfc0002-ann-ef-sensitivity.md)
 - [ ] **RFC-0001 历史原生结果复跑**。向实验负责人取得固定版本的 M3 模型清单和原生特征加载器，核对哈希与运行环境后重跑对应 HTTP 确认。排序校准和增强特征实验各自需要原始依赖。 [复核边界](docs/contributions/rfc0001-final-router.md#复核入口)
-- [ ] **RFC-0002 公开 20k 部署复验**。公开站点目前回显 `tiny`、10 篇、向量未启用。部署负责人切换经校验的 20k 双索引后，再用公开地址验证索引身份、四种检索模式、显式约束和错误行为。
 - [ ] **RFC-0001 CE 策略集成与验证**。[PR #9](https://github.com/ShwStone/NLP-SearchEngine/pull/9) 承接 [Issue #3](https://github.com/ShwStone/NLP-SearchEngine/issues/3)，与当前主线存在冲突。与负责人对齐在线接口、CE 固定预算和等成本基线，保留实际 HTTP 质量、成本与误差；策略冻结后再在隔离留出集验证。两动作向量对照不替代这部分。
   - [x] 联合候选保留现有 Router、显式约束和 BM25 加速路径；HTTP 回归验证开启 CE 时使用相同的 RRF 候选前缀、先重排再分页，并对显式约束跳过 CE。
   - [x] 隔离候选中接入组员 BM25 收益策略，并用真实模型、同一 100k 索引验收固定 RRF/CE28 的公开 HTTP 路径。
@@ -46,18 +47,19 @@
   - [ ] 用 1,020 条开发查询比较 RRF、固定 CE28/40、学习门控与实际 CE 评分对数相等的随机对照，保存同批质量、耗时与分支证据。
   - [ ] 在交接过的 8M 双索引上，按同一协议和原训练划分另拟合全量门控，冻结后再评 808 条独立留出。100k 仅覆盖这批留出的 68/4,054 条判定对应文档，不作为其替代语料。分开报告两种索引上的质量、HTTP 耗时和错误分析。
 - [x] **Windows 回归验证**。修复 checkpoint 子进程退出后锁释放的时序断言、CLI 子进程编码、原生路径断言和 JSON 解码异常的测试稳定性。完整 Windows unittest 运行 211 项，跳过两项 POSIX 专用用例，其余通过。
-- [x] **旧 PR 功能核对**。[PR #2](https://github.com/ShwStone/NLP-SearchEngine/pull/2) 的采集与界面改动、[PR #7](https://github.com/ShwStone/NLP-SearchEngine/pull/7) 的离线构建与读取能力已有覆盖。核心测试保留 PackedIndex 缓存淘汰、同词并发合并及读失败重试，并校验启动失败不会泄漏文件和 SQLite 句柄。
+- [x] **旧 PR 功能核对**。[PR #2](https://github.com/ShwStone/NLP-SearchEngine/pull/2) 的采集与界面改动、[PR #7](https://github.com/ShwStone/NLP-SearchEngine/pull/7) 的离线构建与读取能力已有覆盖。保留通用 SentenceTransformer 的批次配置、Qdrant 逐批写入及失败后仅清理新集合的回归。核心测试覆盖 PackedIndex 缓存淘汰、同词并发合并、读失败重试及启动失败后的文件和 SQLite 句柄清理。
 
 ## 证据边界
 
 - 官方公开基线的判定来自 dev。808 条留出查询来自该集合。开题报告中的 100001/2000/9839 是团队提出的目标快照，来源见 [资源记录](evaluation/RESOURCES.md)。
-- 2026-11-12 [公开演示站点](https://search.shwstone.cn/)的 `/health` 返回 200，`/index/info` 仍回显 `tiny`、10 篇、`retrieval.vector_ready=false`。待部署负责人更新发布产物，再核验公开站点的索引身份、四模式和错误路径；本地 20k 验收独立保留。
+- 2026-11-13 [公开演示站点](https://search.shwstone.cn/)的 `/health` 返回 200，`/index/info` 仍回显 `tiny`、10 篇、`retrieval.vector_ready=false`。本地 20k 验收使用独立服务。
 - 自爬评测的判定来源为 assistant 全文复核，报告按工程评测解释。数据、模型、快照、索引与生成结果均保存在 Git 外。
 
 ## 复验入口
 
 ```bash
 python tests/run.py
+python -m pip install ijson==3.4.0.post0
 python -m unittest discover -s tests -p 'test_*.py'
 python -m unittest discover -s evaluation -p 'test_*.py'
 node --test tests/test_web.cjs

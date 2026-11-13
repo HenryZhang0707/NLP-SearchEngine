@@ -4,6 +4,7 @@
 不 import ``online.*`` / ``offline.*``，因此探针进程与服务进程不共享任何状态。
 证据写入调用方指定的 JSON 路径；事件里的查询与请求体都来自调用方参数，
 工具本身不读取、不写入任何凭据。
+向量 profile 可用三个 ``--expect-embedding-*`` 参数绑定发布清单中的编码器身份。
 
 三个阶段的语义（同一个服务进程保持运行）：
 
@@ -50,6 +51,13 @@ REQUIRED_VECTOR_EXPECTATIONS = (
 
 
 @dataclass(frozen=True)
+class EmbeddingExpectation:
+    model_id: str
+    revision: str
+    dimension: int
+
+
+@dataclass(frozen=True)
 class Expectation:
     """调用方声明的服务身份；缺失的期望不会被默默跳过。"""
 
@@ -62,6 +70,7 @@ class Expectation:
     rrf_c: float
     policy_version: str | None
     vector_configured: bool
+    embedding: EmbeddingExpectation | None = None
 
     def expected_vector_used(self, mode):
         return VECTOR_USED_BY_MODE[mode]
@@ -264,6 +273,10 @@ def _vector_identity(probe):
     assert isinstance(revision, str) and revision and revision != "latest"
     assert type(embedding["dimension"]) is int and embedding["dimension"] > 0
     assert embedding["normalize"] is True and embedding["distance"] == "cosine"
+    if expectation.embedding is not None:
+        assert "embedding" in manifest, "vector_manifest 缺少 embedding"
+        for key, expected in asdict(expectation.embedding).items():
+            assert embedding[key] == expected, f"embedding.{key} 与发布期望不一致"
     search = identity["search"]
     assert search["hnsw_ef"] == expectation.hnsw_ef
     # exact=false 只说明允许 ANN，不证明本次查询实际走 HNSW。
@@ -449,6 +462,19 @@ def _instance_id(value):
     return value
 
 
+def _identity_string(value):
+    if not value or value != value.strip():
+        raise argparse.ArgumentTypeError("必须是非空字符串且首尾无空白")
+    return value
+
+
+def _fixed_revision(value):
+    revision = _identity_string(value)
+    if revision.casefold() == "latest":
+        raise argparse.ArgumentTypeError("必须是发布清单中的固定 revision")
+    return revision
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         description="在线服务只读 HTTP 验收（RFC-0003）：healthy / down / recovered 三阶段")
@@ -462,6 +488,12 @@ def build_parser():
     parser.add_argument("--expect-collection", help="向量 profile 必填：Qdrant collection")
     parser.add_argument("--expect-hnsw-ef", type=_positive_int,
                         help="向量 profile 必填：服务声明的搜索 beam")
+    parser.add_argument("--expect-embedding-model-id", type=_identity_string,
+                        help="发布清单中的编码器型号；三个编码器参数须同时提供")
+    parser.add_argument("--expect-embedding-revision", type=_fixed_revision,
+                        help="发布清单中的固定编码器 revision")
+    parser.add_argument("--expect-embedding-dimension", type=_positive_int,
+                        help="发布清单中的编码维度")
     parser.add_argument("--expect-candidate-k", type=_positive_int, default=200)
     parser.add_argument("--expect-rrf-c", type=_positive_float, default=60.0)
     parser.add_argument("--expect-policy-version", help="可选：要求回显的 policy_version")
@@ -495,6 +527,17 @@ def main(argv=None):
         if missing:
             parser.error("向量 profile 需要同时给出预期身份: " + ", ".join(missing))
 
+    embedding_values = (args.expect_embedding_model_id, args.expect_embedding_revision,
+                        args.expect_embedding_dimension)
+    embedding = None
+    if any(value is not None for value in embedding_values):
+        if args.lexical_only:
+            parser.error("--lexical-only 不接受编码器身份参数")
+        if any(value is None for value in embedding_values):
+            parser.error("必须同时给出 --expect-embedding-model-id、"
+                         "--expect-embedding-revision 和 --expect-embedding-dimension")
+        embedding = EmbeddingExpectation(*embedding_values)
+
     expectation = Expectation(
         dataset=args.expect_dataset,
         n_docs=args.expect_n_docs,
@@ -505,6 +548,7 @@ def main(argv=None):
         rrf_c=args.expect_rrf_c,
         policy_version=args.expect_policy_version,
         vector_configured=not args.lexical_only,
+        embedding=embedding,
     )
     probe = Probe(args.endpoint, expectation=expectation, query=args.query,
                   oov_query=args.oov_query, run_tag=args.run_tag, timeout=args.timeout,
@@ -519,6 +563,9 @@ def main(argv=None):
         probe.checks.append({"name": "probe_crashed", "status": "FAIL", "error": detail})
 
     failures = [check for check in probe.checks if check["status"] == "FAIL"]
+    expected_identity = asdict(expectation)
+    if embedding is None:
+        expected_identity.pop("embedding")
     evidence = {
         "status": "FAIL" if failures else "PASS",
         "endpoint": probe.base,
@@ -527,7 +574,7 @@ def main(argv=None):
         "run_tag": args.run_tag,
         "started_utc": started_utc,
         "finished_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "expectation": asdict(expectation),
+        "expectation": expected_identity,
         "scope": SCOPE,
         "checks_total": len(probe.checks),
         "checks_passed": len(probe.checks) - len(failures),

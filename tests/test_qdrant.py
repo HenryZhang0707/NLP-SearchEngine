@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 from contracts.index_format import sha256_of
 from contracts.retrieval import (
-    VECTOR_BUILD_METADATA_KEY, EmbeddingSpec, RetrievalUnavailable, VectorManifest,
+    VECTOR_BUILD_METADATA_KEY, EmbeddingSpec, RetrievalUnavailable, VectorManifest, VectorRecord,
 )
 from offline.build_hybrid import build_hybrid
 from offline.provenance import PROVENANCE_FILE, REPORT_FILE
@@ -323,6 +323,42 @@ def test_qdrant_writer_does_not_treat_transport_failure_as_a_new_collection():
             ))
         assert not (root / "vector_manifest.json").exists()
         assert client.collections == {}
+
+
+def test_qdrant_writer_streams_records_and_keeps_unrelated_collection_on_failure():
+    original = _manifest()
+    new_build = replace(original, collection="new-build", snapshot_files={})
+    for failure in (None, "generator", "upsert"):
+        client = _seed(original)
+        original_points = copy.deepcopy(client.records[original.collection])
+        upsert = client.upsert
+
+        def records():
+            yield VectorRecord(0, "d0", [1.0, 0.0])
+            assert set(client.records[new_build.collection]) == {0}
+            if failure == "generator":
+                raise RuntimeError("encoding interrupted")
+            yield VectorRecord(1, "d1", [1.0, 0.0])
+
+        def write_batch(collection_name, points, wait):
+            if failure == "upsert" and points[0].id == 1:
+                raise RuntimeError("second batch failed")
+            upsert(collection_name, points, wait)
+
+        with tempfile.TemporaryDirectory() as directory, _sdk(client):
+            root = Path(directory)
+            writer = QdrantSnapshotWriter("http://fixture", root, batch_size=1)
+            with patch.object(client, "upsert", side_effect=write_batch), patch(
+                "urllib.request.urlopen", return_value=io.BytesIO(b"snapshot")
+            ):
+                if failure is None:
+                    assert writer.replace(new_build, records()).snapshot_files
+                    assert set(client.records[new_build.collection]) == {0, 1}
+                else:
+                    _raises(RuntimeError, lambda: writer.replace(new_build, records()))
+                    assert new_build.collection not in client.collections
+                    assert not list(root.iterdir())
+            assert client.records[original.collection] == original_points
 
 
 ALL_TESTS = [value for name, value in sorted(globals().items()) if name.startswith("test_")]

@@ -58,9 +58,11 @@ python3 -m offline.build --corpus fixtures/tiny_corpus.jsonl \
 # 2. 词法 conformance
 python3 -m contracts.conformance /tmp/nlp-tiny-bm25 fixtures/tiny_corpus.jsonl
 
-# 3. 核心契约、评测器和额外 unittest（可选依赖缺失时相应专项会 skip）
+# 3. 核心契约与评测器
 python3 tests/run.py
 python3 -m unittest discover -s evaluation -p 'test_*.py'
+# 扩展测试包括流式索引合并，需要 ijson
+python3 -m pip install ijson==3.4.0.post0
 python3 -m unittest discover -s tests -p 'test_*.py'
 # 可选：浏览器高亮逻辑的 Unicode/转义回归测试（Node.js 18+，无需 npm 依赖）
 node --test tests/test_web.cjs

@@ -80,6 +80,8 @@ class FakeState:
         self.error_instance_id = None
         self.redirect_health = False
         self.redirect_followed = False
+        self.embedding_overrides = {}
+        self.omit_embedding_from_vector_manifest = False
 
     def manifest(self):
         manifest = {
@@ -103,6 +105,7 @@ class FakeState:
                 "model_id": "fake-pinned-embedder", "revision": "fake-revision-1",
                 "dimension": 4, "max_tokens": 512, "normalize": True, "distance": "cosine",
                 "document_template": "title\ntext", "query_prefix": "", "document_prefix": "",
+                **self.embedding_overrides,
             },
             "collection": self.collection,
             "backend": "qdrant-hnsw",
@@ -117,6 +120,8 @@ class FakeState:
             vector_identity = dict(manifest, search={
                 "hnsw_ef": self.hnsw_ef, "exact": False, "timeout_s": 30.0,
             })
+            if self.omit_embedding_from_vector_manifest:
+                del manifest["embedding"]
         return {
             "vector_ready": self.vector_configured,
             "config": {"candidate_k": self.candidate_k, "rrf_c": self.rrf_c,
@@ -454,6 +459,36 @@ class OnlineAcceptanceTest(unittest.TestCase):
                 self.assertEqual(evidence["status"], "FAIL")
                 self.assertIn(check_name, self.failure_names(evidence))
 
+    def test_release_embedding_must_match_even_when_service_echoes_agree(self):
+        service = self.service()
+        expected = ("--expect-embedding-model-id", "fake-pinned-embedder",
+                    "--expect-embedding-revision", "fake-revision-1",
+                    "--expect-embedding-dimension", "4")
+        status, evidence = self.run_probe(service.endpoint, extra=expected)
+        self.assertEqual(status, 0)
+        self.assertEqual(evidence["expectation"]["embedding"],
+                         {"model_id": "fake-pinned-embedder",
+                          "revision": "fake-revision-1", "dimension": 4})
+        for field, wrong_value in (("model_id", "other-embedder"),
+                                   ("revision", "fake-revision-2"),
+                                   ("dimension", 8)):
+            with self.subTest(field=field):
+                service.state.embedding_overrides = {field: wrong_value}
+                status, evidence = self.run_probe(service.endpoint, extra=expected)
+                self.assertEqual(status, 1)
+                self.assertEqual(evidence["failures"], ["vector_identity"])
+                check = next(check for check in evidence["checks"]
+                             if check["name"] == "vector_identity")
+                self.assertIn(f"embedding.{field}", check["error"])
+        status, evidence = self.run_probe(service.endpoint)
+        self.assertEqual(status, 0)
+        self.assertNotIn("embedding", evidence["expectation"])
+        service.state.embedding_overrides = {}
+        service.state.omit_embedding_from_vector_manifest = True
+        status, evidence = self.run_probe(service.endpoint, extra=expected)
+        self.assertEqual(status, 1)
+        self.assertEqual(evidence["failures"], ["vector_identity"])
+
     def test_down_phase_passes_when_backend_is_really_down(self):
         service = self.service(backend_up=False)
         status, evidence = self.run_probe(service.endpoint, phase="down")
@@ -612,6 +647,25 @@ class ProbeIsolationTest(unittest.TestCase):
                                  "--expect-dataset", DATASET, "--expect-n-docs", str(N_DOCS),
                                  "--query", QUERY])
         self.assertEqual(raised.exception.code, 2)
+
+    def test_embedding_options_reject_partial_invalid_and_lexical_expectations(self):
+        expected = ("--expect-embedding-model-id", "fake-pinned-embedder",
+                    "--expect-embedding-revision", "fake-revision-1",
+                    "--expect-embedding-dimension", "4")
+        cases = (
+            (False, expected[:4], "必须同时给出 --expect-embedding-model-id"),
+            (False, (*expected[:3], "LATEST", *expected[4:]), "固定 revision"),
+            (False, (*expected[:-1], "0"), "必须是正整数"),
+            (True, expected, "--lexical-only 不接受编码器身份参数"),
+        )
+        for lexical_only, extra, message in cases:
+            with self.subTest(lexical_only=lexical_only, extra=extra):
+                with contextlib.redirect_stderr(io.StringIO()) as stderr:
+                    with self.assertRaises(SystemExit) as raised:
+                        acceptance.main(probe_argv("http://127.0.0.1:1", "/dev/null",
+                                                   lexical_only=lexical_only, extra=extra))
+                self.assertEqual(raised.exception.code, 2)
+                self.assertIn(message, stderr.getvalue())
 
     def test_lexical_only_rejects_recovered_phase(self):
         with contextlib.redirect_stderr(io.StringIO()):
