@@ -11,13 +11,13 @@ from evaluation.audit_delivery_corpus import audit
 def test_contract_parity_order_and_mutation_fail_closed(tmp_path):
     docs = [SimpleNamespace(doc_id='甲', title='标题', text='第一篇'),
             SimpleNamespace(doc_id='乙', title='', text='第二篇')]
-    reader = SimpleNamespace(n_docs=len(docs), doc=lambda i: docs[i])
+    reader = SimpleNamespace(n_docs=len(docs), doc=lambda i: SimpleNamespace(docid=i, **vars(docs[i])))
     spec = EmbeddingSpec('fixture', 'pinned', 2)
     manifest = VectorManifest(corpus_fingerprint(reader), 2, spec, 'fixture')
     mp, cp, out = (tmp_path / x for x in ('manifest', 'corpus', 'report'))
     mp.write_text(json.dumps(manifest.to_dict()))
     def write(rows):
-        cp.write_text(''.join(json.dumps(vars(d), ensure_ascii=False) + '\n' for d in rows))
+        cp.write_text(''.join(json.dumps(vars(d), ensure_ascii=False) + '\n' for d in rows), encoding='utf-8')
     write(docs)
     result = audit(cp, mp, out)
     assert result['corpus_contract_fingerprint'] == corpus_fingerprint(reader)

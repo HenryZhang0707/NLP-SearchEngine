@@ -10,7 +10,7 @@ from evaluation import audit_delivery_qdrant as mod
 @pytest.mark.parametrize('fault', [None, 'payload', 'order', 'missing', 'extra', 'notindexed'])
 def test_full_scroll_identity_fail_closed(tmp_path, monkeypatch, fault):
     docs = [SimpleNamespace(doc_id=f'id-{i}', title='', text=f'文档{i}') for i in range(3)]
-    reader = SimpleNamespace(n_docs=3, doc=lambda i: docs[i])
+    reader = SimpleNamespace(n_docs=3, doc=lambda i: SimpleNamespace(docid=i, **vars(docs[i])))
     manifest = VectorManifest(corpus_fingerprint(reader), 3,
                               EmbeddingSpec('fixture', 'pinned', 2), 'fixture')
     cp, mp, out = (tmp_path / n for n in ('corpus', 'manifest', 'report'))

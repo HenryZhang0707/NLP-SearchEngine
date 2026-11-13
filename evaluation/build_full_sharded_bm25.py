@@ -5,7 +5,6 @@ Shard-local statistics are build artifacts, not valid global BM25 scores.
 """
 import argparse
 from concurrent.futures import ThreadPoolExecutor
-import fcntl
 import json
 from pathlib import Path
 import subprocess
@@ -14,6 +13,7 @@ import time
 
 from contracts import analyzer
 from contracts.index_format import REQUIRED_FILES, load_manifest, sha256_of
+from evaluation.artifact_lock import exclusive_artifact_lock
 
 
 def verified(directory, dataset):
@@ -53,8 +53,7 @@ def main():
     parser.add_argument('--workers', type=int, choices=(1, 2, 3), default=1)
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
-    with (args.out / '.build.lock').open('a') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    with exclusive_artifact_lock(args.out / '.build.lock'):
         parts = sorted(args.corpus_dir.glob('part-*'))
         if not parts:
             raise ValueError('no corpus shards')
@@ -64,7 +63,8 @@ def main():
                      for i, p in enumerate(parts)]
         report = {'shards': len(parts), 'documents': sum(m.n_docs for m in manifests),
                   'files_sha256_verified': True, 'global_scoring_ready': False}
-        (args.out / 'build-summary.json').write_text(json.dumps(report, indent=2) + '\n')
+        (args.out / 'build-summary.json').write_text(
+            json.dumps(report, indent=2) + '\n', encoding='utf-8', newline='\n')
         print(json.dumps(report), flush=True)
 
 
