@@ -136,7 +136,10 @@ def validate_identities(plan, identities):
             "Client service identity coverage differs from plan")
     shared = None
     for arm in plan["arms"]:
-        identity = service_identity(identities[arm["label"]], plan["corpus_sha256"], arm["policy_version"])
+        observed = identities[arm["label"]]
+        require(arm["mode"] != "hybrid" or "reranker" not in observed,
+                "Use evaluation.ce_http for a CE-enabled hybrid arm")
+        identity = service_identity(observed, plan["corpus_sha256"], arm["policy_version"])
         if "identity_sha256" in arm:
             require(identity_digest(identity) == arm["identity_sha256"],
                     f"Effective service identity differs from the frozen digest for {arm['label']}")
@@ -162,8 +165,11 @@ def get_identities(plan):
                 value = read_object(response.read())
             retrieval = value["retrieval"]
             require(retrieval["vector_ready"] is True, "Expected a vector-ready HTTP endpoint")
-            by_endpoint[endpoint] = service_identity(retrieval, plan["corpus_sha256"], arm["policy_version"])
-        identities[arm["label"]] = by_endpoint[endpoint]
+            by_endpoint[endpoint] = retrieval
+        retrieval = by_endpoint[endpoint]
+        require(arm["mode"] != "hybrid" or "reranker" not in retrieval,
+                "Use evaluation.ce_http for a CE-enabled hybrid arm")
+        identities[arm["label"]] = service_identity(retrieval, plan["corpus_sha256"], arm["policy_version"])
     validate_identities(plan, identities)
     return identities
 
@@ -330,6 +336,10 @@ def verify(plan, digest, journal, paths, run_dir=None):
         log_digest, logged = logs[endpoint]
         require(tag in logged, f"Missing server event for {tag}")
         (line, startup), row = logged[tag]
+        require(arm["mode"] != "hybrid" or (
+            "reranker" not in startup and "rerank" not in row
+            and "rerank" not in (row.get("timings_ms") or {})),
+            "Use evaluation.ce_http for a CE-enabled hybrid arm")
         if endpoint not in startup_lines:
             startup_lines[endpoint] = line
             require(service_identity(startup, plan["corpus_sha256"], arm["policy_version"]) == identities[label],

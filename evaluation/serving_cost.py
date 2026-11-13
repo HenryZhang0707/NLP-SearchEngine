@@ -174,6 +174,9 @@ def summarize_run(sidecar, server_log):
             "Invalid adaptive dense request policy")
     tag = receipt["request"]["run_tag"]
     startup, startup_line, logged, log_hash, untagged, other_tag = read_server_log(server_log, tag)
+    require(mode != "hybrid" or ("reranker" not in startup and all(
+        "rerank" not in row and "rerank" not in (row.get("timings_ms") or {}) for row in logged)),
+        "Use evaluation.ce_http for a CE-enabled hybrid run")
     outcomes = receipt["outcomes"]
     require(len(logged) == len(outcomes),
             f"Exact HTTP tag count disagreement (server {len(logged)}, evaluator {len(outcomes)})")
