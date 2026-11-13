@@ -21,6 +21,9 @@
 
 - [ ] 维护者评审并决定同组 PR 的合并顺序，保留 offline 与 Router 的联合测试。RFC-0004 的全量验证和隔离联合检查均已完成，统一交付到既有 [PR #8](https://github.com/ShwStone/NLP-SearchEngine/pull/8) 与 [Issue #6](https://github.com/ShwStone/NLP-SearchEngine/issues/6)。抓取/清洗实现按数据模块协作评审；实际合并和线上部署由团队单独安排。
 
+- [x] **RFC-0002 自爬实测复评工具**。从盲审包、完整评分与分歧裁决生成可核验的 qrels，沿用冻结的四臂 HTTP 排名，在 150 条测试查询上复算判定覆盖和配对区间。见[复评命令](docs/contributions/rfc0002-news20k-dataset-card.md#人工评分复评)。
+- [ ] **RFC-0002 自爬实测结果**。回收四份完整盲审评分，完成分歧裁决，冻结人工 qrels 和导入凭据，再用复评工具生成正式结果。
+
 ## 证据边界
 
 - 官方公开基线的判定来自 dev。808 条留出查询来自该集合。开题报告中的 100001/2000/9839 是团队提出的目标快照，来源见 [资源记录](evaluation/RESOURCES.md)。

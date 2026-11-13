@@ -35,6 +35,35 @@
 
 四组各 150 条正式 test 请求的 Top-10 均为 1,500/1,500 个位置有判定。Top-100 每组共 15,000 个位置，其中 lexical 已判 4,499 个（29.99%）、dense 4,215 个（28.10%）、hybrid 6,159 个（41.06%）、adaptive 4,812 个（32.08%）。Top-10 覆盖率受参评系统参与建池影响。复用同一语料评估新排序器时，应单独报告新 run 的判定覆盖。
 
+独立人工评分沿用同一候选池。四位评分者覆盖全部 8,281 对，其中 1,656 对独立重叠。收齐评分并裁决后，通过[导入与复评命令](#人工评分复评)生成新 qrels，复算同一批四模式排名的质量、覆盖和区间。保留历史辅助判定的数据版本及结果。
+
+## 人工评分复评
+
+冻结的盲审包每行包含 `pair_id`、查询、标题和正文。协调者保管原始映射和四人分配计划，评分者提交各自分配中的每一行，格式为 `{"pair_id":"...","relevance":0}`，等级只能取 0、1 或 2。将以下参数设置为已交付的盲审包、私有映射、计划及其预先记录的 SHA-256。
+
+```bash
+review_args=(
+  --packet "$PACKET" --private-map "$PRIVATE_MAP"
+  --plan "$PLAN" --plan-sha256 "$PLAN_SHA256"
+  --reviewer reviewer-a "$GRADES_A" --reviewer reviewer-b "$GRADES_B"
+  --reviewer reviewer-c "$GRADES_C" --reviewer reviewer-d "$GRADES_D"
+)
+python -m evaluation.annotation_intake "${review_args[@]}" \
+  --prepare-adjudication disputes.jsonl adjudication-template.jsonl pre-adjudication.json
+```
+
+评分分歧由独立裁决者复核。把模板复制到新文件，将各行的空等级填为 0、1 或 2。没有分歧时省去下列命令的 `--adjudication` 参数。首次构建盲审包可用 `python -m evaluation.annotation_packet --help` 查看输入契约。
+
+```bash
+python -m evaluation.annotation_intake "${review_args[@]}" \
+  --adjudication adjudicated.jsonl --qrels news-human.qrels.tsv --receipt intake.json
+python -m evaluation.score_news_review "$NEWS_EVIDENCE_ROOT" \
+  --qrels news-human.qrels.tsv --intake intake.json \
+  --intake-sha256 "$TRUSTED_INTAKE_SHA256" --out news-human-test-summary.json
+```
+
+协调者在导入时记录 `intake.json` 的可信 SHA-256，评分阶段使用该记录验证输入身份。复评校验 8,281 对的精确覆盖与冻结的四份排名，报告 150 条留出查询的四项指标、Top-10/100 判定覆盖，以及 adaptive 减 hybrid 的配对区间（10,000 次，seed 20261028）。运行沿用原始 HTTP 排名。提交记录、私有映射、qrels 与单次运行输出留在 Git 外。
+
 ## 撤回和更新
 
 1. 维护者在私下接收更正、撤回或敏感信息报告，以有权限读取的 sidecar 将来源定位到稳定文档 ID。若同时存在近重复或多次抓取，逐一确认影响，避免自动认定副本可替代源文档。未经确认的内容不纳入下一次演示或发布。

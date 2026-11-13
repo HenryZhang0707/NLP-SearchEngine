@@ -3,6 +3,7 @@ import argparse
 from collections import Counter
 import hashlib
 import json
+import math
 from pathlib import Path
 from statistics import median
 import unicodedata
@@ -16,6 +17,7 @@ QUERY_EXPORT_MANIFEST_SHA256 = "92814c7852e0af3d70ff1b539ca3f57d9c56b622dce1fd63
 QRELS_MANIFEST_SHA256 = "fdcdc39b91388b7e48b58fbbbbfecab7206f756542ead1d49a6904912a1c5214"
 OFFICIAL_FREEZE_SHA256 = "7e8e1ad7ea7f47a6ac4279ae92009d7c1a61682c4a58185266ac387005273c3a"
 RUN_STATE_SHA256 = "6f03d13cfd69e5984bcaf7e916d207179978962e136ecd8155af3ed65ba0eed9"
+NEWS_ARMS = ("lexical", "dense", "hybrid", "adaptive")
 
 
 def require(condition, description):
@@ -242,32 +244,45 @@ def qrel_stats(directory, pool_directory, queries, splits, documents, query_hash
     return results, pair_sets["all" if all_pairs else "test"]
 
 
-def ranked_coverage(directory, qrels, qrel_hash, test_ids):
+def load_frozen_rankings(directory, qrel_hash, test_ids):
     state = read_json(directory / "run-state.json", RUN_STATE_SHA256)
     require(state["qrels_manifest_sha256"] == qrel_hash, "TREC runs refer to other qrels")
-    results = {}
-    for arm in ("lexical", "dense", "hybrid", "adaptive"):
+    runs = {}
+    for arm in NEWS_ARMS:
         path = directory / f"{arm}.trec"
-        check_hash(path, state["arms"][arm]["sha256"])
-        counts = {10: Counter(), 100: Counter()}
-        depth = Counter()
+        payload = path.read_bytes()
+        require(hashlib.sha256(payload).hexdigest() == state["arms"][arm]["sha256"],
+                f"SHA-256 mismatch for {path.name}")
+        run = {}
         seen = set()
-        with path.open(encoding="utf-8") as source:
-            for line in source:
-                qid, _, doc_id, rank, _, _ = line.split()
-                depth[qid] += 1
-                require(int(rank) == depth[qid] and (qid, doc_id) not in seen,
-                        "Invalid TREC order or repeated document")
-                seen.add((qid, doc_id))
-                if (qid, doc_id) in qrels:
-                    for cutoff in counts:
-                        if int(rank) <= cutoff:
-                            counts[cutoff][qid] += 1
-        require(set(depth) == set(test_ids) and all(value == 100 for value in depth.values()),
+        for line in payload.decode("utf-8").splitlines():
+            qid, iteration, doc_id, rank, score, _ = line.split()
+            ranked = run.setdefault(qid, [])
+            require(iteration == "Q0" and int(rank) == len(ranked) + 1
+                    and math.isfinite(float(score)) and (qid, doc_id) not in seen,
+                    "Invalid TREC row, order or repeated document")
+            seen.add((qid, doc_id))
+            ranked.append(doc_id)
+        require(set(run) == set(test_ids) and all(len(ranked) == 100 for ranked in run.values()),
                 "TREC result depth or query coverage mismatch")
-        results[arm] = {cutoff: {"judged": sum(tally.values()), "slots": cutoff * len(depth)}
-                        for cutoff, tally in counts.items()}
-    return results
+        runs[arm] = run
+    return state, runs
+
+
+def coverage_for_rankings(runs, judged_pairs):
+    return {
+        arm: {
+            cutoff: {"judged": sum((qid, doc_id) in judged_pairs for qid, ranked in run.items()
+                                  for doc_id in ranked[:cutoff]),
+                     "slots": cutoff * len(run)}
+            for cutoff in (10, 100)
+        } for arm, run in runs.items()
+    }
+
+
+def ranked_coverage(directory, qrels, qrel_hash, test_ids):
+    _, runs = load_frozen_rankings(directory, qrel_hash, test_ids)
+    return coverage_for_rankings(runs, qrels)
 
 
 def audit(root, official_corpus=None):
