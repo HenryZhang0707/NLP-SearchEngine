@@ -1844,6 +1844,7 @@
     "PR #9 and Issue #3 have not been updated yet.",
     "HTTP p95 values were measured with concurrent full-corpus jobs and should be reported with that runtime-load qualification.",
     "The full-corpus quality guard activates fixed CE-33 because learned Router nDCG regresses by 0.01708 versus independently scored same-budget fixed CE-33.",
-    "Final PR/Issue publication and remote status verification are still pending."
+    "Final PR/Issue publication and remote status verification are still pending.",
+    "HTTP exact prediction parity is 100% for all policies except fixed-pair-budget, whose offline cache uses CE-40 prefix; fixed-pair quality is taken from the separately executed CE-33/CE-24 controls and HTTP timings execute the true fixed budget."
   ]
 }
