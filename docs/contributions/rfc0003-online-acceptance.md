@@ -70,6 +70,29 @@ $PY -B -m evaluation.evaluate --qrels <qrels> --queries <queries> --endpoint <ur
 `embedding.revision=7999e1d33597…`、`bm25={k1:1.2,b:0.75,idf:log1p-lucene}`；
 日志中没有查询文本、请求头或凭据（对服务日志检索查询子串结果为空，也没有 traceback）。
 
+### 公开部署切换后的发布身份复验
+
+部署负责人切换到冻结的新闻双索引后，使用现有 HTTP 探针验收公开站点。语料、
+Qdrant collection 与编码器来自[冻结发布配置](../online-serving.md)，检索参数与
+规则策略沿用上表。三个编码器参数须同时提供，探针会逐项核对回显，并将预期身份
+写入收据。该命令只执行 healthy 阶段。
+
+```bash
+python3 scripts/online_acceptance.py \
+  --endpoint https://search.shwstone.cn --phase healthy --require-instance-id \
+  --expect-dataset rfc4-clean-news-20k --expect-n-docs 20000 \
+  --expect-corpus-sha256 1480ab10cbefcb57bc1132871420b1f88d18ac5f260150080953f9441377a861 \
+  --expect-collection news_rfc4_clean20k --expect-hnsw-ef 256 \
+  --expect-candidate-k 200 --expect-rrf-c 60 --expect-policy-version rules-v1 \
+  --expect-embedding-model-id BAAI/bge-small-zh-v1.5 \
+  --expect-embedding-revision 7999e1d3359715c523056ef9478215996d62a620 \
+  --expect-embedding-dimension 512 \
+  --query '秦山核电如何在发电的同时生产医用同位素？' \
+  --run-tag news20k-public-release --out /tmp/accept/news20k-public.json
+```
+
+### 已完成的本地三阶段验收
+
 三阶段用**同一个服务进程**（PID 不变），后端由专用本地 TCP 转发代理模拟：
 
 | 阶段 | 操作 | 结果 |

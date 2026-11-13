@@ -67,7 +67,7 @@ class GainRouter:
         else:
             raise ValueError('unknown router model')
 
-    def check_binding(self, reader, config, vectors):
+    def check_retrieval_binding(self, reader, config, vectors):
         source = self.model['provenance']['source']
         expected = source['source_manifest']
         if config.candidate_k!=source['candidate_k'] or config.rrf_c!=source['rrf_c']:

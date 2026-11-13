@@ -10,6 +10,7 @@ import ast
 import contextlib
 import io
 import json
+import os
 import socket
 import subprocess
 import sys
@@ -36,6 +37,7 @@ OOV_TOKEN = "zzqx"
 ALL_DOC_IDS = [f"fake-doc-{index:02d}" for index in range(30)]
 ALLOWED_FIELDS = frozenset({"query", "mode", "k", "offset", "scorer", "expander", "run_tag"})
 MODES = ("lexical", "dense", "hybrid", "adaptive")
+INSTANCE = "a" * 32
 
 
 class BadRequest(ValueError):
@@ -74,6 +76,12 @@ class FakeState:
                                        else identity_corpus_sha256)
         self.analyzer_hash = identity_analyzer_hash
         self.identity_bm25 = identity_bm25
+        self.instance_id = None
+        self.error_instance_id = None
+        self.redirect_health = False
+        self.redirect_followed = False
+        self.embedding_overrides = {}
+        self.omit_embedding_from_vector_manifest = False
 
     def manifest(self):
         manifest = {
@@ -97,6 +105,7 @@ class FakeState:
                 "model_id": "fake-pinned-embedder", "revision": "fake-revision-1",
                 "dimension": 4, "max_tokens": 512, "normalize": True, "distance": "cosine",
                 "document_template": "title\ntext", "query_prefix": "", "document_prefix": "",
+                **self.embedding_overrides,
             },
             "collection": self.collection,
             "backend": "qdrant-hnsw",
@@ -111,6 +120,8 @@ class FakeState:
             vector_identity = dict(manifest, search={
                 "hnsw_ef": self.hnsw_ef, "exact": False, "timeout_s": 30.0,
             })
+            if self.omit_embedding_from_vector_manifest:
+                del manifest["embedding"]
         return {
             "vector_ready": self.vector_configured,
             "config": {"candidate_k": self.candidate_k, "rrf_c": self.rrf_c,
@@ -255,6 +266,11 @@ def make_handler(state):
             self.send_response(code)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
+            instance = state.instance_id
+            if code >= 400 and state.error_instance_id is not None:
+                instance = state.error_instance_id
+            if instance is not None:
+                self.send_header(acceptance.INSTANCE_HEADER, instance)
             self.end_headers()
             self.wfile.write(body)
 
@@ -266,7 +282,13 @@ def make_handler(state):
             path = urlsplit(self.path).path
             if path == "/":
                 self._send_bytes(200, b"<!doctype html><title>fake</title>", "text/html; charset=utf-8")
-            elif path == "/health":
+            elif path == "/health" and state.redirect_health:
+                self.send_response(302)
+                self.send_header("Location", "/redirect-target")
+                self.end_headers()
+            elif path in {"/health", "/redirect-target"}:
+                if path == "/redirect-target":
+                    state.redirect_followed = True
                 self._send(200, {"status": "ok", "index": {
                     "dataset": state.dataset, "n_docs": state.n_docs,
                     "schema_version": 1, "analyzer_hash": state.analyzer_hash,
@@ -334,12 +356,12 @@ class OnlineAcceptanceTest(unittest.TestCase):
         self.addCleanup(service.close)
         return service
 
-    def run_probe(self, endpoint, *, phase="healthy", lexical_only=False, out=None):
+    def run_probe(self, endpoint, *, phase="healthy", lexical_only=False, out=None, extra=()):
         out = out or self.out
         # 探针把逐条 PASS/FAIL 打到 stdout；这里捕获，避免预期失败的用例污染测试输出。
         with contextlib.redirect_stdout(io.StringIO()) as summary:
             status = acceptance.main(probe_argv(endpoint, out, phase=phase,
-                                                lexical_only=lexical_only))
+                                                lexical_only=lexical_only, extra=extra))
         self.last_summary = summary.getvalue()
         self.assertIn("证据", self.last_summary)
         return status, json.loads(out.read_text(encoding="utf-8"))
@@ -363,6 +385,7 @@ class OnlineAcceptanceTest(unittest.TestCase):
                      "candidate_boundary", "syntax_error"):
             self.assertIn(name, names)
         self.assertEqual(evidence["failures"], [])
+        self.assertNotIn("instance_binding", evidence)
         self.assertTrue(all(check["status"] == "PASS" for check in evidence["checks"]))
         search_events = [event for event in evidence["events"] if event["path"] == "/search"]
         self.assertTrue(search_events)
@@ -372,6 +395,52 @@ class OnlineAcceptanceTest(unittest.TestCase):
         self.assertGreaterEqual(len(tagged), 20)
         self.assertTrue(all(event["request"]["run_tag"] == "online-acceptance"
                             for event in tagged))
+
+    def test_strict_instance_is_bound_across_all_three_phases(self):
+        service = self.service()
+        service.state.instance_id = INSTANCE
+        status, healthy = self.run_probe(service.endpoint, extra=("--require-instance-id",))
+        self.assertEqual(status, 0, healthy["failures"])
+        self.assertEqual(healthy["instance_binding"]["verified_id"], INSTANCE)
+        expected = ("--expect-instance-id", healthy["instance_binding"]["verified_id"])
+        service.state.backend_up = False
+        status, down = self.run_probe(service.endpoint, phase="down", extra=expected)
+        self.assertEqual(status, 0, down["failures"])
+        self.assertEqual(down["instance_binding"]["verified_id"], INSTANCE)
+        service.state.backend_up = True
+        status, recovered = self.run_probe(service.endpoint, phase="recovered", extra=expected)
+        self.assertEqual(status, 0, recovered["failures"])
+        self.assertEqual(recovered["instance_binding"]["verified_id"], INSTANCE)
+        service.state.instance_id = "b" * 32
+        status, restarted = self.run_probe(service.endpoint, phase="recovered", extra=expected)
+        self.assertEqual(status, 1)
+        self.assertIn("health_is_lexical_liveness", restarted["failures"])
+        self.assertIsNone(restarted["instance_binding"]["verified_id"])
+
+    def test_strict_instance_rejects_missing_header_and_changed_error_response(self):
+        service = self.service(backend_up=False)
+        strict = ("--require-instance-id",)
+        status, evidence = self.run_probe(service.endpoint, phase="down", extra=strict)
+        self.assertEqual(status, 1)
+        self.assertIn("health_is_lexical_liveness", evidence["failures"])
+        self.assertIsNone(evidence["instance_binding"]["verified_id"])
+        service.state.instance_id = INSTANCE
+        service.state.error_instance_id = "b" * 32
+        status, evidence = self.run_probe(service.endpoint, phase="down", extra=strict)
+        self.assertEqual(status, 1)
+        self.assertNotIn("health_is_lexical_liveness", evidence["failures"])
+        self.assertIn("dense_unavailable_503", evidence["failures"])
+        self.assertIsNone(evidence["instance_binding"]["verified_id"])
+
+    def test_strict_instance_refuses_redirect_before_following_it(self):
+        service = self.service()
+        service.state.instance_id = INSTANCE
+        service.state.redirect_health = True
+        status, evidence = self.run_probe(service.endpoint, extra=("--require-instance-id",))
+        self.assertEqual(status, 1)
+        self.assertIn("health_is_lexical_liveness", evidence["failures"])
+        self.assertFalse(service.state.redirect_followed)
+        self.assertIsNone(evidence["instance_binding"]["verified_id"])
 
     def test_identity_mismatch_fails_each_expected_field(self):
         cases = (
@@ -389,6 +458,36 @@ class OnlineAcceptanceTest(unittest.TestCase):
                 self.assertEqual(status, 1)
                 self.assertEqual(evidence["status"], "FAIL")
                 self.assertIn(check_name, self.failure_names(evidence))
+
+    def test_release_embedding_must_match_even_when_service_echoes_agree(self):
+        service = self.service()
+        expected = ("--expect-embedding-model-id", "fake-pinned-embedder",
+                    "--expect-embedding-revision", "fake-revision-1",
+                    "--expect-embedding-dimension", "4")
+        status, evidence = self.run_probe(service.endpoint, extra=expected)
+        self.assertEqual(status, 0)
+        self.assertEqual(evidence["expectation"]["embedding"],
+                         {"model_id": "fake-pinned-embedder",
+                          "revision": "fake-revision-1", "dimension": 4})
+        for field, wrong_value in (("model_id", "other-embedder"),
+                                   ("revision", "fake-revision-2"),
+                                   ("dimension", 8)):
+            with self.subTest(field=field):
+                service.state.embedding_overrides = {field: wrong_value}
+                status, evidence = self.run_probe(service.endpoint, extra=expected)
+                self.assertEqual(status, 1)
+                self.assertEqual(evidence["failures"], ["vector_identity"])
+                check = next(check for check in evidence["checks"]
+                             if check["name"] == "vector_identity")
+                self.assertIn(f"embedding.{field}", check["error"])
+        status, evidence = self.run_probe(service.endpoint)
+        self.assertEqual(status, 0)
+        self.assertNotIn("embedding", evidence["expectation"])
+        service.state.embedding_overrides = {}
+        service.state.omit_embedding_from_vector_manifest = True
+        status, evidence = self.run_probe(service.endpoint, extra=expected)
+        self.assertEqual(status, 1)
+        self.assertEqual(evidence["failures"], ["vector_identity"])
 
     def test_down_phase_passes_when_backend_is_really_down(self):
         service = self.service(backend_up=False)
@@ -549,6 +648,25 @@ class ProbeIsolationTest(unittest.TestCase):
                                  "--query", QUERY])
         self.assertEqual(raised.exception.code, 2)
 
+    def test_embedding_options_reject_partial_invalid_and_lexical_expectations(self):
+        expected = ("--expect-embedding-model-id", "fake-pinned-embedder",
+                    "--expect-embedding-revision", "fake-revision-1",
+                    "--expect-embedding-dimension", "4")
+        cases = (
+            (False, expected[:4], "必须同时给出 --expect-embedding-model-id"),
+            (False, (*expected[:3], "LATEST", *expected[4:]), "固定 revision"),
+            (False, (*expected[:-1], "0"), "必须是正整数"),
+            (True, expected, "--lexical-only 不接受编码器身份参数"),
+        )
+        for lexical_only, extra, message in cases:
+            with self.subTest(lexical_only=lexical_only, extra=extra):
+                with contextlib.redirect_stderr(io.StringIO()) as stderr:
+                    with self.assertRaises(SystemExit) as raised:
+                        acceptance.main(probe_argv("http://127.0.0.1:1", "/dev/null",
+                                                   lexical_only=lexical_only, extra=extra))
+                self.assertEqual(raised.exception.code, 2)
+                self.assertIn(message, stderr.getvalue())
+
     def test_lexical_only_rejects_recovered_phase(self):
         with contextlib.redirect_stderr(io.StringIO()):
             with self.assertRaises(SystemExit) as raised:
@@ -559,8 +677,9 @@ class ProbeIsolationTest(unittest.TestCase):
 
     def test_help_exits_zero(self):
         result = subprocess.run(
-            [sys.executable, "-B", str(ROOT / "scripts" / "online_acceptance.py"), "--help"],
-            capture_output=True, text=True, timeout=60)
+            [sys.executable, "-B", "-X", "utf8", str(ROOT / "scripts" / "online_acceptance.py"),
+             "--help"],
+            capture_output=True, encoding="utf-8", timeout=60)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("--endpoint", result.stdout)
         self.assertIn("--phase", result.stdout)
@@ -568,12 +687,12 @@ class ProbeIsolationTest(unittest.TestCase):
     def test_optimized_interpreter_is_refused_instead_of_passing(self):
         # -O 剥离 assert；探针必须拒绝运行，而不是把失败服务报成 PASS。
         result = subprocess.run(
-            [sys.executable, "-B", "-O",
+            [sys.executable, "-B", "-X", "utf8", "-O",
              str(ROOT / "scripts" / "online_acceptance.py"),
-             "--endpoint", "http://127.0.0.1:1", "--out", "/dev/null",
+             "--endpoint", "http://127.0.0.1:1", "--out", os.devnull,
              "--lexical-only", "--expect-dataset", DATASET,
              "--expect-n-docs", str(N_DOCS), "--query", QUERY],
-            capture_output=True, text=True, timeout=60)
+            capture_output=True, encoding="utf-8", timeout=60)
         self.assertEqual(result.returncode, 2, result.stdout)
         self.assertIn("优化", result.stderr)
 

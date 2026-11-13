@@ -107,6 +107,47 @@ test("HTTP failures clear the previous successful search facts", async () => {
   assert.equal(nodes["#error"].textContent, "vector unavailable");
 });
 
+test("non-JSON HTTP failures fall back to the HTTP status", async () => {
+  await successfulSearch();
+  context.fetch = async () => ({
+    ok: false, status: 503, json: async () => { throw new SyntaxError("invalid JSON"); },
+  });
+  await context.search({ preventDefault() {} });
+  assertFailedSearchIsCleared();
+  assert.equal(nodes["#error"].textContent, "请求失败（HTTP 503）");
+});
+
+test("malformed successful responses clear the previous successful search facts", async () => {
+  const invalidBodies = [
+    async () => { throw new SyntaxError("invalid JSON"); },
+    async () => ({ routing: { executed_mode: "dense" } }),
+    async () => ({ results: {} }),
+  ];
+  for (const json of invalidBodies) {
+    await successfulSearch();
+    context.fetch = async () => ({ ok: true, status: 200, json });
+    await context.search({ preventDefault() {} });
+    assertFailedSearchIsCleared();
+    assert.equal(nodes["#error"].textContent, "搜索响应格式无效");
+  }
+});
+
+test("a valid empty search response displays zero results", async () => {
+  await successfulSearch();
+  context.fetch = async () => ({
+    ok: true,
+    json: async () => ({
+      api_version: "2.0", took_ms: 2, parsed: {}, expanded: [],
+      results: [], routing: { executed_mode: "hybrid" }, timings_ms: {},
+    }),
+  });
+  await context.search({ preventDefault() {} });
+  assert.equal(nodes["#status"].textContent, "检索完成，返回 0 条结果");
+  assert.match(nodes["#results"].innerHTML, /没有找到结果/);
+  assert.equal(nodes["#observability"].hidden, false);
+  assert.equal(nodes["#error"].hidden, true);
+});
+
 test("render failures clear partially rendered routing and timing facts", async () => {
   await successfulSearch();
   context.fetch = async () => ({

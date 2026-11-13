@@ -190,7 +190,9 @@ serialization_ms, http elapsed
 ```
 
 隐私边界：日志**不**包含查询文本、请求头、完整异常堆栈或任何凭据；只记录工程元数据。
-评测器当前不发送 `run_tag`，所以评测请求在日志里 `run_tag` 为空是预期行为，不表示请求丢失。
+用 `evaluation.evaluate --request-tag` 指定单次评测的标签，再用
+`evaluation.serving_cost` 对账。`evaluation.paired_http` 为每个预热和正式请求生成独立标签，
+并在校验时要求所有标签恰好出现一次。未指定标签的请求在日志中保留空值。
 同一份日志不含 `/search` 请求体，排查质量问题时不要指望从中重建查询。
 
 ## 8. 公开 HTTP 验收脚本
@@ -207,16 +209,18 @@ NEWS_ARGS=(--endpoint http://127.0.0.1:8000 \
   --expect-collection news_rfc4_clean20k --expect-hnsw-ef 256 \
   --query '秦山核电如何在发电的同时生产医用同位素？')
 
-# 阶段 1：后端在线的完整矩阵
-python3 scripts/online_acceptance.py "${NEWS_ARGS[@]}" --phase healthy \
-  --out /tmp/accept/healthy.json
+# 阶段 1：后端在线的完整矩阵，记录服务实例
+python3 scripts/online_acceptance.py "${NEWS_ARGS[@]}" --phase healthy --require-instance-id \
+  --out /tmp/accept/healthy.json || exit 1
+INSTANCE_ID="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["instance_binding"]["verified_id"])' \
+  < /tmp/accept/healthy.json)" || exit 1
 
 # 阶段 2：停掉向量后端（不要重启服务进程），核对 503 与显式回退
-python3 scripts/online_acceptance.py "${NEWS_ARGS[@]}" --phase down \
-  --out /tmp/accept/down.json
+python3 scripts/online_acceptance.py "${NEWS_ARGS[@]}" --phase down --expect-instance-id "$INSTANCE_ID" \
+  --out /tmp/accept/down.json || exit 1
 
 # 阶段 3：重启后端（服务进程仍不动），核对语义模式恢复
-python3 scripts/online_acceptance.py "${NEWS_ARGS[@]}" --phase recovered \
+python3 scripts/online_acceptance.py "${NEWS_ARGS[@]}" --phase recovered --expect-instance-id "$INSTANCE_ID" \
   --out /tmp/accept/recovered.json
 ```
 
@@ -229,6 +233,10 @@ fallback，以及 recovered 阶段无需重启服务的恢复。
 
 - 退出码 `0` 表示全部检查通过，`1` 表示至少一项失败；证据 JSON 里 `checks`/`events`/`failures`
   逐项可查，`scope` 明确写了"不是质量基准"。
+- `--require-instance-id` 对每个响应校验唯一且一致的 `X-Search-Instance`，包括预期的
+  400、404、503，并拒绝 HTTP 重定向。`--expect-instance-id` 自动启用同样的校验，并锁定到
+  healthy 收据 `instance_binding.verified_id` 记录的实例。代理须把该响应头原样传到客户端。
+  两个选项都省略时适用于尚未返回该响应头的服务，此时收据仅覆盖单次 HTTP 契约验收。
 - 向量 profile 要求显式 `--expect-hnsw-ef`：先固定搜索 beam（示例为 256）再验收；
   省略 beam 的部署 `search.hnsw_ef` 回显为 `null`，没有可断言的值，无法给出 HNSW 搜索参数证据。
 - 纯词法 profile 用 `--lexical-only`：脚本不再要求 collection/`hnsw_ef` 期望，改为核对
@@ -273,7 +281,7 @@ python3 -B -m unittest tests.test_serving_config tests.test_observability \
 | `/health` 正常但语义全挂 | `/index/info` 的 `vector_ready` 与后端进程 | liveness ≠ readiness；`vector_ready` 只是启动配置结论 |
 | 请求 4xx（请求体超限）或读取超时 | `max_body_bytes`、`request_timeout_s` | 超限请求在解析前被拒绝，不进入检索；大 `k` 仍受 `candidate_k` 约束 |
 | 端口被占用 | `ss -ltnp` | 单进程单端口；不要杀掉不属于自己的进程 |
-| 日志里 `run_tag` 为空 | 请求是否带 `run_tag` | 评测器目前不发 `run_tag`，这是 0002 的后续接线，不是日志丢事件 |
+| 日志里 `run_tag` 为空 | 请求是否带 `run_tag` | 单模式评测通过 `--request-tag` 启用关联标签 |
 
 ## 10. 规模与证据边界
 
@@ -301,6 +309,5 @@ python3 -B -m unittest tests.test_serving_config tests.test_observability \
 - 没有 expanded-term 高亮、没有来源 URL/侧边栏字段（需要 0002/0004 的文档字段决策）。
 - 没有快照 SHA 的每次启动复核（见第 5 节），也没有后端周期健康探测。
 - 不提供 daemon/PID/systemd 单元；服务以前台方式运行，`Ctrl-C` 停止。
-- 评测器暂不发 `run_tag`，端到端 trace 依赖 0002 的独立改动。
 - 本文与示例配置描述的是 interface 冻结后的服务；若实现回显字段与示例不一致，
   以 `contracts/RETRIEVAL.md` 第 4 节定义为准并更新示例。

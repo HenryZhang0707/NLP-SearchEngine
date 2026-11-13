@@ -4,6 +4,7 @@
 不 import ``online.*`` / ``offline.*``，因此探针进程与服务进程不共享任何状态。
 证据写入调用方指定的 JSON 路径；事件里的查询与请求体都来自调用方参数，
 工具本身不读取、不写入任何凭据。
+向量 profile 可用三个 ``--expect-embedding-*`` 参数绑定发布清单中的编码器身份。
 
 三个阶段的语义（同一个服务进程保持运行）：
 
@@ -17,20 +18,24 @@
 profile 有意义，词法 profile 不假设每个查询都有满页命中。``--query`` 必须是目标语料上
 确实有词法命中的查询，``--oov-query`` 用于构造词法零命中的语义救援场景。每条检查只靠
 ``assert`` 判定，因此在启用优化（``python -O`` / ``PYTHONOPTIMIZE``）的解释器下直接
-拒绝运行。
+拒绝运行。``--require-instance-id`` 核对每个响应的服务实例身份，可把 healthy 收据中的
+实例 ID 传给后续阶段的 ``--expect-instance-id``。
 """
 
 import argparse
 import json
 import math
+import re
 import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
 SCOPE = "公开 HTTP 工程验收；不是质量基准，也不是 HNSW 性能或容量结论"
+INSTANCE_HEADER = "X-Search-Instance"
+INSTANCE_ID = re.compile(r"[0-9a-f]{32}")
 TIMINGS_KEYS = frozenset({"lexical", "router", "encode", "vector", "fusion"})
 SCORE_KIND_BY_EXECUTED = {
     "lexical": ("bm25", "tfidf"),
@@ -46,6 +51,13 @@ REQUIRED_VECTOR_EXPECTATIONS = (
 
 
 @dataclass(frozen=True)
+class EmbeddingExpectation:
+    model_id: str
+    revision: str
+    dimension: int
+
+
+@dataclass(frozen=True)
 class Expectation:
     """调用方声明的服务身份；缺失的期望不会被默默跳过。"""
 
@@ -58,19 +70,30 @@ class Expectation:
     rrf_c: float
     policy_version: str | None
     vector_configured: bool
+    embedding: EmbeddingExpectation | None = None
 
     def expected_vector_used(self, mode):
         return VECTOR_USED_BY_MODE[mode]
 
 
+class NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 class Probe:
-    def __init__(self, endpoint, *, expectation, query, oov_query, run_tag, timeout):
+    def __init__(self, endpoint, *, expectation, query, oov_query, run_tag, timeout,
+                 require_instance_id=False, expect_instance_id=None):
         self.base = endpoint.rstrip("/")
         self.expectation = expectation
         self.query = query
         self.oov_query = oov_query
         self.run_tag = run_tag
         self.timeout = timeout
+        self.expected_instance_id = expect_instance_id
+        self.require_instance_id = require_instance_id or expect_instance_id is not None
+        self.instance_id = None
+        self.open = build_opener(NoRedirect()).open if self.require_instance_id else urlopen
         self.events = []
         self.checks = []
 
@@ -81,13 +104,25 @@ class Probe:
                           headers={"Content-Type": "application/json"})
         started = time.monotonic()
         try:
-            response = urlopen(request, timeout=self.timeout)
+            response = self.open(request, timeout=self.timeout)
         except HTTPError as error:
             response = error
         except (URLError, OSError) as error:
             raise AssertionError(f"HTTP {path} 请求失败: {type(error).__name__}: {error}") from error
         with response:
             status = response.code
+            if self.require_instance_id:
+                if 300 <= status < 400:
+                    raise AssertionError(f"HTTP {path} 重定向被拒绝（{status}）")
+                instances = response.headers.get_all(INSTANCE_HEADER) or []
+                if len(instances) != 1 or not INSTANCE_ID.fullmatch(instances[0]):
+                    raise AssertionError(f"HTTP {path} 未返回唯一有效的 {INSTANCE_HEADER}")
+                actual = instances[0]
+                if self.expected_instance_id is not None and actual != self.expected_instance_id:
+                    raise AssertionError(f"HTTP {path} 服务实例与期望不一致")
+                if self.instance_id is not None and actual != self.instance_id:
+                    raise AssertionError(f"HTTP {path} 服务实例在验收期间发生变化")
+                self.instance_id = actual
             content_type = response.headers.get("Content-Type", "")
             raw = response.read()
         wall_ms = round((time.monotonic() - started) * 1000, 3)
@@ -238,6 +273,10 @@ def _vector_identity(probe):
     assert isinstance(revision, str) and revision and revision != "latest"
     assert type(embedding["dimension"]) is int and embedding["dimension"] > 0
     assert embedding["normalize"] is True and embedding["distance"] == "cosine"
+    if expectation.embedding is not None:
+        assert "embedding" in manifest, "vector_manifest 缺少 embedding"
+        for key, expected in asdict(expectation.embedding).items():
+            assert embedding[key] == expected, f"embedding.{key} 与发布期望不一致"
     search = identity["search"]
     assert search["hnsw_ef"] == expectation.hnsw_ef
     # exact=false 只说明允许 ANN，不证明本次查询实际走 HNSW。
@@ -417,6 +456,25 @@ def _positive_float(value):
     return number
 
 
+def _instance_id(value):
+    if not INSTANCE_ID.fullmatch(value):
+        raise argparse.ArgumentTypeError("必须是 32 位小写十六进制服务实例 ID")
+    return value
+
+
+def _identity_string(value):
+    if not value or value != value.strip():
+        raise argparse.ArgumentTypeError("必须是非空字符串且首尾无空白")
+    return value
+
+
+def _fixed_revision(value):
+    revision = _identity_string(value)
+    if revision.casefold() == "latest":
+        raise argparse.ArgumentTypeError("必须是发布清单中的固定 revision")
+    return revision
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         description="在线服务只读 HTTP 验收（RFC-0003）：healthy / down / recovered 三阶段")
@@ -430,9 +488,19 @@ def build_parser():
     parser.add_argument("--expect-collection", help="向量 profile 必填：Qdrant collection")
     parser.add_argument("--expect-hnsw-ef", type=_positive_int,
                         help="向量 profile 必填：服务声明的搜索 beam")
+    parser.add_argument("--expect-embedding-model-id", type=_identity_string,
+                        help="发布清单中的编码器型号；三个编码器参数须同时提供")
+    parser.add_argument("--expect-embedding-revision", type=_fixed_revision,
+                        help="发布清单中的固定编码器 revision")
+    parser.add_argument("--expect-embedding-dimension", type=_positive_int,
+                        help="发布清单中的编码维度")
     parser.add_argument("--expect-candidate-k", type=_positive_int, default=200)
     parser.add_argument("--expect-rrf-c", type=_positive_float, default=60.0)
     parser.add_argument("--expect-policy-version", help="可选：要求回显的 policy_version")
+    parser.add_argument("--require-instance-id", action="store_true",
+                        help="要求所有响应来自同一服务实例并拒绝重定向")
+    parser.add_argument("--expect-instance-id", type=_instance_id,
+                        help="要求所有响应来自给定服务实例；自动启用实例校验")
     parser.add_argument("--lexical-only", action="store_true",
                         help="未部署 vector 块的词法 profile；期望 503 与显式回退")
     parser.add_argument("--query", required=True, help="目标语料上确实有词法命中的查询")
@@ -459,6 +527,17 @@ def main(argv=None):
         if missing:
             parser.error("向量 profile 需要同时给出预期身份: " + ", ".join(missing))
 
+    embedding_values = (args.expect_embedding_model_id, args.expect_embedding_revision,
+                        args.expect_embedding_dimension)
+    embedding = None
+    if any(value is not None for value in embedding_values):
+        if args.lexical_only:
+            parser.error("--lexical-only 不接受编码器身份参数")
+        if any(value is None for value in embedding_values):
+            parser.error("必须同时给出 --expect-embedding-model-id、"
+                         "--expect-embedding-revision 和 --expect-embedding-dimension")
+        embedding = EmbeddingExpectation(*embedding_values)
+
     expectation = Expectation(
         dataset=args.expect_dataset,
         n_docs=args.expect_n_docs,
@@ -469,9 +548,12 @@ def main(argv=None):
         rrf_c=args.expect_rrf_c,
         policy_version=args.expect_policy_version,
         vector_configured=not args.lexical_only,
+        embedding=embedding,
     )
     probe = Probe(args.endpoint, expectation=expectation, query=args.query,
-                  oov_query=args.oov_query, run_tag=args.run_tag, timeout=args.timeout)
+                  oov_query=args.oov_query, run_tag=args.run_tag, timeout=args.timeout,
+                  require_instance_id=args.require_instance_id,
+                  expect_instance_id=args.expect_instance_id)
     started_utc = datetime.now(timezone.utc).isoformat(timespec="seconds")
     try:
         run_checks(probe, args.phase, args.lexical_only)
@@ -481,6 +563,9 @@ def main(argv=None):
         probe.checks.append({"name": "probe_crashed", "status": "FAIL", "error": detail})
 
     failures = [check for check in probe.checks if check["status"] == "FAIL"]
+    expected_identity = asdict(expectation)
+    if embedding is None:
+        expected_identity.pop("embedding")
     evidence = {
         "status": "FAIL" if failures else "PASS",
         "endpoint": probe.base,
@@ -489,7 +574,7 @@ def main(argv=None):
         "run_tag": args.run_tag,
         "started_utc": started_utc,
         "finished_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "expectation": asdict(expectation),
+        "expectation": expected_identity,
         "scope": SCOPE,
         "checks_total": len(probe.checks),
         "checks_passed": len(probe.checks) - len(failures),
@@ -497,6 +582,12 @@ def main(argv=None):
         "checks": probe.checks,
         "events": probe.events,
     }
+    if probe.require_instance_id:
+        evidence["instance_binding"] = {
+            "header": INSTANCE_HEADER,
+            "expected_id": probe.expected_instance_id,
+            "verified_id": probe.instance_id if not failures else None,
+        }
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(evidence, ensure_ascii=False, indent=2) + "\n",
                         encoding="utf-8")

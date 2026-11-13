@@ -45,7 +45,10 @@ class SearchEngine:
         self.policy = router_identity(self.router)
         check_binding = getattr(self.router, "check_binding", None)
         if callable(check_binding):
-            check_binding(reader, self.config, vectors)
+            check_binding(reader, self.config)
+        check_retrieval_binding = getattr(self.router, "check_retrieval_binding", None)
+        if callable(check_retrieval_binding):
+            check_retrieval_binding(reader, self.config, vectors)
 
     def info(self) -> dict:
         """能力与配置回显，不把尚未实现的后端宣称为可用。

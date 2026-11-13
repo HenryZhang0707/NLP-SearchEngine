@@ -51,6 +51,7 @@ class HTTPResponseError(EvaluationError):
 
 
 DENSE_CONSTRAINT_ERROR = "dense 模式无法保证显式词法约束，请使用 lexical、hybrid 或 adaptive"
+_REQUEST_TAG = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 
 
 def _sha256(path: str | Path) -> str:
@@ -104,7 +105,17 @@ def _atomic_json(path: Path, value: dict) -> None:
     pending = path.with_name(path.name + ".tmp")
     with pending.open("x", encoding="utf-8") as handle:
         handle.write(json.dumps(value, ensure_ascii=False, indent=2) + "\n")
-    pending.replace(path)
+    # On Windows a reader may hold the destination without delete sharing.
+    # Retry the same atomic rename; keep the previous snapshot and pending
+    # bytes intact if the sharing violation does not clear.
+    for delay in (0.01, 0.02, 0.04, 0.08, 0.16, 0.32, None):
+        try:
+            pending.replace(path)
+            return
+        except PermissionError as error:
+            if delay is None or getattr(error, "winerror", None) not in (5, 32, 33):
+                raise
+            time.sleep(delay)
 
 
 def _append_request_event(path: Path, value: dict) -> None:
@@ -155,8 +166,8 @@ class QueryRouting:
         expected_mode = "lexical"
         if routing.vector_used:
             expected_mode = "dense" if mode == "dense" else "hybrid"
-            if mode=='adaptive' and allow_adaptive_dense and routing.executed_mode=='dense':
-                expected_mode='dense'
+            if allow_adaptive_dense and mode == "adaptive" and routing.executed_mode == "dense":
+                expected_mode = "dense"
         if (routing.executed_mode != expected_mode
                 or (mode in ("dense", "hybrid") and not routing.vector_used)
                 or (mode == "lexical" and routing.vector_attempted)
@@ -470,14 +481,20 @@ def _endpoint_url(endpoint: str) -> str:
     return endpoint if endpoint.endswith("/search") else endpoint + "/search"
 
 
-def _request_search(endpoint: str, query: str, *, k: int, mode: str, scorer: str, expander: str, timeout: float) -> tuple[list[tuple[str, float]], float, QueryRouting]:
-    payload = json.dumps({
+def _request_search(endpoint: str, query: str, *, k: int, mode: str, scorer: str,
+                    expander: str, timeout: float, request_tag: str | None = None,
+                    allow_adaptive_dense: bool = False,
+                    ) -> tuple[list[tuple[str, float]], float, QueryRouting]:
+    body = {
         "query": query,
         "k": k,
         "mode": mode,
         "scorer": scorer,
         "expander": expander,
-    }, ensure_ascii=False).encode("utf-8")
+    }
+    if request_tag is not None:
+        body["run_tag"] = request_tag
+    payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
     request = Request(_endpoint_url(endpoint), payload, {
         "Content-Type": "application/json",
         "Accept": "application/json",
@@ -515,13 +532,14 @@ def _request_search(endpoint: str, query: str, *, k: int, mode: str, scorer: str
             error_body = None
         raise HTTPResponseError(status, error_body, latency_ms)
     try:
-        results, routing = _decode_search_response(body, mode)
+        results, routing = _decode_search_response(body, mode, allow_adaptive_dense=allow_adaptive_dense)
     except EvaluationError as error:
         raise HTTPResponseError(200, None, latency_ms, str(error)) from error
     return results, latency_ms, routing
 
 
-def _decode_search_response(body: bytes, mode: str) -> tuple[list[tuple[str, float]], QueryRouting]:
+def _decode_search_response(body: bytes, mode: str, *, allow_adaptive_dense: bool = False
+                            ) -> tuple[list[tuple[str, float]], QueryRouting]:
     try:
         value = json.loads(body)
     except (ValueError, UnicodeError) as error:
@@ -545,7 +563,8 @@ def _decode_search_response(body: bytes, mode: str) -> tuple[list[tuple[str, flo
         if not math.isfinite(score):
             raise EvaluationError("搜索服务 results 含非有限 score")
         results.append((docid, score))
-    routing = QueryRouting.from_response(value.get("routing"), mode)
+    routing = QueryRouting.from_response(value.get("routing"), mode,
+                                         allow_adaptive_dense=allow_adaptive_dense)
     return results, routing
 
 
@@ -559,13 +578,14 @@ def _write_trec_run(path: str | Path, qid: str, rows: Sequence[tuple[str, float]
             handle.write(f"{qid} Q0 {docid} {rank} {score:.8f} {tag}\n")
 
 
-def evaluate_http(endpoint: str, queries: Iterable[QueryRecord], qrels: Mapping[str, Mapping[str, float]], *, k: int = 10, mode: str = "lexical", scorer: str = "bm25", expander: str = "none", timeout: float = 10.0, run_output: str | Path | None = None, tag: str = "http-search", map_k: int = 100, fail_on_fallback: bool = False, unsupported_policy: str | Path | None = None, queries_source: str | Path | None = None, request_output: str | Path | None = None) -> EvaluationSummary:
+def evaluate_http(endpoint: str, queries: Iterable[QueryRecord], qrels: Mapping[str, Mapping[str, float]], *, k: int = 10, mode: str = "lexical", scorer: str = "bm25", expander: str = "none", timeout: float = 10.0, run_output: str | Path | None = None, tag: str = "http-search", map_k: int = 100, fail_on_fallback: bool = False, unsupported_policy: str | Path | None = None, queries_source: str | Path | None = None, request_output: str | Path | None = None, request_tag: str | None = None, allow_adaptive_dense: bool = False) -> EvaluationSummary:
     """Query a public HTTP endpoint and evaluate its responses.
 
     Retrieve ``max(k, map_k)`` results, then apply each metric cutoff separately.
     When ``run_output`` is supplied, a TREC run is written while requests are
     made. Existing output paths are rejected. Routing
     outcomes are always reported; ``fail_on_fallback`` rejects degraded runs.
+    An optional ``request_tag`` correlates the request journal with server logs.
     """
 
     if type(k) is not int or k <= 0 or type(map_k) is not int or map_k <= 0:
@@ -586,6 +606,10 @@ def evaluate_http(endpoint: str, queries: Iterable[QueryRecord], qrels: Mapping[
         raise EvaluationError("queries qid 重复")
     if not tag or any(ch.isspace() for ch in tag):
         raise EvaluationError("run tag 必须是非空单词")
+    if request_tag is not None and (
+        not isinstance(request_tag, str) or not _REQUEST_TAG.fullmatch(request_tag)
+    ):
+        raise EvaluationError("HTTP request tag 格式无效")
     expected_ids, policy_metadata = set(), None
     if unsupported_policy is not None:
         expected_ids, policy_metadata = _load_unsupported_policy(
@@ -612,6 +636,12 @@ def evaluate_http(endpoint: str, queries: Iterable[QueryRecord], qrels: Mapping[
              "query_ids": [record.qid for record in records], "outcomes": [],
              "last_event_sequence": 0, "inflight_outcome": None, "last_outcome": None,
              "journal": None if journal_path is None else {"file": journal_path.name}}
+    if allow_adaptive_dense:
+        if mode != "adaptive":
+            raise EvaluationError("allow_adaptive_dense 仅用于 adaptive 评测")
+        state["request"]["allow_adaptive_dense"] = True
+    if request_tag is not None:
+        state["request"]["run_tag"] = request_tag
     state["query_universe_sha256"] = hashlib.sha256(json.dumps(
         state["query_ids"], ensure_ascii=False, separators=(",", ":")).encode("utf-8")).hexdigest()
 
@@ -663,7 +693,8 @@ def evaluate_http(endpoint: str, queries: Iterable[QueryRecord], qrels: Mapping[
             try:
                 rows, latency, observation = _request_search(
                     endpoint, record.query, k=retrieval_depth, mode=mode,
-                    scorer=scorer, expander=expander, timeout=timeout,
+                    scorer=scorer, expander=expander, timeout=timeout, request_tag=request_tag,
+                    allow_adaptive_dense=allow_adaptive_dense,
                 )
             except HTTPResponseError as error:
                 outcome.update(http_status=error.status, latency_ms=error.latency_ms,
@@ -734,8 +765,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--expander", choices=("none", "rm3", "slm"), default="none")
     parser.add_argument("--timeout", type=float, default=10.0, help="单次 HTTP 超时秒数")
     parser.add_argument("--tag", default="http-search", help="TREC run tag")
+    parser.add_argument("--request-tag", help="HTTP run_tag used to correlate request and server logs")
     parser.add_argument("--fail-on-fallback", action="store_true",
                         help="HTTP 评测遇到 adaptive 向量降级时返回非零状态")
+    parser.add_argument("--allow-adaptive-dense", action="store_true",
+                        help="允许实验 Router 选择 adaptive 的纯向量动作")
     return parser
 
 
@@ -757,13 +791,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise EvaluationError("output 已存在，拒绝覆盖旧评测证据")
         qrels = load_qrels(args.qrels)
         if args.run is not None:
-            if args.endpoint or args.queries or args.output_run or args.fail_on_fallback or args.unsupported_policy or args.output_requests:
+            if (args.endpoint or args.queries or args.output_run or args.fail_on_fallback or args.allow_adaptive_dense
+                    or args.unsupported_policy or args.output_requests or args.request_tag is not None):
                 raise EvaluationError("--run 不能与 HTTP 选项同时使用")
             summary = evaluate_run(qrels, load_run(args.run), k=args.k, map_k=args.map_k)
         else:
             if not args.endpoint or not args.queries:
                 raise EvaluationError("HTTP 模式需要同时提供 --endpoint 和 --queries")
-            summary = evaluate_http(args.endpoint, load_queries(args.queries), qrels, k=args.k, mode=args.mode, scorer=args.scorer, expander=args.expander, timeout=args.timeout, run_output=args.output_run, tag=args.tag, map_k=args.map_k, fail_on_fallback=args.fail_on_fallback, unsupported_policy=args.unsupported_policy, queries_source=args.queries, request_output=args.output_requests)
+            summary = evaluate_http(
+                args.endpoint, load_queries(args.queries), qrels, k=args.k, mode=args.mode,
+                scorer=args.scorer, expander=args.expander, timeout=args.timeout,
+                run_output=args.output_run, tag=args.tag, map_k=args.map_k,
+                fail_on_fallback=args.fail_on_fallback, unsupported_policy=args.unsupported_policy,
+                queries_source=args.queries, request_output=args.output_requests,
+                request_tag=args.request_tag, allow_adaptive_dense=args.allow_adaptive_dense,
+            )
         output = json.dumps(summary.to_dict(args.include_per_query), ensure_ascii=False, indent=2)
         if args.output_json:
             args.output_json.parent.mkdir(parents=True, exist_ok=True)
