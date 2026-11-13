@@ -546,6 +546,9 @@ def _decode_search_response(body: bytes, mode: str, *, allow_adaptive_dense: boo
         raise EvaluationError("搜索服务返回的不是 JSON") from error
     if not isinstance(value, dict) or not isinstance(value.get("results"), list):
         raise EvaluationError("搜索服务响应缺少 results 数组")
+    timings = value.get("timings_ms")
+    if mode == "hybrid" and ("rerank" in value or isinstance(timings, dict) and "rerank" in timings):
+        raise EvaluationError("Use evaluation.ce_http for a CE-enabled hybrid response")
     results: list[tuple[str, float]] = []
     seen: set[str] = set()
     for position, item in enumerate(value["results"], 1):

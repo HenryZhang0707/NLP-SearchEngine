@@ -57,6 +57,10 @@ separately. Repeated `--run` arguments preserve the per-attempt timing scopes.
 Standalone TREC runs contain no routing or latency evidence: those fields are
 `null`, not zero failures or zero latency.
 
+The ordinary HTTP evaluator rejects hybrid responses that carry CE reranking
+metadata or timings. Use the dedicated CE evaluator below to retain arm identity,
+the served ranking, actual pair counts, and paired measurements.
+
 ### Train and evaluate a CE40 gate
 
 Freeze train, development and independent holdout queries/qrels before capture.
