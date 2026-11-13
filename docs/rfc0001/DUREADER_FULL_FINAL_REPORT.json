@@ -1,5 +1,5 @@
 {
-  "status": "research_complete_pr_pending",
+  "status": "ready_for_pr_after_final_review",
   "dataset": {
     "subset": "dureader-mini-100k-v1.0",
     "subset_manifest": "9c46ee7ab36b145c4a2d454470693774868ec8fe0d540f664c64b74e630137fe",
@@ -12,7 +12,9 @@
     "official_full_source": "/root/autodl-tmp/dureader-full-delivery-qdrant-v1/official-full-source-audit.json",
     "compact": "/root/autodl-tmp/dureader-full-delivery-qdrant-v1/compact-audit.json",
     "vector_payload": "/root/autodl-tmp/dureader-full-delivery-qdrant-v1/server-payload-audit.json",
-    "sampled_vectors": "/root/autodl-tmp/dureader-full-delivery-qdrant-v1/sampled-vector-audit.json"
+    "sampled_vectors": "/root/autodl-tmp/dureader-full-delivery-qdrant-v1/sampled-vector-audit.json",
+    "sharded_compact_train_parity": "full-train-sharded-compact-parity.json",
+    "sharded_compact_dev_parity": "full-dev-sharded-compact-parity.json"
   },
   "offline": {
     "100k": {
@@ -1059,6 +1061,21 @@
         "fixed_pair_budget": 33,
         "all_dev_metrics_exploratory": true,
         "latency_scope": "CE components under current load; HTTP latency pending"
+      },
+      "quality_guard": {
+        "schema_version": 1,
+        "policy": "quality-guarded-fixed-heavy",
+        "fallback_activated": true,
+        "acceptance_margin": 0.0,
+        "learned_router_ndcg": 0.33637543729082553,
+        "fixed_action_ndcg": 0.35345757048780274,
+        "learned_minus_fixed_ndcg": -0.017082133196977194,
+        "fixed_action_recall": 0.35783829623089597,
+        "heavy_rate": 1.0,
+        "ce_pairs_mean": 33,
+        "quality_guard_reason": "independent same-budget quality regression",
+        "production_default_safe": true,
+        "quality_savings_tradeoff": "zero vector/CE savings when fallback activates"
       }
     }
   },
@@ -1106,6 +1123,48 @@
       }
     },
     "full": {
+      "queries": 1020,
+      "fixed_ce_pairs": 33,
+      "metrics": {
+        "ndcg": 0.35345757048780274,
+        "recall": 0.35783829623089597,
+        "mrr": 0.5366102552131964,
+        "map": 0.2713940808740645
+      },
+      "router_minus_fixed": {
+        "ndcg": {
+          "mean": -0.017082133196977194,
+          "ci95": [
+            -0.024498327477201164,
+            -0.010215306512916043
+          ],
+          "unit": "resampled query groups"
+        },
+        "recall": {
+          "mean": -0.010067593515796638,
+          "ci95": [
+            -0.017581777514211406,
+            -0.002660831254872491
+          ],
+          "unit": "resampled query groups"
+        }
+      },
+      "ce_component_ms": {
+        "p50": 63.087853603065014,
+        "p95": 73.31195650622247
+      },
+      "changed_rankings_vs_reused_ce40_prefix": 64,
+      "protocol": {
+        "separately_scored": true,
+        "model_or_threshold_changed": false,
+        "predictions_sha256_before_qrels": "a70103935a156f59145e8ce55aef45fdadd998e8143c25f6af0c2da20ab509ba",
+        "scores_protocol_sha256": "20fb10d780ab71d42fdab1b6d24346e22e804f130004b9486293684666d3fbf3",
+        "policy_summary_sha256": "8f134ea900bfc83592f54fa2b8b5d334ea903929eca6206d009e25c773dffc67",
+        "qrels_sha256": "e75a68b89fa8a1ed1879e6703cffc1d6514ba295c82667dc4ce574e24b318f30",
+        "e2e_http_latency_pending": true
+      }
+    },
+    "full_corrected": {
       "queries": 1020,
       "fixed_ce_pairs": 33,
       "metrics": {
@@ -1782,7 +1841,9 @@
   "caveats": [
     "All quality labels are internal-dev exploratory evidence; one positive document is shared between frozen train and dev.",
     "HTTP latency was collected while background full-corpus jobs were active; p95 outliers are therefore not isolated hardware acceptance.",
-    "Full sharded BM25 captures and compact/sharded parity audit remain pending; compact backend and official source audits are complete.",
-    "PR #9 and Issue #3 have not been updated yet."
+    "PR #9 and Issue #3 have not been updated yet.",
+    "HTTP p95 values were measured with concurrent full-corpus jobs and should be reported with that runtime-load qualification.",
+    "The full-corpus quality guard activates fixed CE-33 because learned Router nDCG regresses by 0.01708 versus independently scored same-budget fixed CE-33.",
+    "Final PR/Issue publication and remote status verification are still pending."
   ]
 }
