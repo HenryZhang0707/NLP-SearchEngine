@@ -8,3 +8,5 @@ The learned Router was trained only on the 172-query train split and evaluated o
 The full-corpus result is a quality regression. The repaired policy therefore activates a quality guard on the full corpus and routes every eligible query through fixed CE-33. This removes Router savings on that corpus, but preserves quality. The 100k learned policy remains research-only because its gain over fixed CE-24 is not statistically conclusive.
 
 This is a repair and a negative result: the learned Router is not promoted as a universal default. The guard artifacts are `quality-guard.json` in each local experiment directory; the compact aggregate is `DUREADER_FULL_FINAL_REPORT.json`.
+
+New guard receipts bind the independently scored control to the exact policy summary and development qrels. They record the development scope and set `production_default_safe` to false for either decision. The original experiment receipts in the aggregate retain their historical schema.

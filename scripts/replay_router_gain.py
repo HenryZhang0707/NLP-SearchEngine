@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from contracts.index_format import sha256_of
 from evaluation.compare import paired_bootstrap
-from evaluation.evaluate import QueryRouting, evaluate_run, load_qrels, load_queries
+from evaluation.evaluate import QueryRouting, _metric_for_query, evaluate_run, load_qrels, load_queries
 from evaluation.router_budget import check_journal, parse_json, read_rankings, require, VECTOR_REASONS, LEXICAL_REASONS
 from evaluation.train_router_gain import load_train_features
 from online.linear_gain_router import FEATURE_VERSION, LinearGainRouter
@@ -22,6 +22,7 @@ from online.linear_gain_router import FEATURE_VERSION, LinearGainRouter
 
 MODES = ("lexical", "hybrid", "adaptive")
 METRICS = ("ndcg_at_10", "recall_at_10", "mrr_at_10", "map_at_100")
+BUDGET_PERCENTAGES = (0, 10, 25, 50, 75, 90, 100)
 
 
 def load_binding(path):
@@ -186,6 +187,41 @@ def freeze(args):
             "predictions_sha256": sha256_of(args.output)}
 
 
+def development_budget_curve(rows, qrels, runs, rule_calls):
+    """Compare score-ordered replay and uniform allocation at fixed call counts."""
+    eligible = sorted((row for row in rows if not row["explicit_constraints"]),
+                      key=lambda row: (-row["predicted_gain"], row["qid"]))
+    qids = [row["qid"] for row in rows]
+    lexical = {
+        qid: _metric_for_query(qrels[qid], runs["lexical"].get(qid, ()), 10)[:4]
+        for qid in qids
+    }
+    deltas = []
+    for row in eligible:
+        qid = row["qid"]
+        hybrid = _metric_for_query(qrels[qid], runs["hybrid"].get(qid, ()), 10)[:4]
+        deltas.append(tuple(right - left for left, right in zip(lexical[qid], hybrid)))
+    base = tuple(math.fsum(lexical[qid][i] for qid in qids) for i in range(len(METRICS)))
+    full_gain = tuple(math.fsum(delta[i] for delta in deltas) for i in range(len(METRICS)))
+    budgets = sorted({rule_calls, *(len(eligible) * percentage // 100 for percentage in BUDGET_PERCENTAGES)})
+    points = []
+    for budget in budgets:
+        probability = budget / len(eligible) if eligible else 0.0
+        replay_gain = tuple(math.fsum(delta[i] for delta in deltas[:budget]) for i in range(len(METRICS)))
+        points.append({
+            "vector_calls": budget,
+            "query_trigger_rate": budget / len(qids),
+            "gain_replay": {metric: (base[i] + replay_gain[i]) / len(qids)
+                            for i, metric in enumerate(METRICS)},
+            "uniform_fixed_budget_expectation": {metric: (base[i] + probability * full_gain[i]) / len(qids)
+                                                 for i, metric in enumerate(METRICS)},
+        })
+    return {"scope": "offline_development_replay", "cost_unit": "vector_calls",
+            "query_count": len(qids), "eligible_queries": len(eligible),
+            "eligible_budget_percentages": list(BUDGET_PERCENTAGES),
+            "observed_rule_calls": rule_calls, "points": points}
+
+
 def score(args):
     binding = load_binding(args.experiment_binding)
     require(sha256_of(args.predictions) == args.predictions_sha256, "Prediction SHA256 disagrees")
@@ -268,6 +304,8 @@ def score(args):
               "vector_calls": {"rules": rule_calls, "gain_fixed_budget": rule_calls,
                                "gain_train_threshold": sum(row["threshold_vector"] for row in rows)},
               "metrics": summaries, "gain_fixed_budget_minus_rules": comparisons}
+    if getattr(args, "development_budget_curve", False):
+        result["development_budget_curve"] = development_budget_curve(rows, qrels, runs, rule_calls)
     write(args.output, result)
     return result
 
@@ -288,6 +326,8 @@ def main(argv=None):
     for flag in ("predictions", "qrels", *(f"{mode}-{kind}" for mode in MODES for kind in ("run", "metrics", "requests"))):
         verify.add_argument(f"--{flag}", required=True, type=Path)
     verify.add_argument("--predictions-sha256", required=True)
+    verify.add_argument("--development-budget-curve", action="store_true",
+                        help="Add offline call-budget replay on the bound development split")
     args = cli.parse_args(argv)
     result = freeze(args) if args.phase == "freeze" else score(args)
     print(json.dumps(result, ensure_ascii=True, allow_nan=False))

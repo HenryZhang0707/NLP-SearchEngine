@@ -8,7 +8,7 @@ import unittest
 
 from evaluation.evaluate import EvaluationError
 from online.linear_gain_router import FEATURE_VERSION
-from scripts.replay_router_gain import MODES, freeze, score
+from scripts.replay_router_gain import MODES, development_budget_curve, freeze, score
 
 
 class ReplayGainTests(unittest.TestCase):
@@ -75,6 +75,35 @@ class ReplayGainTests(unittest.TestCase):
         self.assertEqual(result["metrics"]["gain_fixed_budget"]["ndcg_at_10"], 1.0)
         self.assertEqual(result["experiment_binding"]["corpus_sha256"], "a" * 64)
         self.assertIn("legacy_ordered_http200", result["request_evidence_formats"]["hybrid"])
+
+    def test_curve_is_optional_and_uses_validated_score_inputs(self):
+        self.assertNotIn("development_budget_curve", score(self.args))
+        self.args.output = self.root / "curve.json"
+        self.args.development_budget_curve = True
+        curve = score(self.args)["development_budget_curve"]
+        self.assertEqual([point["vector_calls"] for point in curve["points"]], [0, 1])
+        self.write("hybrid.trec", "q Q0 foreign 1 1 fixture\n")
+        self.args.output = self.root / "invalid-curve.json"
+        with self.assertRaisesRegex(EvaluationError, "source hashes"):
+            score(self.args)
+
+    def test_curve_preserves_lexical_constraints_and_uses_deterministic_ties(self):
+        rows = [
+            {"qid": "z", "explicit_constraints": False, "predicted_gain": 0.5},
+            {"qid": "a", "explicit_constraints": False, "predicted_gain": 0.5},
+            {"qid": "c", "explicit_constraints": True, "predicted_gain": None},
+        ]
+        qrels = {row["qid"]: {"right": 1.0} for row in rows}
+        runs = {"lexical": {"z": ["right"], "c": ["right"]},
+                "hybrid": {"a": ["right"]}}
+        curve = development_budget_curve(rows, qrels, runs, 1)
+        self.assertEqual([point["vector_calls"] for point in curve["points"]], [0, 1, 2])
+        zero, one, full = curve["points"]
+        self.assertAlmostEqual(zero["gain_replay"]["ndcg_at_10"], 2 / 3)
+        self.assertAlmostEqual(one["query_trigger_rate"], 1 / 3)
+        self.assertEqual(one["gain_replay"]["ndcg_at_10"], 1.0)
+        self.assertAlmostEqual(one["uniform_fixed_budget_expectation"]["ndcg_at_10"], 2 / 3)
+        self.assertAlmostEqual(full["gain_replay"]["ndcg_at_10"], 2 / 3)
 
     def test_foreign_corpus_binding_rejected_by_frozen_identity(self):
         self.binding["corpus_sha256"] = "e" * 64
