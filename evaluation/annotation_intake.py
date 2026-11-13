@@ -1,4 +1,4 @@
-"""Validate frozen blind-review submissions and export TREC qrels."""
+"""Validate blind reviews, prepare adjudication, and export TREC qrels."""
 
 from __future__ import annotations
 
@@ -7,6 +7,8 @@ import hashlib
 import json
 import re
 from collections.abc import Sequence
+from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path
 
 from .annotation_packet import _SHA256, _json_bytes, _parse_candidate, _write_outputs
@@ -17,6 +19,16 @@ _PAIR_ID = re.compile(r"p-[0-9a-f]{24}")
 _PLAN_FIELDS = {"schema_version", "packet_sha256", "private_map_sha256", "reviewers"}
 _PACKET_FIELDS = {"pair_id", "query", "title", "text"}
 _MAP_PAIR_FIELDS = {"query_id", "doc_id", "document_sha256", "query_sha256"}
+
+
+@dataclass
+class _Reviews:
+    pairs: dict[str, tuple[str, str]]
+    packet_raw: bytes
+    grades: dict[str, set[int]]
+    disputes: set[str]
+    file_ids: set[tuple[int, int]]
+    receipt: dict
 
 
 def _sha256(raw: bytes) -> str:
@@ -145,18 +157,18 @@ def _load_labels(path: Path, expected: set[str]) -> tuple[dict[str, int], dict]:
     return labels, {"filename": path.name, "sha256": _sha256(raw), "pair_count": len(labels)}
 
 
-def import_human_judgments(
-    packet: Path, private_map: Path, plan: Path, plan_sha256: str,
-    reviewer_files: Sequence[tuple[str, Path]], qrels: Path, receipt: Path,
-    *, adjudication: Path | None = None,
-) -> dict:
-    """Export fully covered and adjudicated judgments to two fresh files."""
-    if qrels.resolve() == receipt.resolve():
-        raise EvaluationError("qrels and receipt must have distinct paths")
-    for output in (qrels, receipt):
+def _check_fresh_outputs(*paths: Path) -> None:
+    if len({path.resolve() for path in paths}) != len(paths):
+        raise EvaluationError("outputs must have distinct paths")
+    for output in paths:
         if output.exists() or output.is_symlink():
             raise EvaluationError(f"output path already exists: {output}")
 
+
+def _load_reviews(
+    packet: Path, private_map: Path, plan: Path, plan_sha256: str,
+    reviewer_files: Sequence[tuple[str, Path]],
+) -> _Reviews:
     plan_raw = plan.read_bytes()
     plan_digest = _check_sha256(plan_raw, plan_sha256, str(plan))
     review_plan = _object(plan_raw, str(plan))
@@ -177,6 +189,9 @@ def import_human_judgments(
     reviewed = {pair_id: set() for pair_id in pairs}
     reviewer_receipts = {}
     seen_files = set()
+    for path in (packet, private_map, plan):
+        file_stat = path.stat()
+        seen_files.add((file_stat.st_dev, file_stat.st_ino))
     for reviewer_id, selection in sorted(assigned.items()):
         path = submissions[reviewer_id]
         file_stat = path.stat()
@@ -190,30 +205,89 @@ def import_human_judgments(
             reviewed[pair_id].add(grade)
 
     disputes = {pair_id for pair_id, grades in reviewed.items() if len(grades) > 1}
-    if disputes and adjudication is None:
-        raise EvaluationError(f"adjudication is required for {len(disputes)} disputed pairs")
-    resolved, adjudication_receipt = {}, None
-    if adjudication is not None:
-        file_stat = adjudication.stat()
-        if (file_stat.st_dev, file_stat.st_ino) in seen_files:
-            raise EvaluationError("adjudication must be a separate judgment file")
-        resolved, adjudication_receipt = _load_labels(adjudication, disputes)
-    final = {pair_id: resolved[pair_id] if pair_id in disputes else next(iter(grades))
-             for pair_id, grades in reviewed.items()}
-
-    rows = sorted((*pairs[pair_id], grade) for pair_id, grade in final.items())
-    qrels_raw = "".join(f"{qid}\t0\t{doc_id}\t{grade}\n" for qid, doc_id, grade in rows).encode("utf-8")
-    result = {
+    receipt = {
         "schema_version": 1,
         "label_source": "reviewer_submissions",
         "plan": {"filename": plan.name, "sha256": plan_digest},
         "packet": {"filename": packet.name, "sha256": packet_digest},
         "private_map": {"filename": private_map.name, "sha256": map_digest},
         "reviewers": reviewer_receipts,
-        "adjudication": adjudication_receipt,
         "pair_count": len(pairs),
         "overlap_pair_count": overlap_count,
         "disputed_pair_count": len(disputes),
+    }
+    return _Reviews(pairs, packet_raw, reviewed, disputes, seen_files, receipt)
+
+
+def prepare_adjudication(
+    packet: Path, private_map: Path, plan: Path, plan_sha256: str,
+    reviewer_files: Sequence[tuple[str, Path]], dispute_packet: Path,
+    adjudication_template: Path, report: Path,
+) -> dict:
+    """Write a private report and, if needed, a blind packet and blank template."""
+    _check_fresh_outputs(dispute_packet, adjudication_template, report)
+    reviews = _load_reviews(packet, private_map, plan, plan_sha256, reviewer_files)
+    overlap = reviews.receipt["overlap_pair_count"]
+    agreed = overlap - len(reviews.disputes)
+    result = {
+        **reviews.receipt,
+        "agreed_overlap_pair_count": agreed,
+        "agreement_rate": agreed / overlap,
+        "dispute_packet": None,
+        "adjudication_template": None,
+    }
+    companion_outputs = []
+    if reviews.disputes:
+        rows = [row for _, row in _jsonl(reviews.packet_raw, packet)
+                if row["pair_id"] in reviews.disputes]
+        public = b"".join(_json_bytes(row) for row in rows)
+        template = b"".join(_json_bytes({"pair_id": row["pair_id"], "relevance": None})
+                            for row in rows)
+        result["dispute_packet"] = {"filename": dispute_packet.name, "sha256": _sha256(public)}
+        result["adjudication_template"] = {
+            "filename": adjudication_template.name, "sha256": _sha256(template),
+        }
+        companion_outputs = [(adjudication_template, template), (dispute_packet, public)]
+    # Publish the packet only after its companion files exist.
+    created = []
+    try:
+        for path, content in [(report, _json_bytes(result, indent=2)), *companion_outputs]:
+            with path.open("xb") as handle:
+                created.append(path)
+                handle.write(content)
+    except OSError:
+        for path in reversed(created):
+            with suppress(OSError):
+                path.unlink()
+        raise
+    return result
+
+
+def import_human_judgments(
+    packet: Path, private_map: Path, plan: Path, plan_sha256: str,
+    reviewer_files: Sequence[tuple[str, Path]], qrels: Path, receipt: Path,
+    *, adjudication: Path | None = None,
+) -> dict:
+    """Export fully covered and adjudicated judgments to two fresh files."""
+    _check_fresh_outputs(qrels, receipt)
+    reviews = _load_reviews(packet, private_map, plan, plan_sha256, reviewer_files)
+    disputes = reviews.disputes
+    if disputes and adjudication is None:
+        raise EvaluationError(f"adjudication is required for {len(disputes)} disputed pairs")
+    resolved, adjudication_receipt = {}, None
+    if adjudication is not None:
+        file_stat = adjudication.stat()
+        if (file_stat.st_dev, file_stat.st_ino) in reviews.file_ids:
+            raise EvaluationError("adjudication must be a separate judgment file")
+        resolved, adjudication_receipt = _load_labels(adjudication, disputes)
+    final = {pair_id: resolved[pair_id] if pair_id in disputes else next(iter(grades))
+             for pair_id, grades in reviews.grades.items()}
+
+    rows = sorted((*reviews.pairs[pair_id], grade) for pair_id, grade in final.items())
+    qrels_raw = "".join(f"{qid}\t0\t{doc_id}\t{grade}\n" for qid, doc_id, grade in rows).encode("utf-8")
+    result = {
+        **reviews.receipt,
+        "adjudication": adjudication_receipt,
         "qrels": {"filename": qrels.name, "sha256": _sha256(qrels_raw)},
     }
     _write_outputs(qrels, receipt, qrels_raw, _json_bytes(result, indent=2))
@@ -240,15 +314,25 @@ and the receipt private so the exported qrels can be traced to their submissions
     parser.add_argument("--reviewer", action="append", nargs=2, metavar=("REVIEWER_ID", "JSONL"),
                         required=True, help="repeat for each reviewer in the frozen plan")
     parser.add_argument("--adjudication", type=Path, help="explicit adjudication JSONL for disputed pairs")
-    parser.add_argument("--qrels", required=True, type=Path, help="fresh TREC qrels path")
-    parser.add_argument("--receipt", required=True, type=Path, help="fresh private provenance JSON path")
+    parser.add_argument("--qrels", type=Path, help="fresh TREC qrels path")
+    parser.add_argument("--receipt", type=Path, help="fresh private provenance JSON path")
+    parser.add_argument("--prepare-adjudication", nargs=3, type=Path,
+                        metavar=("DISPUTE_PACKET", "TEMPLATE", "PRIVATE_REPORT"),
+                        help="prepare blind adjudication instead of exporting qrels")
     args = parser.parse_args(argv)
+    if args.prepare_adjudication:
+        if any(path is not None for path in (args.qrels, args.receipt, args.adjudication)):
+            parser.error("--prepare-adjudication cannot be combined with --qrels, --receipt or --adjudication")
+    elif args.qrels is None or args.receipt is None:
+        parser.error("--qrels and --receipt are required unless preparing adjudication")
+    inputs = (args.packet, args.private_map, args.plan, args.plan_sha256,
+              [(reviewer_id, Path(path)) for reviewer_id, path in args.reviewer])
     try:
-        result = import_human_judgments(
-            args.packet, args.private_map, args.plan, args.plan_sha256,
-            [(reviewer_id, Path(path)) for reviewer_id, path in args.reviewer],
-            args.qrels, args.receipt, adjudication=args.adjudication,
-        )
+        if args.prepare_adjudication:
+            result = prepare_adjudication(*inputs, *args.prepare_adjudication)
+        else:
+            result = import_human_judgments(*inputs, args.qrels, args.receipt,
+                                            adjudication=args.adjudication)
     except (OSError, UnicodeError, EvaluationError) as error:
         parser.exit(2, f"annotation intake failed: {error}\n")
     print(json.dumps({key: result[key] for key in ("pair_count", "overlap_pair_count", "disputed_pair_count")}))

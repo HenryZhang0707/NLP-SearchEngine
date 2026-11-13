@@ -443,6 +443,31 @@ grades. A version 1 plan contains `schema_version`, `packet_sha256`,
 reviewer IDs to their exact assigned `pair_id` lists. Assign every pair to at
 least one reviewer and include an independently reviewed overlap.
 
+Once every reviewer has submitted their complete assignment, prepare the
+adjudication materials against the same frozen inputs:
+
+```bash
+python -m evaluation.annotation_intake \
+  --packet data/review/reviewer.jsonl --private-map data/review/private/mapping.json \
+  --plan data/review/private/plan.json --plan-sha256 "$FROZEN_PLAN_SHA256" \
+  --reviewer reviewer-a data/review/private/reviewer-a.jsonl \
+  --reviewer reviewer-b data/review/private/reviewer-b.jsonl \
+  --prepare-adjudication data/review/disputes.jsonl data/review/adjudication-template.jsonl \
+    data/review/private/pre-adjudication.json
+```
+
+Use fresh paths for all three outputs. The private report binds the input and
+output hashes and records the number of assigned pairs, independently reviewed
+pairs, unanimous overlaps and disputes. The agreement rate divides unanimous
+overlaps by all overlaps. When disputes exist, give the adjudicator only the
+dispute packet and matching template. The packet retains the original blind
+order and contains `pair_id`, `query`, `title` and `text` for disputed pairs.
+Copy the template to a new file, replace every `null` grade with an integer
+`0/1/2`, and keep the completed file private. When every overlap is unanimous,
+the command writes the private report alone.
+
+Import the completed judgments to create qrels:
+
 ```bash
 python -m evaluation.annotation_intake \
   --packet data/review/reviewer.jsonl --private-map data/review/private/mapping.json \
