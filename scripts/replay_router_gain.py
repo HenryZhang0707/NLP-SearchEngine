@@ -324,9 +324,10 @@ def score(args):
                 "Invalid or constraint-violating predictions")
     qrels_sha256 = sha256_of(args.qrels)
     ablation_inputs = getattr(args, "development_ablation_inputs", None)
-    if ablation_inputs is not None:
+    opportunity = getattr(args, "routing_opportunity", False)
+    if ablation_inputs is not None or opportunity:
         require(qrels_sha256 == getattr(args, "expected_development_qrels_sha256", None),
-                "Ablation requires the exact frozen development qrels SHA256")
+                "Offline analysis requires the exact frozen qrels SHA256")
     qrels = load_qrels(args.qrels)
     require(set(qrels) == universe, "Qrels do not cover the exact scoring universe")
     runs, summaries, evidence_formats = {}, {}, {}
@@ -352,19 +353,21 @@ def score(args):
         runs[mode] = ranked
         summaries[mode] = summary
     learned = {"gain_fixed_budget": {}, "gain_train_threshold": {}}
-    rule_calls = 0
+    rule_call_ids = set()
     for row in rows:
         qid = row["qid"]
         route = QueryRouting.from_response(summaries["adaptive"][qid]["routing"], "adaptive")
         require(not route.fallback and (route.reason == "explicit_constraints") == row["explicit_constraints"],
                 "Recorded rule route falls back or disagrees with constraint evidence")
-        rule_calls += route.vector_attempted
+        if route.vector_attempted:
+            rule_call_ids.add(qid)
         forced = {mode: runs[mode].get(qid, []) for mode in MODES}
         require(forced["adaptive"] == forced[route.executed_mode],
                 "Adaptive ranking differs from its recorded forced route")
         for arm, flag in (("gain_fixed_budget", "fixed_budget_vector"),
                           ("gain_train_threshold", "threshold_vector")):
             learned[arm][qid] = forced["hybrid" if row[flag] else "lexical"]
+    rule_calls = len(rule_call_ids)
     require(rule_calls == predictions["fixed_budget"] == sum(row["fixed_budget_vector"] for row in rows),
             "Learned and observed rule budgets disagree")
     all_arms = {**runs, **learned}
@@ -390,7 +393,18 @@ def score(args):
     if ablation_inputs is not None:
         result["development_feature_ablation"] = development_feature_ablation(
             ablation_inputs, binding, rows, records, qrels, runs, learned["gain_fixed_budget"], rule_calls)
-        require(sha256_of(args.qrels) == qrels_sha256, "Development qrels changed during ablation")
+    if opportunity:
+        from evaluation.router_opportunity import analyze_opportunity
+
+        constrained = {row["qid"] for row in rows if row["explicit_constraints"]}
+        # The observed adaptive ranking was already checked against lexical
+        # for these queries. The forced hybrid arm is outside their action set.
+        require(not rule_call_ids & constrained, "Rules called vectors for a protected query")
+        result["routing_opportunity"] = analyze_opportunity(
+            records, qrels, runs, rule_call_ids, {row["qid"] for row in rows if row["fixed_budget_vector"]},
+            constrained)
+    if ablation_inputs is not None or opportunity:
+        require(sha256_of(args.qrels) == qrels_sha256, "Qrels changed during offline analysis")
     write(args.output, result)
     return result
 
@@ -415,11 +429,16 @@ def main(argv=None):
                         help="Add offline call-budget replay on the bound development split")
     verify.add_argument("--development-ablation-inputs", type=Path,
                         help="JSON mapping for the archived training files, model and dev features")
-    verify.add_argument("--expected-development-qrels-sha256",
-                        help="Frozen dev qrels digest required for feature ablation")
+    verify.add_argument("--routing-opportunity", action="store_true",
+                        help="Add a judged oracle and grouped sensitivity for frozen ranks (NumPy required)")
+    verify.add_argument("--expected-qrels-sha256", "--expected-development-qrels-sha256",
+                        dest="expected_development_qrels_sha256",
+                        help="Frozen qrels digest required for ablation or opportunity analysis")
     args = cli.parse_args(argv)
-    if args.phase == "score" and bool(args.development_ablation_inputs) != bool(args.expected_development_qrels_sha256):
-        cli.error("feature ablation requires both the input mapping and frozen development qrels SHA256")
+    if args.phase == "score":
+        needs_digest = bool(args.development_ablation_inputs or args.routing_opportunity)
+        if needs_digest != bool(args.expected_development_qrels_sha256):
+            cli.error("provide the frozen qrels SHA256 with ablation or opportunity analysis")
     result = freeze(args) if args.phase == "freeze" else score(args)
     print(json.dumps(result, ensure_ascii=True, allow_nan=False))
     return 0

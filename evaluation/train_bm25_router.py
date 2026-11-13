@@ -15,6 +15,8 @@ from sklearn.tree import DecisionTreeRegressor
 
 from online.router_features import FEATURE_NAMES, FEATURE_VERSION
 
+from .router_metrics import group_bootstrap
+
 THRESHOLDS = (-1., -.1, -.05, -.02, -.01, 0., .002, .005, .01, .02, .05, .1, .2, .5, 1.)
 FAMILIES = ('calibrated-rules', 'linear-full', 'linear-query', 'linear-score', 'tree-full', 'combined')
 
@@ -96,19 +98,6 @@ def choose(candidates, gain, forced, family, budget):
     fallback = dict(spec=dict(kind='constant', value=1., family='hybrid'), threshold=0.,
                     **outcome(gain, np.ones(len(gain), dtype=bool)))
     return best[1] if best else fallback, trials
-
-
-def group_bootstrap(values, groups, samples=2000):
-    unique = np.unique(groups)
-    blocks = [np.flatnonzero(groups==g) for g in unique]
-    totals = np.array([values[b].sum() for b in blocks])
-    sizes = np.array([len(b) for b in blocks])
-    rng = np.random.default_rng(20261027)
-    means = []
-    for _ in range(samples):
-        selected = rng.integers(0, len(blocks), len(blocks))
-        means.append(float(totals[selected].sum()/sizes[selected].sum()))
-    return dict(mean=float(values.mean()), ci95=np.quantile(means, [.025,.975]).tolist(), unit='resampled query groups')
 
 
 def summary(rows, use, groups):

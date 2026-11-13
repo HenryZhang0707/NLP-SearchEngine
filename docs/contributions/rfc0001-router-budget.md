@@ -118,6 +118,21 @@ python3 -m evaluation.train_router_gain --train-features train.features.jsonl \
 
 复跑时在同一份 `score` 命令上增加 `--development-ablation-inputs PATH` 与 `--expected-development-qrels-sha256 e75a68b89fa8a1ed1879e6703cffc1d6514ba295c82667dc4ce574e24b318f30`，并指定新的输出路径。输入 JSON 的 `train_features`、`train_queries`、`train_qrels`、`lexical_run`、`hybrid_run`、`adaptive_receipt`、`feature_receipt` 使用原训练命令的对应路径，`model`、`development_features` 使用原 `freeze` 命令的模型和开发特征路径。相对路径从输入 JSON 所在目录解析。训练输入和开发特征均须与冻结模型及实验绑定一致。已复算的归档回读收据 SHA-256 为 `b4b954116f2c1de3ddf3e138d23a3a64457058250abf0a266a802916718bcd80`。
 
+### 两种检索动作的等预算上界
+
+冻结的词法和 Hybrid 排序给出了每条已标注查询的实际 nDCG@10 差值。在允许向量检索的查询中，按实际差值从高到低分配调用，同分按查询 ID。显式约束仍走词法，全部查询计入分母。下表的事后最优分配使用了同批标注，适用范围是这两种固定排序与该指标。Recall、MRR 和 MAP 沿用同一分配。只限制调用上限时，可以省去对 nDCG@10 无收益的调用。
+
+| 查询集 | 规则 nDCG@10 | 学习型等调用 nDCG@10 | 事后最优 nDCG@10 | 达到该值所用调用数 |
+| --- | ---: | ---: | ---: | ---: |
+| DuReader 100k，1,020 条 dev | 0.20495 | 0.20364 | 0.23779 | 540，预算 748 |
+| 新闻 20k，150 条历史辅助标注查询 | 0.90825 | 0.90434 | 0.93682 | 22，预算 32 |
+
+在同样的 748 次调用下，DuReader 规则实际选中 400 条正收益、286 条零收益和 62 条负收益查询。新闻规则的 32 次调用分别为 7、11 和 14 条。两套语料的混合检索机会不同，不能从其中一套的指标推断另一套的效果。
+
+将规范化文本相同或共享已知正例文档的查询连成组，分别得到 DuReader 的 1,014 组和新闻的 143 组。用固定种子 20261027 做 2,000 次分组配对重采样，每次对抽中的查询等权平均。学习型减规则的 nDCG@10 区间分别为 [−0.00492, +0.00233] 和 [−0.02480, +0.01402]。新闻上 MRR@10 的分组区间为 [−0.04262, −0.00110]，原逐查询区间跨零。这个敏感性对照使用历史辅助标注且未做多重比较校正。分组和事后分配均在策略冻结后执行。
+
+复跑时在各自原归档的 `score` 命令加 `--routing-opportunity --expected-qrels-sha256 <原评分的 qrels_sha256>`，使用新输出路径。分组分析需要 NumPy。两个回读收据的 SHA-256 分别为 `453082bf4c01301299f95ce4073fc20bccfd47eb76b41cd7a1960bbfbe0389cd`（DuReader）和 `3c0a8705c7d183239ce7b0d27e728fc2a967fa82e93a5810aeabe26a9ff08890`（新闻），两次均逐项复现原评分字段。
+
 ### 冻结训练阈值的真实 HTTP 对照
 
 在提交 `8dcab122bdd729eb133fc9598570a51d52eab027` 上启动两个本机 CPU 搜索服务，分别使用 `rule` 和 `online.linear_gain_router:load_gain_router` 工厂。两者共用同一个 Qdrant 1.16.0 恢复实例、同一份 100,000 篇索引和固定 BGE 模型。以相同的候选池 200、RRF 60 和 `hnsw_ef=256` 运行，BM25 关闭扩展，请求 `adaptive`、深度 100。学习版直接加载前述 SHA-256 对应的训练模型。

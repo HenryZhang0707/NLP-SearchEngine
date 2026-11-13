@@ -65,7 +65,8 @@ def rerank(row, budget, model=None):
 def query_groups(rows, qrels):
     """Connected components of normalized duplicate queries/shared positives.
 
-    Used on train only. Groups are never derived using dev relevance labels.
+    Training groups must use training labels. Evaluation groups may use judged
+    documents for inference after policies and rankings have been frozen.
     """
     parent = list(range(len(rows)))
     def root(i):

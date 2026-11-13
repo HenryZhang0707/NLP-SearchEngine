@@ -7,7 +7,8 @@ def test_official_archive_extracted_files_and_normalization_all_match(tmp_path,m
     root=tmp_path/'official';(root/'passage-collection').mkdir(parents=True);(root/'dev').mkdir()
     mapping={str(i):f'id-{i}'for i in range(4)}
     (root/'passage-collection/passage2id.map.json').write_text(json.dumps(mapping))
-    for i in range(4):(root/f'passage-collection/part-{i:02d}').write_text(f'{i}\ttitle\t正文{i}\n')
+    for i in range(4):
+        (root/f'passage-collection/part-{i:02d}').write_text(f'{i}\ttitle\t正文{i}\n', encoding='utf-8')
     for name in ('dev.json','q2qid.dev.json'):(root/'dev'/name).write_text('{}')
     archive=tmp_path/'archive.tar.gz'
     with tarfile.open(archive,'w:gz')as tar:

@@ -1,6 +1,9 @@
 """Replay rejects missing request evidence and altered experiment inputs."""
 import argparse
+from contextlib import redirect_stdout
 import hashlib
+from importlib.util import find_spec
+from io import StringIO
 import json
 from pathlib import Path
 import tempfile
@@ -8,7 +11,7 @@ import unittest
 
 from evaluation.evaluate import EvaluationError
 from online.linear_gain_router import FEATURE_VERSION
-from scripts.replay_router_gain import MODES, development_budget_curve, freeze, score
+from scripts.replay_router_gain import MODES, development_budget_curve, freeze, main, score
 
 
 class ReplayGainTests(unittest.TestCase):
@@ -107,13 +110,34 @@ class ReplayGainTests(unittest.TestCase):
 
     def test_ablation_rejects_unpinned_or_changed_development_qrels(self):
         self.args.development_ablation_inputs = self.root / "unused-map.json"
-        with self.assertRaisesRegex(EvaluationError, "frozen development qrels SHA256"):
+        with self.assertRaisesRegex(EvaluationError, "frozen qrels SHA256"):
             score(self.args)
         self.args.expected_development_qrels_sha256 = self.sha(self.args.qrels)
         self.args.qrels.write_text("q 0 d 2\n", encoding="utf-8")
-        with self.assertRaisesRegex(EvaluationError, "frozen development qrels SHA256"):
+        with self.assertRaisesRegex(EvaluationError, "frozen qrels SHA256"):
             score(self.args)
         self.assertFalse(self.args.output.exists())
+
+    def test_opportunity_requires_frozen_qrels_before_scoring(self):
+        self.args.routing_opportunity = True
+        with self.assertRaisesRegex(EvaluationError, "frozen qrels SHA256"):
+            score(self.args)
+        self.assertFalse(self.args.output.exists())
+
+    @unittest.skipUnless(find_spec("numpy"), "NumPy required for grouped sensitivity")
+    def test_opportunity_cli_scores_and_keeps_original_result_fields(self):
+        previous = score(self.args)
+        self.args.output = self.root / "opportunity.json"
+        arguments = ["score", "--routing-opportunity", "--expected-qrels-sha256", self.sha(self.args.qrels)]
+        for name, value in vars(self.args).items():
+            arguments.extend([f"--{name.replace('_', '-')}", str(value)])
+        with redirect_stdout(StringIO()):
+            self.assertEqual(main(arguments), 0)
+        current = json.loads(self.args.output.read_bytes())
+        opportunity = current.pop("routing_opportunity")
+        self.assertEqual(current, previous)
+        self.assertEqual(opportunity["vector_call_budget"], 0)
+        self.assertEqual(opportunity["observed_policy_grouped_sensitivity"]["group_count"], 1)
 
     def test_foreign_corpus_binding_rejected_by_frozen_identity(self):
         self.binding["corpus_sha256"] = "e" * 64

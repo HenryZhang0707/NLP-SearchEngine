@@ -35,6 +35,7 @@
 - [x] **RFC-0001 两动作对照**。完成规则与同预算随机对照、线性收益模型独立训练和等预算回放。固定训练阈值与规则在 100k 开发集另有 2,040 次真实 HTTP 对照，向量调用为 715 对 748，质量与耗时证据支持保留现有默认规则。详见 [Router 对照](docs/contributions/rfc0001-router-budget.md)。
 - [x] **RFC-0001 开发集预算曲线与决策复核**。在同一批冻结排序上复算多个向量调用预算，并比较同预算随机期望。重排质量保护的新版收据核对同一开发集、同一策略汇总和独立固定深度对照，只记录开发决策。 [预算曲线](docs/contributions/rfc0001-router-budget.md#开发集向量调用预算曲线) · [重排决策](docs/rfc0001/DUREADER_QUALITY_GUARD.md)
 - [x] **RFC-0001 两动作 Router 特征消融**。四组特征逐组移除，每个变体仅用 172 条训练查询重拟合，在 1,020 条开发查询上按 748 次向量调用预算配对评分。已记录误触发、漏触发和质量区间。 [特征消融](docs/contributions/rfc0001-router-budget.md#等向量调用预算下的特征消融)
+- [x] **RFC-0001 两动作等预算上界与分组复验**。在 DuReader 100k 开发集及新闻 20k 历史辅助标注上独立复现原评分，量化约束保护下的事后最优分配、误触发数量和分组配对区间。 [上界与分组复验](docs/contributions/rfc0001-router-budget.md#两种检索动作的等预算上界)
 - [ ] **RFC-0001 独立冲突处理待评审**。从组员 PR #9 的 `c21ddef` 合并主仓库 `592700e`，六个冲突路径的独立候选已推到 fork。由 PR #9 作者或维护者确认后更新该 PR。 [冲突处理候选](https://github.com/HenryZhang0707/NLP-SearchEngine/commit/273404cbdcc177687a18fef6272f0d58c42eb6d5)
 - [x] **RFC-0001 Router 与线上接口联合验证**。隔离候选结合 PR #9 的 `c21ddef` 和 PR #11 的 `fb3a712`，保留策略工厂、服务身份、显式约束、故障回退及有界排序。保留单一向量配置入口，Qdrant 的实际 HNSW 参数与清单不符时拒绝启动。真实小型 Qdrant 的 `hnsw_ef=128` 请求载荷、结果排序及索引身份已在上一版隔离候选校验。 [Router PR](https://github.com/ShwStone/NLP-SearchEngine/pull/9) · [评测 PR](https://github.com/ShwStone/NLP-SearchEngine/pull/11)
 - [x] **RFC-0001 全量词法分片与候选核对**。PR #9 的 81 个分片覆盖 8,096,668 篇，连续偏移及拼接语料 SHA-256 已核对。队友还记录了分片与已交付 compact BM25 的 train/dev 候选一致性。 [分片说明](docs/rfc0001/FULL_SHARDED_PLAN.md) · [全量报告](docs/rfc0001/DUREADER_FULL_FINAL_REPORT.json)
