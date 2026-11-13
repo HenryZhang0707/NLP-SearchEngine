@@ -30,8 +30,9 @@
 - [x] **RFC-0002 自爬数据卡与冻结集审计**。核对 20,000 篇有序文档、200 条来源绑定查询、8,281 对池化判定和四臂排名的判定覆盖。已重放历史划分，并核对新闻查询与全部 official-dev 查询的词面重叠，以及新闻正文与 8,096,668 篇官方 passage 的完整正文精确重叠。 [数据卡与复验](docs/contributions/rfc0002-news20k-dataset-card.md)
 - [ ] **RFC-0002 自爬人工实测**。复用冻结的 20k 语料、划分、候选池与双索引。四份离线盲审包已回读校验，覆盖 8,281 对，其中 1,656 对有独立重叠安排。收到四份完整评分后，报告裁决前一致率和分歧数量，发出只含分歧条目的裁决包，随后导入结果并重评四模式。现有辅助标注结果单列。
 - [x] **RFC-0001 两动作对照**。完成规则与同预算随机对照、线性收益模型独立训练和等预算回放。固定训练阈值与规则在 100k 开发集另有 2,040 次真实 HTTP 对照，向量调用为 715 对 748，质量与耗时证据支持保留现有默认规则。详见 [Router 对照](docs/contributions/rfc0001-router-budget.md)。
-- [x] **RFC-0001 Router 与线上接口联合验证**。隔离候选结合 PR #9 的 `b2d6a87` 和 PR #11 的 `d2d30a6`，保留策略工厂、服务身份、显式约束、故障回退及有界排序。回环 HTTP 覆盖策略回显、正常和故障响应。真实小型 Qdrant 校验了 `hnsw_ef=128` 请求载荷、结果排序及索引身份。 [Router PR](https://github.com/ShwStone/NLP-SearchEngine/pull/9) · [评测 PR](https://github.com/ShwStone/NLP-SearchEngine/pull/11)
-- [x] **RFC-0001 全量词法分片源数据审计**。PR #9 的 81 个分片覆盖 8,096,668 篇，连续偏移及拼接语料 SHA-256 已核对。倒排语义、全局评分和检索质量需单独验收。 [分片说明](docs/rfc0001/FULL_SHARDED_PLAN.md)
+- [x] **RFC-0001 Router 与线上接口联合验证**。隔离候选结合 PR #9 的 `98ef44d` 和 PR #11 的 `d2d30a6`，保留策略工厂、服务身份、显式约束、故障回退及有界排序。保留单一向量配置入口，Qdrant 的实际 HNSW 参数与清单不符时拒绝启动。真实小型 Qdrant 的 `hnsw_ef=128` 请求载荷、结果排序及索引身份已在上一版隔离候选校验。 [Router PR](https://github.com/ShwStone/NLP-SearchEngine/pull/9) · [评测 PR](https://github.com/ShwStone/NLP-SearchEngine/pull/11)
+- [x] **RFC-0001 全量词法分片与候选核对**。PR #9 的 81 个分片覆盖 8,096,668 篇，连续偏移及拼接语料 SHA-256 已核对。队友还记录了分片与已交付 compact BM25 的 train/dev 候选一致性。 [分片说明](docs/rfc0001/FULL_SHARDED_PLAN.md) · [全量报告](docs/rfc0001/DUREADER_FULL_FINAL_REPORT.json)
+- [x] **RFC-0001 独立固定预算对照**。队友在 1,020 条 dev 查询上独立执行固定 CE 对照。100k 的学习策略相对固定 CE-24 的 nDCG@10 差值为 `+0.00653`，分组 95% CI 跨零；8M 相对固定 CE-33 为 `-0.01708`，分组 95% CI `[-0.02450,-0.01022]`。离线质量保护选择固定 CE-33，因而没有保留路由节省。该报告未使用 808 条留出，也不代表线上默认策略已改变。 [质量保护决策](docs/rfc0001/DUREADER_QUALITY_GUARD.md)
 - [x] **RFC-0002 ANN 参数敏感性**。在同一 100k 快照和冻结 dev 上完成 Dense 与固定 RRF 的 ef=128/256 配对对照。记录四项指标、查询级区间、候选排名差异和旧 ef=256 TREC 前缀对账。 [结果与复验](docs/contributions/rfc0002-ann-ef-sensitivity.md)
 - [ ] **RFC-0001 历史原生结果复跑**。向实验负责人取得固定版本的 M3 模型清单和原生特征加载器，核对哈希与运行环境后重跑对应 HTTP 确认。排序校准和增强特征实验各自需要原始依赖。 [复核边界](docs/contributions/rfc0001-final-router.md#复核入口)
 - [ ] **RFC-0002 公开 20k 部署复验**。公开站点目前回显 `tiny`、10 篇、向量未启用。部署负责人切换经校验的 20k 双索引后，再用公开地址验证索引身份、四种检索模式、显式约束和错误行为。

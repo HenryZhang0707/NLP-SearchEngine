@@ -72,6 +72,17 @@ python -u -m evaluation.encode_full_dense_chunks \
 
 The first run is limited to one shard to measure actual throughput and resource use. Encoding summaries explicitly state `qdrant_built=false`. A streaming Qdrant ingestion path, corpus-wide identity alignment, snapshots and ANN checks remain required before the dense backend can be evaluated as a full-corpus index.
 
+`evaluation.ingest_dense_shard` now provides a bounded-batch ingestion primitive.
+It binds the collection to the exact build metadata and checks dimensions and
+distance before writing. Retrying a partially uploaded shard replays validated
+records with stable global point IDs, so upserts do not duplicate documents.
+After ingestion it checks the exact count for the declared shard IDs. A failure
+can leave partial points in the unpublished build collection; successful ingestion
+also explicitly reports `collection_published=false`. Final snapshots, complete
+corpus coverage, HNSW configuration/readiness and server-side vector readback
+remain separate gates. The fixture integration test uses Qdrant's local engine;
+it is not evidence of full-corpus ingestion or HTTP server parity.
+
 ## Full BM25 shard completion
 
 All 81 BM25 shards are now built and independently verified. The source parity audit reports 8,096,668 documents, exact source/index document fields and local IDs, contiguous offsets, required file SHA256 checks, and matching concatenation with the normalized full corpus. The full corpus SHA256 is `bc67f3ccfe7423c039f04c7a5e7f6eae07a7f722087edf0caa7cfc694a8c45e8`; the last shard contains 96,668 documents. The machine-readable audit is `full-sharded-bm25-source-parity.json`. This verifies the sharded lexical artifacts and source identity; it does not yet publish global statistics, dense/Qdrant, or retrieval-quality results.

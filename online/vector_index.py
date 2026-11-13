@@ -47,27 +47,30 @@ class QdrantVectorIndex:
     """Read-only Qdrant adapter with manifest/collection compatibility checks."""
 
     def __init__(self, manifest: VectorManifest, url: str, *, hnsw_ef: int | None = None,
-                 timeout_s: float = 30.0):
+                 timeout_s: float = 30.0, exact: bool = False):
         if hnsw_ef is not None and (type(hnsw_ef) is not int or hnsw_ef <= 0):
             raise ValueError("hnsw_ef must be a positive integer")
         if (type(timeout_s) is bool or not isinstance(timeout_s, (int, float))
                 or not math.isfinite(timeout_s) or timeout_s <= 0):
             raise ValueError("timeout_s must be a positive finite number of seconds")
+        if type(exact) is not bool:
+            raise ValueError("exact must be boolean")
         if manifest.backend != "qdrant-hnsw":
             raise ValueError("Qdrant 适配器需要 qdrant-hnsw manifest")
         try:
             from qdrant_client import QdrantClient
-            if hnsw_ef is not None:
+            if hnsw_ef is not None or exact:
                 from qdrant_client import models
         except ImportError as error:
             raise RetrievalUnavailable("QdrantVectorIndex 需要安装 qdrant-client") from error
         self._manifest = manifest
         self._hnsw_ef = hnsw_ef
+        self._exact = exact
         self._timeout_s = float(timeout_s)
         # exact=False permits ANN; collection state and the planner still decide
         # whether a particular query traverses HNSW or scans a small segment.
-        self._search_params = (models.SearchParams(hnsw_ef=hnsw_ef, exact=False)
-                               if hnsw_ef is not None else None)
+        self._search_params = (models.SearchParams(hnsw_ef=hnsw_ef, exact=exact)
+                               if hnsw_ef is not None or exact else None)
         self._client = QdrantClient(url=url, timeout=self._timeout_s)
         self._collection = manifest.collection
         try:
@@ -87,6 +90,11 @@ class QdrantVectorIndex:
             raise ValueError("Qdrant collection 缺少构建元数据；请使用 1.16+ 服务和客户端重建")
         if metadata[VECTOR_BUILD_METADATA_KEY] != manifest.build_metadata():
             raise ValueError("Qdrant collection 构建元数据与 manifest 不一致，请加载同版本产物")
+        actual_hnsw = getattr(config, "hnsw_config", None)
+        if any(type(getattr(actual_hnsw, name, None)) is not type(expected)
+               or getattr(actual_hnsw, name, None) != expected
+               for name, expected in manifest.index_params.items()):
+            raise ValueError("Qdrant actual HNSW build parameters mismatch")
         try:
             count = self._client.count(collection_name=self._collection, exact=True).count
         except Exception as error:
@@ -99,7 +107,7 @@ class QdrantVectorIndex:
 
     @property
     def search_config(self) -> dict:
-        return {"hnsw_ef": self._hnsw_ef, "exact": False, "timeout_s": self._timeout_s}
+        return {"hnsw_ef": self._hnsw_ef, "exact": self._exact, "timeout_s": self._timeout_s}
 
     def search(self, query_vector: Sequence[float], limit: int) -> list[VectorHit]:
         validate_vector(query_vector, self._manifest.embedding)
