@@ -18,7 +18,7 @@ from online.server import make_handler
 from online.vector_index import MemoryVectorIndex
 
 from evaluation.evaluate import load_run
-from evaluation.paired_http import collect, identity_digest, load_protocol, verify
+from evaluation.paired_http import collect, get_identities, identity_digest, load_protocol, verify
 from evaluation.serving_cost import sha256
 
 
@@ -122,6 +122,11 @@ class PairedHTTPTest(unittest.TestCase):
             self.assertEqual(result["arms"]["dense"]["identity_sha256"], identity_digest(bound_identity))
             self.assertEqual(result["arms"]["lexical"]["vector_attempts"], 0)
 
+            startup_with_ce = {**json.loads(lines[0]), "reranker": {"depth": 40}}
+            log.write_text("\n".join([json.dumps(startup_with_ce), *lines[1:]]) + "\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "CE-enabled hybrid arm"):
+                verify(plan, digest, journal, logs)
+
             # A duplicate server event and a second startup both invalidate the
             # time sample, even if every individual response still looks valid.
             bad = root / "rejected"
@@ -134,6 +139,30 @@ class PairedHTTPTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 verify(plan, digest, journal, logs, bad)
             self.assertFalse(bad.exists())
+
+    def test_hybrid_baseline_rejects_ce_at_collection_even_with_matching_digest(self):
+        from online.reranking import HybridReranker
+        from tests.test_peer_routing_integration import RecordingScorer
+
+        engine, corpus, _, identity = fixture_service()
+        engine = SearchEngine(engine.reader, engine.encoder, engine.vectors,
+                              reranker=HybridReranker(RecordingScorer(), depth=3))
+        with ThreadingHTTPServer(("127.0.0.1", 0), make_handler(engine)) as server:
+            thread = Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                endpoint = f"http://127.0.0.1:{server.server_port}"
+                arm = {"label": "baseline", "mode": "hybrid", "endpoint": endpoint,
+                       "policy_version": identity["policy"]["policy_version"],
+                       "identity_sha256": identity_digest(identity)}
+                plan = {"arms": [arm], "corpus_sha256": corpus, "depth": 3, "timeout_s": 5}
+                with self.assertRaisesRegex(ValueError, "CE-enabled hybrid arm"):
+                    get_identities(plan)
+                arm["mode"] = "lexical"
+                self.assertEqual(get_identities(plan)["baseline"], identity)
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
 
     def test_adaptive_dense_requires_an_opt_in_and_frozen_service_identity(self):
         engine, corpus, startup, bound_identity = fixture_service(DensePolicy())

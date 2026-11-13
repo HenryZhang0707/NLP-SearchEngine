@@ -4,7 +4,7 @@ import json
 import math
 from pathlib import Path
 import tempfile
-from unittest.mock import patch
+from unittest.mock import PropertyMock, patch
 
 from contracts.api import ApiError, SearchRequest
 from contracts.retrieval import RetrievalUnavailable
@@ -31,7 +31,7 @@ def _artifact(engine):
                 coef=[0.]*len(FEATURE_NAMES), intercept=.1,
                 provenance={'source':dict(source_manifest=engine.reader.manifest(), candidate_k=200, rrf_c=60.,
                                           vector_manifest=engine.vectors.manifest().to_dict(),
-                                          vector_search_params={'hnsw_ef':128,'exact':False})})
+                                          vector_search_params={'hnsw_ef':None,'exact':True})})
 
 
 def test_statistics_are_finite_and_do_not_need_dense_or_labels():
@@ -76,14 +76,14 @@ def test_injected_router_preserves_constraints_request_validation_and_fallback()
 
 def test_gain_router_binding_and_malformed_model_rejection():
     engine, encoder, vectors = _setup()
-    vectors.search_params={'hnsw_ef':128,'exact':False}
     with tempfile.TemporaryDirectory() as tmp:
         path=Path(tmp)/'router.json'
         path.write_text(json.dumps(_artifact(engine)))
         router=GainRouter(path)
         experiment=SearchEngine(engine.reader,encoder,vectors,router=router)
         assert experiment.search(SearchRequest('phone',mode='adaptive')).routing.vector_used
-        with patch.object(vectors,'search_params',{'hnsw_ef':32,'exact':False}):
+        with patch.object(type(vectors), "search_config", new_callable=PropertyMock,
+                          return_value={"hnsw_ef": 32, "exact": False}):
             _raises(ValueError,lambda:SearchEngine(engine.reader,encoder,vectors,router=router))
         for change in ({'feature_version':'vector-first-v1'},{'scale':[0.]*len(FEATURE_NAMES)},
                        {'selected_features':['dense_score']},{'threshold':float('nan')}):
@@ -106,7 +106,6 @@ def test_v2_coverage_and_online_feature_dispatch_are_consistent():
     assert math.isclose(values['top10_mean_term_coverage'],1/3)
     assert math.isclose(values['top10_rare_term_coverage'],2/3)
     assert values['top10_all_terms']==0
-    vectors.search_params={'hnsw_ef':128,'exact':False}
     artifact=_artifact(engine)
     artifact.update(feature_version=FEATURE_VERSION_V2,feature_names=list(FEATURE_NAMES_V2),
                     selected_features=['top1_term_coverage'],mean=[0.],scale=[1.],coef=[1.],intercept=0.,threshold=.9)
