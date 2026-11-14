@@ -100,9 +100,9 @@ Qdrant 适配器和快照发布逻辑已在 `offline/vector_build.py`、`online/
 
 2026-10-29 已使用仓库的 `evaluation.crawl_web` 对公开的中国政府网执行一次有界抓取：seed 为 `https://www.gov.cn/`，同域 HTTP(S) BFS，`max_documents=30`、`max_depth=1`、`max_bytes=500000`、请求间隔 0.2 秒，并要求 robots.txt 允许。抓取结果为 30 篇文档，corpus SHA256 为 `8e6cde8dfa0647deb9d55466064d951b445eb19f13740d349ef8398b86d5ab1b`；该语料和抓取收据保存在版本库外。
 
-从这 30 篇文档构造了 10 个查询和 97 条 BM25 候选池记录，生成了带标题、URL、片段和启发式建议的 `annotation_review.md`。启发式建议文件的 SHA256 为 `61f38c72504dfbe4ff764946d4c149a6585faa9226646b9edff7b0b629303ba8`；它只作为候选建议，不是正式 qrels。该 30 篇抓取也不等于 Issue #6 要求的自爬 20k 有效文档。
+从这 30 篇文档构造了 10 个查询和 97 条 BM25 候选池记录，生成了带标题、URL、片段和启发式建议的 `annotation_review.md`。启发式建议文件的 SHA256 为 `61f38c72504dfbe4ff764946d4c149a6585faa9226646b9edff7b0b629303ba8`，用途为早期标注建议。后续 20k 自爬评测使用本节开头记录的独立新华网语料。
 
-随后使用相同 seed、robots 和同域约束，将 `max_depth` 提高到 2、`max_documents=20000`，实际前沿耗尽后得到 393 篇有效文档；该 corpus 的字节数为 5,048,778，SHA256 为 `757e93bfc08f800827cff925864155032bbfe5d4be6cdcc5009b7b8996419531`。对这 393 篇文档重新生成了 10 查询、100 条 top-10 候选池和独立的 provisional suggestion manifest；建议仍标记为 `ai_suggested_needs_human_review`，不构成正式 qrels。随后修复分块传输中断边界并运行 depth-3 重试，得到 799 篇有效文档，corpus 字节数为 9,083,175，SHA256 为 `1f209cad5da40808b14f6249b886308e977f708dd222f2c9eaf984f3d5b9f258`；该批次只有未标注模板，尚未生成正式候选 qrels。由于该站点在当前边界下没有形成 20k 文档，Issue #6 的“自爬确认后 20k”验收仍未通过；所有 corpus、模板和建议文件均保存在版本库外。
+随后使用相同 seed、robots 和同域约束，将 `max_depth` 提高到 2、`max_documents=20000`，实际前沿耗尽后得到 393 篇有效文档；该 corpus 的字节数为 5,048,778，SHA256 为 `757e93bfc08f800827cff925864155032bbfe5d4be6cdcc5009b7b8996419531`。对这 393 篇文档重新生成了 10 查询、100 条 top-10 候选池和独立的 provisional suggestion manifest，标记为 `ai_suggested_needs_human_review`。随后修复分块传输中断边界并运行 depth-3 重试，得到 799 篇有效文档，corpus 字节数为 9,083,175，SHA256 为 `1f209cad5da40808b14f6249b886308e977f708dd222f2c9eaf984f3d5b9f258`，该批次只生成了未标注模板。该站点的结果保留作小批试采证据，所有 corpus、模板和建议文件均保存在版本库外。
 
 随后运行 depth-4 重试，得到 1,029 篇有效文档；corpus 字节数为 11,681,876，SHA256 为 `463ac4eff4fdc22047da362fdc22d47f0be6bf09c1587c3c8ba318b9e8164ff3`。该批次生成了 10 个查询、100 条 top-10 候选池记录和 `annotation20k-depth4_review.md`；建议文件 SHA256 为 `5400b65c24c1a4e114df67c1cf4e9428621cde92052ec5ebe7bef5ae8beda643`，状态仍为 `ai_suggested_needs_human_review`。它仍不是人工 qrels，也没有达到 20k 有效文档。
 
