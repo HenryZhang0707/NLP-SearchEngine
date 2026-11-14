@@ -240,6 +240,20 @@ class PeerRoutingIntegrationTests(unittest.TestCase):
             self.assertEqual(len(live["service_instances_by_epoch"]), 1)
             live_instances = next(iter(live["service_instances_by_epoch"].values()))
             self.assertTrue(any(live_instances.items() <= row.items() for row in instances))
+            replay_dir = root / "replay"
+            replay = [
+                "--replay-from", str(out), "--out", str(replay_dir), "--measure-random",
+                *args[args.index("--queries"):args.index("--out")],
+            ]
+            with patch.object(ce_http, "http_client", side_effect=AssertionError("network used")):
+                with redirect_stderr(io.StringIO()) as error, self.assertRaises(SystemExit):
+                    ce_http.main(replay)
+                self.assertIn("requires its original --fit-receipt", error.getvalue())
+                ce_http.main([*replay, "--fit-receipt", str(fit_receipt), fit_digest])
+            self.assertEqual(
+                {path.name: path.read_bytes() for path in replay_dir.iterdir()},
+                {path.name: path.read_bytes() for path in out.iterdir() if path.suffix != ".sqlite3"},
+            )
 
     def test_learned_gate_skips_or_applies_the_same_fixed_ce40(self):
         scorer, fixed_scorer = RecordingScorer(), RecordingScorer()

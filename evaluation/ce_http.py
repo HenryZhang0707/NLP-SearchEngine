@@ -2,7 +2,7 @@
 
 import argparse
 from collections import Counter
-from contextlib import closing
+from contextlib import closing, contextmanager
 import hashlib
 import ipaddress
 import json
@@ -258,21 +258,41 @@ def capture_query(client, arms, record, index, order, identity):
     return observations
 
 
-def journal(db, protocol):
-    db.executescript("""
-        CREATE TABLE IF NOT EXISTS protocol (id INTEGER PRIMARY KEY CHECK(id=1), body TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS queries (
-            qid TEXT PRIMARY KEY, epoch TEXT NOT NULL, arms TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS invalid_epochs (epoch TEXT PRIMARY KEY, reason TEXT NOT NULL);
-    """)
+@contextmanager
+def open_journal(path, *, replay):
+    if replay:
+        wal = path.with_name(path.name + "-wal")
+        if wal.is_file() and wal.stat().st_size:
+            raise EvaluationError("replay requires a sealed journal with no uncheckpointed WAL")
+        rollback = path.with_name(path.name + "-journal")
+        if rollback.is_file() and rollback.stat().st_size:
+            raise EvaluationError("replay requires a sealed journal with no pending rollback")
+        if not path.is_file():
+            raise EvaluationError(f"source journal is missing: {path.name}")
+        connection = sqlite3.connect(path.resolve().as_uri() + "?mode=ro&immutable=1", uri=True)
+    else:
+        connection = sqlite3.connect(path)
+    with closing(connection) as db:
+        yield db
+
+
+def journal(db, protocol, *, replay=False):
     body = json.dumps(protocol, sort_keys=True, ensure_ascii=False, allow_nan=False)
-    with db:
-        db.execute("INSERT OR IGNORE INTO protocol VALUES (1, ?)", (body,))
-        if db.execute("SELECT body FROM protocol WHERE id=1").fetchone()[0] != body:
-            raise EvaluationError("output journal belongs to a different capture protocol")
-        if db.execute("SELECT 1 FROM invalid_epochs LIMIT 1").fetchone():
-            raise EvaluationError("capture journal contains an invalid service epoch")
+    if not replay:
+        db.executescript("""
+            CREATE TABLE IF NOT EXISTS protocol (id INTEGER PRIMARY KEY CHECK(id=1), body TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS queries (
+                qid TEXT PRIMARY KEY, epoch TEXT NOT NULL, arms TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS invalid_epochs (epoch TEXT PRIMARY KEY, reason TEXT NOT NULL);
+        """)
+        with db:
+            db.execute("INSERT OR IGNORE INTO protocol VALUES (1, ?)", (body,))
+    row = db.execute("SELECT body FROM protocol WHERE id=1").fetchone()
+    if row is None or row[0] != body:
+        raise EvaluationError("output journal belongs to a different capture protocol")
+    if db.execute("SELECT 1 FROM invalid_epochs LIMIT 1").fetchone():
+        raise EvaluationError("capture journal contains an invalid service epoch")
     return {qid: (epoch, json.loads(arms)) for qid, epoch, arms in
             db.execute("SELECT qid, epoch, arms FROM queries ORDER BY rowid")}
 
@@ -468,7 +488,7 @@ def random_live_pair(client, arms, identity, record, control, order, reference):
     return {"control": control, "order": list(order), **rows}
 
 
-def measure_random(out, client, arms, records, warmup, capture_protocol, captured, plan):
+def measure_random(out, client, arms, records, warmup, capture_protocol, captured, plan, *, replay_from=None):
     arms = {name: arms[name] for name in ("rrf", "ce40", "learned")}
     frozen_identity = capture_protocol["identities"]
     identity = {"common": frozen_identity["common"], "rerankers": {
@@ -487,8 +507,11 @@ def measure_random(out, client, arms, records, warmup, capture_protocol, capture
         live_protocol["instance_header"] = capture_protocol["instance_header"]
     instances = {}
     schedule = list(random_live_schedule(records, plan))
-    with closing(sqlite3.connect(out / "matched-random-live.sqlite3")) as db:
-        saved = journal(db, live_protocol)
+    live_path = (replay_from or out) / "matched-random-live.sqlite3"
+    if replay_from is not None and not live_path.is_file():
+        raise EvaluationError("live random journal is missing")
+    with open_journal(live_path, replay=replay_from is not None) as db:
+        saved = journal(db, live_protocol, replay=replay_from is not None)
         if list(saved) != [record.qid for record, _, _ in schedule[:len(saved)]]:
             raise EvaluationError("live random journal contains unexpected query IDs or order")
         for record, control, order in schedule[:len(saved)]:
@@ -505,6 +528,8 @@ def measure_random(out, client, arms, records, warmup, capture_protocol, capture
                 bind_epoch_instance(instances, epoch, "learned", row["learned"])
                 bind_epoch_instance(instances, epoch, control, row["random"])
         if len(saved) < len(schedule):
+            if replay_from is not None:
+                raise EvaluationError("live random journal is incomplete")
             if check_services(client, arms) != identity:
                 raise EvaluationError("live random service identity differs from frozen capture")
             for i, record in enumerate(warmup):
@@ -562,10 +587,28 @@ def measure_random(out, client, arms, records, warmup, capture_protocol, capture
     return path
 
 
+def replay_configuration(directory):
+    try:
+        with open_journal(directory / "capture.sqlite3", replay=True) as db:
+            row = db.execute("SELECT body FROM protocol WHERE id=1").fetchone()
+        protocol = json.loads(row[0]) if row else None
+        depths = protocol["depths"]
+    except (sqlite3.Error, TypeError, ValueError, KeyError) as error:
+        raise EvaluationError("cannot read the source capture protocol") from error
+    expected = {"rrf": 0, "ce28": 28, "ce40": 40, "learned": GATE_DEPTH}
+    if (not isinstance(depths, dict) or "rrf" not in depths
+            or not ({"ce28", "ce40"} & depths.keys()) or ("learned" in depths and "ce40" not in depths)
+            or any(type(depth) is not int or expected.get(name) != depth for name, depth in depths.items())):
+        raise EvaluationError("capture journal has invalid arm depths")
+    return protocol, {name: (depth, None) for name, depth in expected.items() if name in depths}
+
+
 def main(argv=None):
     cli = argparse.ArgumentParser(description=__doc__)
-    cli.add_argument("--baseline", required=True)
-    cli.add_argument("--rerank", action="append", nargs=2, metavar=("DEPTH", "URL"), required=True)
+    cli.add_argument("--baseline")
+    cli.add_argument("--rerank", action="append", nargs=2, metavar=("DEPTH", "URL"))
+    cli.add_argument("--replay-from", type=Path,
+                     help="Recompute reports from completed read-only journals without HTTP")
     cli.add_argument("--learned", help="Optional digest-bound CE40 gate endpoint")
     cli.add_argument("--measure-random", action="store_true",
                      help="Measure paired HTTP latency against the frozen matched random plan")
@@ -578,21 +621,38 @@ def main(argv=None):
     for name in ("queries", "warmup-queries", "qrels", "out"):
         cli.add_argument(f"--{name}", type=Path, required=True)
     args = cli.parse_args(argv)
-    arms = {"rrf": (0, endpoint(args.baseline))}
-    for depth, url in sorted(args.rerank):
-        if depth not in ("28", "40") or f"ce{depth}" in arms:
-            cli.error("--rerank requires each of depth 28 and 40 at most once")
-        arms[f"ce{depth}"] = (int(depth), endpoint(url))
-    if args.learned:
-        if "ce40" not in arms:
-            cli.error("--learned requires a fixed CE40 endpoint")
-        arms["learned"] = (GATE_DEPTH, endpoint(args.learned))
+    if args.replay_from is not None:
+        if args.baseline or args.rerank or args.learned:
+            cli.error("--replay-from reads arm configuration from the source journal")
+        if args.out.resolve().is_relative_to(args.replay_from.resolve()):
+            cli.error("replay output must be outside the source capture directory")
+        if args.out.exists() and (not args.out.is_dir() or any(args.out.iterdir())):
+            cli.error("replay output must be a new or empty directory")
+        saved_protocol, arms = replay_configuration(args.replay_from)
+        args.learned = "learned" in arms
+        args.require_instance_id |= "instance_header" in saved_protocol
+        args.require_encoder_runtime |= saved_protocol.get("require_encoder_runtime") is True
+        args.measure_random |= (args.replay_from / "matched-random-live.sqlite3").is_file()
+        if "fit_receipt_sha256" in saved_protocol and not args.fit_receipt:
+            cli.error("this capture requires its original --fit-receipt")
+    else:
+        if not args.baseline or not args.rerank:
+            cli.error("capture requires --baseline and at least one --rerank")
+        arms = {"rrf": (0, endpoint(args.baseline))}
+        for depth, url in sorted(args.rerank):
+            if depth not in ("28", "40") or f"ce{depth}" in arms:
+                cli.error("--rerank requires each of depth 28 and 40 at most once")
+            arms[f"ce{depth}"] = (int(depth), endpoint(url))
+        if args.learned:
+            if "ce40" not in arms:
+                cli.error("--learned requires a fixed CE40 endpoint")
+            arms["learned"] = (GATE_DEPTH, endpoint(args.learned))
+        if len({base for _, base in arms.values()}) != len(arms):
+            cli.error("each arm requires its own endpoint")
     if args.measure_random and not args.learned:
         cli.error("--measure-random requires --learned")
     if args.fit_receipt and (not args.learned or not re.fullmatch(r"[a-f0-9]{64}", args.fit_receipt[1])):
         cli.error("--fit-receipt requires --learned and a lowercase SHA256 digest")
-    if len({base for _, base in arms.values()}) != len(arms):
-        cli.error("each arm requires its own endpoint")
 
     inputs = {"queries": args.queries, "warmup_queries": args.warmup_queries, "qrels": args.qrels}
     fingerprints = {name: sha256(path) for name, path in inputs.items()}
@@ -609,7 +669,8 @@ def main(argv=None):
     ):
         raise EvaluationError("warmup and evaluated queries must be disjoint by ID and normalized text")
 
-    client = http_client(args.require_instance_id)
+    replay = args.replay_from is not None
+    client = None if replay else http_client(args.require_instance_id)
     order = list(arms)
     random.Random(SEED).shuffle(order)
     protocol = {
@@ -623,9 +684,11 @@ def main(argv=None):
         protocol["instance_header"] = SEARCH_INSTANCE_HEADER
     instances = {} if args.require_instance_id else None
     args.out.mkdir(parents=True, exist_ok=True)
-    with closing(sqlite3.connect(args.out / "capture.sqlite3")) as db:
+    with open_journal((args.replay_from or args.out) / "capture.sqlite3", replay=replay) as db:
         identities = completed_identity(db, len(records))
         if identities is None:
+            if replay:
+                raise EvaluationError("capture journal is incomplete")
             identities = check_services(client, arms)
         if args.require_encoder_runtime or args.fit_receipt:
             if not valid_query_encoder_runtime(identities["common"]["retrieval"].get("query_encoder_runtime")):
@@ -636,7 +699,9 @@ def main(argv=None):
             check_fit_receipt(Path(fit_path), fit_sha256, identities)
             protocol["fit_receipt_sha256"] = fit_sha256
         protocol["identities"] = identities
-        captured = journal(db, protocol)
+        captured = journal(db, protocol, replay=replay)
+        if replay and len(captured) != len(records):
+            raise EvaluationError("capture journal is incomplete")
         if list(captured) != query_ids[:len(captured)] or any(
             data.keys() != arms.keys() for _, data in captured.values()
         ):
@@ -674,8 +739,9 @@ def main(argv=None):
                 (json.dumps(random_plan, sort_keys=True, ensure_ascii=False, indent=2)
                  + "\n").encode("utf-8"))
     if args.measure_random:
-        print(measure_random(args.out, http_client(args.require_instance_id), arms, records,
-                             warmup, protocol, captured, random_plan))
+        print(measure_random(args.out, None if replay else http_client(args.require_instance_id),
+                             arms, records, warmup, protocol, captured, random_plan,
+                             replay_from=args.replay_from))
     if sha256(args.qrels) != fingerprints["qrels"]:
         raise EvaluationError("qrels changed during capture")
     qrels = load_qrels(args.qrels)

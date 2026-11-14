@@ -34,7 +34,7 @@
 - [ ] **RFC-0001 与 RFC-0002 合并评审**。[PR #11](https://github.com/ShwStone/NLP-SearchEngine/pull/11) 的 `11de948` 可独立评审，并保留 [PR #12](https://github.com/ShwStone/NLP-SearchEngine/pull/12) 的 `791bd4a`。Router 联合候选包含两者与 [PR #9](https://github.com/ShwStone/NLP-SearchEngine/pull/9) 的 `c21ddef`。PR #9 对上游 `master` 仍显示冲突，合并前由作者或维护者按最新 `master` 核对联合候选。
 - [x] **RFC-0001 可选 CE 接线及对照入口**。固定和学习门控共用冻结的混合检索候选，服务回显重排身份和实际打分数，配对评估校验同一服务实例与等重排预算。见[评测手册](evaluation/README.md#train-and-evaluate-a-ce40-gate)。
 - [x] **RFC-0001/0002 配对评测运行时核验**。新配对协议将查询编码器实现、实际设备、权重精度和可核验的模型清单摘要纳入服务身份。历史 journal 按原协议复验。CE 留出采集可用 `--fit-receipt` 将运行时、门控权重和检索配置绑定到训练回执，并另行记录真实硬件和负载条件。
-- [ ] **RFC-0001 CE 独立留出复验**。[Issue #3](https://github.com/ShwStone/NLP-SearchEngine/issues/3) 的两动作比较和 PR #9 已报告的 CE 开发集对照各自保留。独立留出复验需要原始词法索引、向量快照及冻结策略的身份核验；按固定 CE 和等成本对照记录真实 HTTP 质量、成本及失败情况，不用开发集或两动作结果替代。
+- [ ] **RFC-0001 CE 独立留出复验**。[Issue #3](https://github.com/ShwStone/NLP-SearchEngine/issues/3) 的两动作比较和 PR #9 已报告的 CE 开发集对照各自保留。独立留出复验需要原始词法索引、向量快照及冻结策略的身份核验；按固定 CE 和等成本对照记录真实 HTTP 质量、成本及失败情况，不用开发集或两动作结果替代。 已有离线复算入口，可从封存 SQLite、原始 qrels 和拟合回执重建 TREC、配对区间与随机对照摘要，并核对封存哈希。
 - [x] **Windows 回归验证**。修复 checkpoint 子进程退出后锁释放的时序断言、CLI 子进程编码、原生路径断言和 JSON 解码异常的测试稳定性。完整 Windows unittest 运行 211 项，跳过两项 POSIX 专用用例，其余通过。
 - [x] **旧 PR 功能核对**。[PR #2](https://github.com/ShwStone/NLP-SearchEngine/pull/2) 的采集与界面改动、[PR #7](https://github.com/ShwStone/NLP-SearchEngine/pull/7) 的离线构建与读取能力已有覆盖。已补回通用 SentenceTransformer 的批次配置，以及 Qdrant 逐批写入和失败后仅清理新集合的回归。PackedIndex 并发、缓存和失败重试覆盖在 Router 联合候选中独立验证。
 

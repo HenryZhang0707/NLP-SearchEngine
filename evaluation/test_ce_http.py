@@ -1,9 +1,10 @@
 """Paired CE HTTP capture and live random controls support offline replay."""
 
+from io import StringIO
 import json
 from pathlib import Path
 import sqlite3
-from contextlib import closing
+from contextlib import closing, redirect_stderr
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
@@ -51,6 +52,21 @@ class FixedCEResumeTests(unittest.TestCase):
                   patch.object(ce_http, "capture_query", side_effect=AssertionError("recaptured"))):
                 ce_http.main(args)
             self.assertEqual((out / "summary.json").read_bytes(), expected)
+            replay = [
+                "--replay-from", str(out), "--out", str(root / "replay"),
+                *args[args.index("--queries"):args.index("--out")],
+            ]
+            capture_path = out / "capture.sqlite3"
+            capture_bytes = capture_path.read_bytes()
+            with patch.object(ce_http, "http_client", side_effect=AssertionError("network used")):
+                ce_http.main(replay)
+                self.assertEqual(capture_path.read_bytes(), capture_bytes)
+                with closing(sqlite3.connect(capture_path)) as db, db:
+                    db.execute("DELETE FROM queries WHERE qid='q2'")
+                with self.assertRaisesRegex(ce_http.EvaluationError, "journal is incomplete"):
+                    ce_http.main([*replay, "--out", str(root / "incomplete")])
+            self.assertEqual((root / "replay" / "summary.json").read_bytes(), expected)
+            self.assertFalse((root / "replay" / "capture.sqlite3").exists())
 
     def test_live_random_checks_responses_resumes_pairs_and_republishes_offline(self):
         identity = {"common": {"retrieval": {"fixture": "frozen"}}, "rerankers": {
@@ -176,3 +192,37 @@ class FixedCEResumeTests(unittest.TestCase):
             self.assertEqual(live_path.read_bytes(), live_bytes)
             self.assertEqual((out / "summary.json").read_bytes(), original)
             self.assertEqual((out / "learned-diagnostics.json").read_bytes(), diagnostic_bytes)
+            replay_out = root / "replay"
+            replay = [
+                "--replay-from", str(out), "--out", str(replay_out),
+                *args[args.index("--queries"):args.index("--out")],
+            ]
+            journals = {path.name: path.read_bytes() for path in out.glob("*.sqlite3")}
+            with patch.object(ce_http, "http_client", side_effect=AssertionError("network used")):
+                ce_http.main(replay)
+                with redirect_stderr(StringIO()), self.assertRaises(SystemExit):
+                    ce_http.main([*replay, "--out", str(out / "nested")])
+                with redirect_stderr(StringIO()), self.assertRaises(SystemExit):
+                    ce_http.main(replay)
+            self.assertEqual({path.name: path.read_bytes() for path in out.glob("*.sqlite3")}, journals)
+            self.assertEqual(
+                {path.name: path.read_bytes() for path in replay_out.iterdir()},
+                {path.name: path.read_bytes() for path in out.iterdir() if path.suffix != ".sqlite3"},
+            )
+
+            random_journal = out / "matched-random-live.sqlite3"
+            with closing(sqlite3.connect(random_journal)) as db:
+                db.execute("PRAGMA journal_mode=WAL")
+                with db:
+                    db.execute("DELETE FROM queries WHERE qid='q4'")
+                with self.assertRaisesRegex(ce_http.EvaluationError, "uncheckpointed WAL"):
+                    ce_http.main([*replay, "--out", str(root / "wal")])
+            with (patch.object(ce_http, "http_client", side_effect=AssertionError("network used")),
+                  self.assertRaisesRegex(ce_http.EvaluationError, "live random journal is incomplete")):
+                ce_http.main([*replay, "--out", str(root / "incomplete")])
+            self.assertFalse((root / "incomplete" / "summary.json").exists())
+            random_journal.unlink()
+            with (patch.object(ce_http, "http_client", side_effect=AssertionError("network used")),
+                  self.assertRaisesRegex(ce_http.EvaluationError, "live random journal is missing")):
+                ce_http.main([*replay, "--out", str(root / "missing"), "--measure-random"])
+            self.assertFalse((root / "missing" / "summary.json").exists())

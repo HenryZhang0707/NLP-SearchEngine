@@ -141,6 +141,34 @@ resume after a restart on new ports with matching service identities. With
 this flag omitted, random replay quality is still available, but no random
 latency is measured.
 
+### Offline verification of completed CE captures
+
+Use the capture's source revision and Python runtime. Keep its journal and
+the original query, warmup and qrels inputs. With the input files in place,
+recompute the outputs into a new or empty directory:
+
+```bash
+python -m evaluation.ce_http \
+  --replay-from runs/ce-holdout --out runs/ce-holdout-replay \
+  --queries data/queries.holdout.jsonl --qrels data/qrels.holdout.tsv \
+  --warmup-queries data/queries.warmup.jsonl \
+  --fit-receipt runs/ce-train/fit-receipt.json "$FIT_RECEIPT_SHA256" \
+  --measure-random
+```
+
+The command reads the arms and identity requirements from the main journal.
+Supply the fit receipt and its recorded SHA256 when the capture used one.
+`--measure-random` requires the completed live random journal. A journal
+present in the source directory is replayed automatically. Use sealed
+journals after the capture process has exited and any SQLite WAL has been
+checkpointed. Replay opens those journals as immutable, makes no HTTP
+requests and rejects incomplete captures, changed inputs and invalid epochs.
+
+Compare the SHA256 of each regenerated TREC and JSON file against its sealed
+digest. This checks the metrics, paired intervals, matched random plan and
+latency summaries against the recorded rows. The original service instance
+IDs and request timings are retained. Replay does not measure new latency.
+
 ### Frozen unsupported-request policy and coverage
 
 The default remains strict: any HTTP error aborts evaluation. For a separately
