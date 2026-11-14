@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "policy": "quality-guard-40",
+  "decision_features": [
+    "n_terms",
+    "vocab_coverage",
+    "relative_gap",
+    "candidate_hits"
+  ],
+  "threshold": 0.153,
+  "actions": {
+    "heavy": "CE-40",
+    "cheap": "fixed-CE-33"
+  },
+  "cost_gate": {
+    "max_mean_ce_pairs": 36.49
+  },
+  "training_model_sha256": "2c6bb8e23543f0abff256edb6b03f6090559b137f938713660585e9bbc4d2ee2",
+  "http_requests_sha256": "d1e8d3f0bd4e9a451fbe006b99ad00477cb71791b2544475e441204ec76eab80",
+  "http_audit_sha256": "1b04119bc8534941151ca0f6fceed47e3f7ec0a796bf5140502088123ecfa215",
+  "qrels_read_after_requests": true,
+  "fallback": "fixed-CE-33",
+  "status": "audited"
+}
