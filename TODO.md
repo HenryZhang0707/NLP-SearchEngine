@@ -33,6 +33,7 @@
 - [x] **RFC-0002 ANN 参数敏感性**。在同一 100k 快照及开发划分上对照 `hnsw_ef=128/256`，记录一致指标、约束拒绝和延迟比较边界。见[ANN 对照](docs/contributions/rfc0002-ann-ef-sensitivity.md)。
 - [ ] **RFC-0001 与 RFC-0002 合并评审**。[PR #11](https://github.com/ShwStone/NLP-SearchEngine/pull/11) 的 `3eff8af` 可独立评审，并保留 [PR #12](https://github.com/ShwStone/NLP-SearchEngine/pull/12) 的 `791bd4a`。Router 联合候选包含两者与 [PR #9](https://github.com/ShwStone/NLP-SearchEngine/pull/9) 的 `c21ddef`。PR #9 对上游 `master` 仍显示冲突，合并前由作者或维护者按最新 `master` 核对联合候选。
 - [x] **RFC-0001 可选 CE 接线及对照入口**。固定和学习门控共用冻结的混合检索候选，服务回显重排身份和实际打分数，配对评估校验同一服务实例与等重排预算。见[评测手册](evaluation/README.md#train-and-evaluate-a-ce40-gate)。
+- [x] **RFC-0001 开发集 CE 质量与成本对照**。课程报告复用 PR #9 的 100k 与全量开发实验，保留固定深度、同量级 CE 预算、训练内排序选型、负结果及负载差异。详见 [CE 重排与逐查询成本分配](REPORT.md#10-ce-重排与逐查询成本分配)。
 - [x] **RFC-0001/0002 配对评测运行时核验**。新配对协议将查询编码器实现、实际设备、权重精度和可核验的模型清单摘要纳入服务身份。历史 journal 按原协议复验。CE 留出采集可用 `--fit-receipt` 将运行时、门控权重和检索配置绑定到训练回执，并另行记录真实硬件和负载条件。
 - [ ] **RFC-0001 CE 独立留出复验**。[Issue #3](https://github.com/ShwStone/NLP-SearchEngine/issues/3) 的两动作比较和 PR #9 已报告的 CE 开发集对照各自保留。独立留出复验需要原始词法索引、向量快照及冻结策略的身份核验；按固定 CE 和等成本对照记录真实 HTTP 质量、成本及失败情况，不用开发集或两动作结果替代。 已有离线复算入口，可从封存 SQLite、原始 qrels 和拟合回执重建 TREC、配对区间与随机对照摘要，并核对封存哈希。
 - [x] **Windows 回归验证**。修复 checkpoint 子进程退出后锁释放的时序断言、CLI 子进程编码、原生路径断言和 JSON 解码异常的测试稳定性。完整 Windows unittest 运行 211 项，跳过两项 POSIX 专用用例，其余通过。
