@@ -1,15 +1,19 @@
 """Read the frozen RFC-0002 evidence and print aggregate audit results."""
 import argparse
 from collections import Counter, defaultdict
+from dataclasses import asdict
+import gzip
 import hashlib
 import json
 import math
 from pathlib import Path
+import re
 from statistics import median
 import unicodedata
 from urllib.parse import urlsplit
 
-from .clean_news import NEAR_HAMMING_MAX, is_near_duplicate, signature
+from . import clean_news
+from .clean_news import NEAR_HAMMING_MAX, extract_article, is_near_duplicate, signature
 
 
 # Anchors from evaluation/RESOURCES.md and the local frozen evidence.
@@ -80,6 +84,56 @@ def residual_duplicates(bodies):
         signatures.append(current)
     return {"documents": len(signatures), "normalized_exact_pairs": exact_pairs,
             "nonexact_near_pairs": near_pairs, "band_candidate_pairs": candidate_pairs}
+
+
+def raw_extraction_stats(directory, sidecar, documents, max_bytes):
+    """Replay archived accepted pages from byte-verified captures and emit aggregates."""
+    counts = Counter()
+    selectors = Counter()
+    ordered_digest = hashlib.sha256()
+    raw_root = directory.resolve() / "raw"
+    for row in jsonl(sidecar):
+        if row["outcome"] != "success":
+            continue
+        doc_id = f"crawl-{row['representative_seq']:06d}"
+        url = row["source_url"]
+        candidates = [capture for capture in row["captures"] if capture["source_url"] == url]
+        if len(candidates) != 1:
+            counts["missing_or_ambiguous_capture"] += 1
+            continue
+        capture, = candidates
+        raw_digest = capture["http_bytes_sha256"]
+        require(re.fullmatch(r"[a-f0-9]{64}", raw_digest), "Invalid capture SHA-256")
+        relative = f"raw/{raw_digest[:2]}/{raw_digest}.html.gz"
+        require(capture["cache_path"] == relative, "Unexpected raw cache member path")
+        path = directory / relative
+        require(path.resolve().is_relative_to(raw_root) and not path.is_symlink(), "Untrusted raw cache path")
+        if not path.is_file():
+            counts["missing_raw_file"] += 1
+            continue
+        try:
+            with gzip.open(path, "rb") as stream:
+                payload = stream.read(max_bytes + 1)
+        except (OSError, EOFError):
+            counts["raw_read_failure"] += 1
+            continue
+        if len(payload) > max_bytes or hashlib.sha256(payload).hexdigest() != raw_digest:
+            counts["raw_hash_or_size_difference"] += 1
+            continue
+        article = extract_article(payload.decode(capture["charset"] or "utf-8", errors="replace"), url)
+        meta = asdict(article.metadata)
+        meta["filter_reasons"] = list(article.metadata.filter_reasons)
+        doc = documents[doc_id]
+        if (not article.accepted or (article.title, article.text) != (doc["title"], doc["text"])
+                or meta != row["clean_metadata"]):
+            counts["extraction_or_metadata_difference"] += 1
+            continue
+        counts["byte_hash_and_extraction_pass"] += 1
+        selectors[meta["body_selector"]] += 1
+        ordered_digest.update(f"{doc_id}\0{raw_digest}\0{meta['cleaned_body_sha256']}\n".encode())
+    require(sum(counts.values()) == len(documents), "Raw audit did not cover the accepted records")
+    return {"accepted_documents": len(documents), "counts": dict(counts), "selectors": dict(selectors),
+            "ordered_raw_and_body_binding_sha256": ordered_digest.hexdigest()}
 
 
 def corpus_stats(directory, receipt, *, visit_sidecar=None):
@@ -314,7 +368,7 @@ def ranked_coverage(directory, qrels, qrel_hash, test_ids):
     return coverage_for_rankings(runs, qrels)
 
 
-def audit(root, official_corpus=None, *, check_residual_duplicates=False):
+def audit(root, official_corpus=None, *, check_residual_duplicates=False, check_raw_extraction=False):
     crawl = root / "news-clean-20k-20261102"
     receipt = read_json(crawl / "receipt.json", RECEIPT_SHA256)
     documents, corpus = corpus_stats(crawl, receipt)
@@ -347,6 +401,21 @@ def audit(root, official_corpus=None, *, check_residual_duplicates=False):
             "corpus_sha256": receipt["corpus_sha256"],
             **residual_duplicates(row["text"] for row in documents.values()),
         }
+    if check_raw_extraction:
+        sidecar = crawl / "article_sidecar.jsonl"
+        extractor = Path(clean_news.__file__)
+        source_sha = sha256(extractor)
+        binding = receipt["binding"]
+        require(clean_news.RULE_VERSION == binding["rule_version"], "Raw extraction rule version changed")
+        results["corpus"]["raw_extraction"] = raw_extraction_stats(
+            crawl, sidecar, documents, binding["config"]["max_bytes"])
+        results["corpus"]["raw_extraction"].update(
+            source_sha256=source_sha,
+            original_source_sha256=binding["clean_source_sha256"],
+            rule_version=clean_news.RULE_VERSION,
+        )
+        check_hash(extractor, source_sha)
+        check_hash(sidecar, receipt["sidecar_sha256"])
     return results
 
 
@@ -356,10 +425,18 @@ def main():
     parser.add_argument("--official-corpus", type=Path, help="Optional frozen official full JSONL")
     parser.add_argument("--residual-duplicates", action="store_true",
                         help="Check every final news document under the crawl deduplication rules")
+    parser.add_argument("--replay-raw-extraction", action="store_true",
+                        help="Re-extract every accepted article from the private HTTP response cache")
     args = parser.parse_args()
-    result = audit(args.evidence_root, args.official_corpus, check_residual_duplicates=args.residual_duplicates)
+    result = audit(args.evidence_root, args.official_corpus, check_residual_duplicates=args.residual_duplicates,
+                   check_raw_extraction=args.replay_raw_extraction)
     print(json.dumps(result, ensure_ascii=True, indent=2, sort_keys=True))
+    if args.replay_raw_extraction:
+        raw = result["corpus"]["raw_extraction"]
+        if raw["counts"].get("byte_hash_and_extraction_pass", 0) != raw["accepted_documents"]:
+            return 2
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
