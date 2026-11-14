@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "policy": "quality-guard-40",
+  "decision_features": [
+    "n_terms",
+    "vocab_coverage",
+    "relative_gap",
+    "candidate_hits"
+  ],
+  "threshold": 0.153,
+  "actions": {
+    "heavy": "CE-40",
+    "cheap": "fixed-CE-33"
+  },
+  "cost_gate": {
+    "max_mean_ce_pairs": 36.49
+  },
+  "holdout_sha256": {
+    "queries": "883173d206af11095f496e95f2c158d570f13a89c2b7e0a6fb75c55dc0130ad5",
+    "qrels": "e32323a42dab45c07fa49b6e43954f397584ccd87d104bb0df4d2bbc9f19abca"
+  },
+  "training_model_sha256": "2c6bb8e23543f0abff256edb6b03f6090559b137f938713660585e9bbc4d2ee2",
+  "http_requests_sha256": "d1e8d3f0bd4e9a451fbe006b99ad00477cb71791b2544475e441204ec76eab80",
+  "http_audit_sha256": "1b04119bc8534941151ca0f6fceed47e3f7ec0a796bf5140502088123ecfa215",
+  "qrels_read_after_requests": true,
+  "fallback": "fixed-CE-33",
+  "status": "historical_summary_pending_raw_readback"
+}

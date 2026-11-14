@@ -34,9 +34,29 @@ from online.vector_index import QdrantVectorIndex
 from online.scorers import boolean_docs
 
 
+def quality_guard_heavy(score, threshold, explicit_constraints=False):
+    """Return the frozen cheap-feature action without inspecting CE output."""
+    return bool(not explicit_constraints and float(score) > float(threshold))
+
+
+def policy_ce_budget(policy, fixed_budget, heavy):
+    if policy.startswith('ce28'): return 28
+    if policy.startswith('ce40') or heavy: return 40
+    if policy in ('fixed-pair-budget', 'quality-guard-40'): return fixed_budget
+    return 0
+
+
+def capture_parity(response, policy, prediction):
+    if policy == 'learned-router':
+        if prediction is None or response['gate_heavy'] != prediction['heavy']:
+            raise ValueError('train/capture/serve Router decision mismatch')
+    action = prediction['actions'].get(policy) if prediction is not None else None
+    return None if action is None else response['results'] == action[:100]
+
+
 def benchmark(index,vector_manifest,model_path,ce_model,url,queries,qrels,
               policy_dir,output,policies='bm25,dense,ce0,old-rules-router,ce28,ce40,ce28-ranker,ce40-ranker,learned-router,fixed-pair-budget',
-              limit=0,reader_source=None):
+              limit=0,reader_source=None,quality_threshold=0.153):
     from adapters.embedding import BGEEncoder
     output=Path(output)
     if output.exists():raise FileExistsError(output)
@@ -54,7 +74,7 @@ def benchmark(index,vector_manifest,model_path,ce_model,url,queries,qrels,
                   for seed in (20261113,20261114)}
     if limit:rows=rows[:limit]
     selected=policies.split(',')
-    allowed={'bm25','dense','ce0','old-rules-router','ce28','ce40','ce28-ranker','ce40-ranker','learned-router','fixed-pair-budget'}
+    allowed={'bm25','dense','ce0','old-rules-router','ce28','ce40','ce28-ranker','ce40-ranker','learned-router','fixed-pair-budget','quality-guard-40'}
     allowed.update({'random-20261113','random-20261114'})
     if not selected or set(selected)-allowed:raise ValueError('invalid policies')
     accelerator=None
@@ -73,6 +93,13 @@ def benchmark(index,vector_manifest,model_path,ce_model,url,queries,qrels,
                 if bundle['rankers'][str(b)]['model'] is not None else None) for b in (28,40)}
     rules=RuleRouter(RetrievalConfig())
     fixed=int(json.loads((Path(policy_dir)/'summary.json').read_text())['protocol']['fixed_pair_budget'])
+    if 'quality-guard-40' in selected:
+        from evaluation.audit_quality_guard_http import AUDIT_CONFIG
+        guard_config = json.loads(AUDIT_CONFIG.read_bytes())
+        if (fixed != 33 or quality_threshold != guard_config["threshold"]
+                or sha256_of(Path(policy_dir) / "models.json") != guard_config["training_model_sha256"]
+                or sha256_of(queries) != guard_config["holdout_sha256"]["queries"]):
+            raise ValueError('quality-guard-40 requires the frozen CE-33 baseline, gate and holdout queries')
     identity=None if reader_source else {reader.doc(i).doc_id:i for i in range(reader.n_docs)}
     def search(text,policy,qid):
         constrained=parse(text).get('explicit_constraints',False)
@@ -100,7 +127,11 @@ def benchmark(index,vector_manifest,model_path,ce_model,url,queries,qrels,
         if policy=='old-rules-router':
             use_vector=rules.decide(QueryFeatures(constrained,int(features[0]),float(features[1]),
                 int(features[3]),float(features[2]) if features[3]>1 else None)).use_vector
-        heavy=policy=='learned-router' and not constrained and gate.predict([features])[0]>threshold
+        # This policy uses only online BM25 statistics; the threshold is frozen
+        # from the training distribution and is never selected from qrels.
+        policy_threshold = quality_threshold if policy=='quality-guard-40' else threshold
+        heavy=policy in ('learned-router','quality-guard-40') and not constrained and quality_guard_heavy(
+            gate.predict([features])[0], policy_threshold)
         if policy.startswith('random-'):
             if qid not in source_predictions:raise ValueError('random control requires frozen evaluation qid')
             heavy=not constrained and qid in random_heavy[policy]
@@ -119,8 +150,7 @@ def benchmark(index,vector_manifest,model_path,ce_model,url,queries,qrels,
                   rrf([[h['docid'] for h in lexical],[h['docid'] for h in row['dense']]],60.)[:200]]
         row['pool']=[h['doc_id'] for h in pool[:100]]
         row['global_docids']=[h['docid'] for h in pool[:100]]
-        budget=(28 if policy.startswith('ce28') else 40 if policy.startswith('ce40') or heavy
-                else fixed if policy=='fixed-pair-budget' else 0)
+        budget=policy_ce_budget(policy, fixed, heavy)
         elapsed=0.;results=row['pool']
         if budget:
             chosen=row['pool'][:budget]
@@ -133,7 +163,8 @@ def benchmark(index,vector_manifest,model_path,ce_model,url,queries,qrels,
             results=rerank(row,budget,rankers[budget] if policy.endswith('-ranker') else None)
         return {'results':results,'heavy':budget>0,'ce_pairs':min(budget,len(row['pool'])),
                 'ce_ms':elapsed,'vector_attempt':use_vector,'gate_heavy':bool(heavy),
-                'gate_features':features.tolist(),'router_ms':router_ms}
+                'gate_features':features.tolist(),'router_ms':router_ms,
+                'explicit_constraints':bool(constrained),'fallback':False}
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):
             try:
@@ -169,16 +200,15 @@ def benchmark(index,vector_manifest,model_path,ce_model,url,queries,qrels,
                     response=request(text,policy,qid)
                     response.update(query_id=qid,policy=policy)
                     if not response.get('unsupported'):
-                        expected=source_predictions[qid]
-                        if policy=='learned-router' and response['gate_heavy']!=expected['heavy']:
-                            raise ValueError('train/capture/serve Router decision mismatch')
                         # ANN and numerical precision may shift tied candidates.
-                        response['exact_ids_match_capture']=response['results']==expected['actions'][policy][:100]
+                        response['exact_ids_match_capture']=capture_parity(response,policy,source_predictions.get(qid))
                     records.append(response);handle.write(json.dumps(response,ensure_ascii=False)+'\n');handle.flush()
                 if (i+1)%50==0:print('HTTP policies',i+1,'/',len(rows),flush=True)
     finally:server.shutdown();server.server_close()
     (output/'requests.pending.jsonl').rename(output/'requests.jsonl')
     prediction_sha=sha256_of(output/'requests.jsonl')
+    if 'quality-guard-40' in selected and sha256_of(qrels) != guard_config["holdout_sha256"]["qrels"]:
+        raise ValueError('quality-guard-40 requires the frozen holdout qrels')
     labels={}
     for line in Path(qrels).read_text().splitlines():
         q,_,d,g=line.split();labels.setdefault(q,{})[d]=float(g)
@@ -186,14 +216,16 @@ def benchmark(index,vector_manifest,model_path,ce_model,url,queries,qrels,
     for policy in selected:
         rs=[r for r in records if r['policy']==policy and not r.get('unsupported')]
         values=[metrics(r['results'],labels[r['query_id']]) for r in rs]
+        parity=[r['exact_ids_match_capture'] for r in rs if r['exact_ids_match_capture'] is not None]
         summary[policy]={'queries':len(rs),'metrics':{k:statistics.mean(v[k] for v in values) for k in values[0]},
                          'e2e_ms':{k:percentile([r['client_wall_ms'] for r in rs],p) for k,p in [('p50',.5),('p95',.95)]},
                          'ce_ms':{k:percentile([r['ce_ms'] for r in rs],p) for k,p in [('p50',.5),('p95',.95)]},
                          'ce_pairs_mean':statistics.mean(r['ce_pairs'] for r in rs),
-                         'heavy_rate':statistics.mean(r['heavy'] for r in rs),
+                         'heavy_rate':statistics.mean(r['gate_heavy'] if policy=='quality-guard-40' else r['heavy'] for r in rs),
                          'vector_attempt_rate':statistics.mean(r['vector_attempt'] for r in rs),
                          'router_ms':{k:percentile([r['router_ms'] for r in rs],p) for k,p in [('p50',.5),('p95',.95)]},
-                         'exact_ids_match_capture_rate':statistics.mean(r['exact_ids_match_capture'] for r in rs)}
+                         'exact_ids_match_capture_rate':statistics.mean(parity) if parity else None,
+                         'exact_ids_match_capture_queries':len(parity)}
     summary['protocol']={'queries':len(rows),'partial_pilot':bool(limit),'qrels_read_after_requests':True,
                          'requests_sha256_before_labels':prediction_sha,
                          'models_sha256':sha256_of(Path(policy_dir)/'models.json'),
@@ -215,4 +247,5 @@ if __name__=='__main__':
     p.add_argument('--policies',default='bm25,dense,ce0,old-rules-router,ce28,ce40,ce28-ranker,ce40-ranker,learned-router,fixed-pair-budget')
     p.add_argument('--limit',type=int,default=0)
     p.add_argument('--reader-source')
+    p.add_argument('--quality-threshold',type=float,default=0.153)
     print(json.dumps(benchmark(**vars(p.parse_args())),indent=2))
