@@ -17,7 +17,7 @@ def load_qrels(path):
         q,_,d,g=line.split(); out.setdefault(q,{})[d]=float(g)
     return out
 
-def audit(folder, qrels_path, models_path, queries_path, max_cost=36.49):
+def audit(folder, qrels_path, models_path, queries_path, threshold=0.15146, max_cost=36.49):
     folder=Path(folder); qrels_path=Path(qrels_path); qrels=load_qrels(qrels_path)
     models=json.loads(Path(models_path).read_text()); gate=FrozenLinear(models['gate']['model'])
     query_rows={r['query_id']:r for r in (json.loads(line) for line in Path(queries_path).open())}
@@ -37,7 +37,7 @@ def audit(folder, qrels_path, models_path, queries_path, max_cost=36.49):
     if any(r['ce_pairs'] not in (33,40) for r in cheap+fixed): raise ValueError('unexpected CE budget')
     if any(r['ce_pairs'] != (40 if r['gate_heavy'] else 33) for r in cheap): raise ValueError('action/budget mismatch')
     for r in cheap:
-        predicted=bool(not parse(query_rows[r['query_id']]['text']).get('explicit_constraints',False) and gate.predict([r['gate_features']])[0] > 0.153)
+        predicted=bool(not parse(query_rows[r['query_id']]['text']).get('explicit_constraints',False) and gate.predict([r['gate_features']])[0] > threshold)
         if predicted != bool(r['gate_heavy']): raise ValueError('HTTP/offline gate decision mismatch')
     cost=float(np.mean([r['ce_pairs'] for r in cheap])); rate=float(np.mean([r['gate_heavy'] for r in cheap]))
     if cost>max_cost: raise ValueError('cost gate failed')
@@ -54,5 +54,5 @@ def audit(folder, qrels_path, models_path, queries_path, max_cost=36.49):
     return result
 
 if __name__=='__main__':
-    p=argparse.ArgumentParser();p.add_argument('--folder',type=Path,required=True);p.add_argument('--qrels',type=Path,required=True);p.add_argument('--models',type=Path,required=True);p.add_argument('--queries',type=Path,required=True);p.add_argument('--max-cost',type=float,default=36.49)
-    a=p.parse_args(); print(json.dumps(audit(a.folder,a.qrels,a.models,a.queries,a.max_cost),ensure_ascii=False,indent=2))
+    p=argparse.ArgumentParser();p.add_argument('--folder',type=Path,required=True);p.add_argument('--qrels',type=Path,required=True);p.add_argument('--models',type=Path,required=True);p.add_argument('--queries',type=Path,required=True);p.add_argument('--threshold',type=float,default=0.15146);p.add_argument('--max-cost',type=float,default=36.49)
+    a=p.parse_args(); print(json.dumps(audit(a.folder,a.qrels,a.models,a.queries,a.threshold,a.max_cost),ensure_ascii=False,indent=2))
