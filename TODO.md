@@ -22,7 +22,7 @@
 - [x] **RFC-0003 在线接线**。[PR #10](https://github.com/ShwStone/NLP-SearchEngine/pull/10) 合入启动身份、Router 接口、HTTP 请求保护、可观测性与 UI 身份面板，关闭 [Issue #5](https://github.com/ShwStone/NLP-SearchEngine/issues/5)。已有两套真实索引的[工程验收](docs/contributions/rfc0003-online-acceptance.md)。
 - [x] **RFC-0002 共享集复建与词法参考**。重建 [DuReader 100k v1.0](https://huggingface.co/datasets/ShwStone/dureader-mini-100k/tree/v1.0)，逐文件复核发布哈希。手写 BM25 与 BM25S 在冻结的 1,020 条 dev 查询上逐排名一致，保存了两份深度 100 的 TREC run、输入校验和四项配对区间，详见[资源记录](evaluation/RESOURCES.md#dureader-100k-协作开发集词法对照)。
 - [x] **RFC-0002 语义与规则 Router 基线**。DuReader 100k 的 1,020 条开发查询已完成 BM25、ANN Dense、固定 RRF、规则 Adaptive 与同源精确 Dense，另有 1,152 次同服务交错计时。质量、请求与 TREC 逐条核验，保留配对区间及 Router 的负结果。见[报告第 9 节](REPORT.md#9-协作开发集与-router-对照)；808 条全量留出另列。
-- [x] **RFC-0002 本地 20k 演示验收**。从已交接的快照恢复 20,000 个点，校验同一语料的压缩词法索引。真实浏览器走四模式，实测无效语法清除旧结果。HTTP 后端断开与恢复分别通过 10 项和 27 项检查。
+- [x] **RFC-0002 本地 20k 演示验收**。从已交接的快照恢复 20,000 个点，校验同一语料的压缩词法索引。真实浏览器走四模式，实测无效语法清除旧结果。HTTP 后端断开与恢复分别通过 10 项和 27 项检查。 数据卡记录固定开发问例、Router 两种分支、显式约束、失败路径与 HTTP 复验命令。
 - [x] **RFC-0002 20k 路由日志对账**。50 条开发查询逐一运行四模式，200 条 HTTP 结果均匹配同一服务的日志。固定 RRF 调用向量 50 次，规则 Router 调用 9 次，无回退。单次顺序工程测量见[资源记录](evaluation/RESOURCES.md#新闻-20k-本地浏览器演示与恢复验收)。
 - [x] **RFC-0002 配对 HTTP 复验入口**。冻结查询、执行顺序和服务身份，通过日志对账验收，导出同批排名以便独立复算质量。既有 1,152 次四模式交错计时与 2,040 次规则/线性收益对照沿用各自的原始计划和回执。见[评测手册](evaluation/README.md#paired-live-http-measurements)。
 - [x] **RFC-0002 盲审导入与复评工具**。裁决包只包含分歧条目。正式导入核对准备回执、冻结计划和原始评分，复评沿用 150 条查询的四份冻结 HTTP 排名。见[复评命令](docs/contributions/rfc0002-news20k-dataset-card.md#人工评分复评)。
@@ -31,7 +31,7 @@
 - [x] **RFC-0001 两动作对照**。完成规则与同预算随机对照、线性收益模型独立训练和等预算回放。固定训练阈值与规则在 100k 开发集另有 2,040 次真实 HTTP 对照，向量调用为 715 对 748，质量与耗时证据支持保留现有默认规则。详见 [Router 对照](docs/contributions/rfc0001-router-budget.md)。
 - [x] **RFC-0001 Router 预算、消融与分组复验**。冻结检索排名，比较等向量调用预算、特征移除和按查询组重采样。保留规则、学习模型、随机期望及事后最优分配的证据。见[Router 预算报告](docs/contributions/rfc0001-router-budget.md#开发集向量调用预算曲线)。
 - [x] **RFC-0002 ANN 参数敏感性**。在同一 100k 快照及开发划分上对照 `hnsw_ef=128/256`，记录一致指标、约束拒绝和延迟比较边界。见[ANN 对照](docs/contributions/rfc0002-ann-ef-sensitivity.md)。
-- [ ] **RFC-0001 与 RFC-0002 合并评审**。[PR #11](https://github.com/ShwStone/NLP-SearchEngine/pull/11) 的 `11de948` 可独立评审，并保留 [PR #12](https://github.com/ShwStone/NLP-SearchEngine/pull/12) 的 `791bd4a`。Router 联合候选包含两者与 [PR #9](https://github.com/ShwStone/NLP-SearchEngine/pull/9) 的 `c21ddef`。PR #9 对上游 `master` 仍显示冲突，合并前由作者或维护者按最新 `master` 核对联合候选。
+- [ ] **RFC-0001 与 RFC-0002 合并评审**。[PR #11](https://github.com/ShwStone/NLP-SearchEngine/pull/11) 的 `3eff8af` 可独立评审，并保留 [PR #12](https://github.com/ShwStone/NLP-SearchEngine/pull/12) 的 `791bd4a`。Router 联合候选包含两者与 [PR #9](https://github.com/ShwStone/NLP-SearchEngine/pull/9) 的 `c21ddef`。PR #9 对上游 `master` 仍显示冲突，合并前由作者或维护者按最新 `master` 核对联合候选。
 - [x] **RFC-0001 可选 CE 接线及对照入口**。固定和学习门控共用冻结的混合检索候选，服务回显重排身份和实际打分数，配对评估校验同一服务实例与等重排预算。见[评测手册](evaluation/README.md#train-and-evaluate-a-ce40-gate)。
 - [x] **RFC-0001/0002 配对评测运行时核验**。新配对协议将查询编码器实现、实际设备、权重精度和可核验的模型清单摘要纳入服务身份。历史 journal 按原协议复验。CE 留出采集可用 `--fit-receipt` 将运行时、门控权重和检索配置绑定到训练回执，并另行记录真实硬件和负载条件。
 - [ ] **RFC-0001 CE 独立留出复验**。[Issue #3](https://github.com/ShwStone/NLP-SearchEngine/issues/3) 的两动作比较和 PR #9 已报告的 CE 开发集对照各自保留。独立留出复验需要原始词法索引、向量快照及冻结策略的身份核验；按固定 CE 和等成本对照记录真实 HTTP 质量、成本及失败情况，不用开发集或两动作结果替代。 已有离线复算入口，可从封存 SQLite、原始 qrels 和拟合回执重建 TREC、配对区间与随机对照摘要，并核对封存哈希。
