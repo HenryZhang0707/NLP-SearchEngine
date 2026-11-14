@@ -94,14 +94,11 @@ The frozen delivery source at commit `dfa697687ddf1a0204d42a4c52992a0ac159212d`
 provides the compact reader. `evaluation.delivery_backend` checks both reader
 source hashes before loading them; it never silently imports an unrelated
 checkout. The float64 accelerator retains the reference BM25 term order and
-uses the reader's bounded postings cache. Full train capture and raw CE-28/40
-scoring are complete through this backend. Full dev compact capture is
-running, while independent sharded train/dev captures continue for parity.
-
-`evaluation.audit_capture_parity` requires identical query universe, ordered
-external/internal candidate IDs and scores for **every** query before marking
-the compact and sharded runs equivalent. Until those captures finish, this gate
-is pending. The compact batch runtime is never substituted for HTTP latency.
+uses the reader's bounded postings cache. The compact and independent
+81-shard BM25 captures agree on the ordered candidate IDs and scores for all
+172 training queries and 1,020 development queries. The two receipts cover
+34,400 and 204,000 candidate hits, respectively, with maximum score
+difference 0. [Train receipt](full-train-sharded-compact-parity.json) · [Development receipt](full-dev-sharded-compact-parity.json)
 
 `evaluation.continue_full_dureader` serializes fusion, CE scoring and nested
 training using only completed, hashed outputs. It checks upstream process
@@ -109,13 +106,12 @@ identity while waiting, fails if a producer exits without publishing, and never
 restarts an unfinished producer or triggers shutdown. The automatic pipeline
 does not replace final audit, all-query serving validation or remote delivery.
 
-Completed full BM25 train/dev capture, fused candidate construction, CE and learned policy
-experiments, grouped nested/OOF supervision evidence, same-budget controls,
-isolated end-to-end HTTP measurements, paired confidence intervals, final
-regression tests, independent audit, and PR/Issue delivery remain required.
-The goal stays active and the server stays on until every acceptance gate and
-remote delivery check succeeds. Local aggregate reports belong in the PR;
-corpus, index snapshots and large per-query records do not.
+The full-corpus development candidate and quality comparisons are recorded
+with the grouped confidence intervals and fixed-depth controls. The loopback
+HTTP run took place alongside other batch work. The remaining isolated timing
+check needs a quiescent worker using the same frozen retrieval and CE policies,
+warmup, request order, and coverage checks. The independent 808-query CE
+holdout also remains pending. [Quality guard](DUREADER_QUALITY_GUARD.md) · [Native HTTP evidence](DUREADER_FULL_FINAL_REPORT.json) · [Course report](../../REPORT.md#10-ce-重排与逐查询成本分配)
 
 Reproduce the corpus identity check with:
 

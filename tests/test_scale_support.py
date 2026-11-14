@@ -8,14 +8,17 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
+from contracts.api import SearchRequest
 from contracts.conformance import check_reader
 from contracts.index_format import sha256_of
 from offline.build import build
 from offline.compact import CompactIndex, compile_index
 from offline.disk_documents import DiskDocuments
+from offline.disk_index import DiskIndex
 from offline.packed_index import PackedIndex
 from offline.prepare import prepare
 from offline.stream_build import build as stream_build
+from online.engine import SearchEngine
 
 
 CORPUS = [
@@ -52,6 +55,48 @@ def test_prepare_compact_and_packed_readers_preserve_contract():
             assert reader.doc(1).doc_id == "d1"
         with DiskDocuments(lexical) as documents:
             assert documents.doc(0).doc_id == "d0"
+
+
+def test_compact_readers_preserve_full_lexical_results():
+    # Preserve the cross-reader regression introduced in PR #7.
+    rows = [
+        {"doc_id": "d0", "title": "", "text": "alpha beta beta gamma"},
+        {"doc_id": "d1", "title": "", "text": "alpha gamma"},
+        {"doc_id": "d2", "title": "", "text": "😀心肌梗死急救。"},
+        {"doc_id": "d3", "title": "", "text": "delta beta"},
+        {"doc_id": "d4", "title": "", "text": "alpha alpha beta"},
+    ]
+    requests = [
+        SearchRequest(query=query, k=3)
+        for query in ("alpha beta", "心肌梗死", "NOT alpha",
+                      "alpha AND NOT gamma", '"alpha beta"', "absent")
+    ] + [
+        SearchRequest(query="alpha", expander="rm3", k=3),
+        SearchRequest(query="alpha beta", scorer="tfidf", k=2, offset=1),
+    ]
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        corpus = root / "corpus.jsonl"
+        corpus.write_text("".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
+                          encoding="utf-8")
+        lexical, compact = root / "lexical", root / "compact"
+        build(corpus, lexical, "reader-parity")
+        compile_index(lexical, compact)
+        reference = DiskIndex(lexical)
+        baseline = SearchEngine(reference)
+        expected = [baseline.search(request).to_dict() for request in requests]
+        assert expected[1]["results"] and expected[4]["results"]
+        assert expected[-1]["results"] and expected[-2]["expanded"]
+
+        for reader_type in (CompactIndex, PackedIndex):
+            with reader_type(compact) as reader:
+                check_reader(reader, rows)
+                assert reader.manifest() == reference.manifest()
+                engine = SearchEngine(reader)
+                for request, want in zip(requests, expected):
+                    actual = engine.search(request).to_dict()
+                    assert actual["results"] == want["results"], (reader_type.__name__, request)
+                    assert actual["expanded"] == want["expanded"], (reader_type.__name__, request)
 
 
 def test_compact_startup_rejects_bad_terms_and_releases_partial_resources():

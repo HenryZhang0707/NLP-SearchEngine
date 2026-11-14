@@ -89,16 +89,10 @@ unchanged. Router minus independently executed CE-24 is +0.00653 nDCG
 `dureader-100k-fixed24-corrected-summary.json`. CE component timings were
 recorded under concurrent load and are not isolated latency acceptance.
 
-The 8-query real HTTP pilot completed all 10 policies. Every returned ordered
-document list matched its offline prediction (100% for every policy), including
-the learned gate decisions. This is a pilot only; it does not establish
-1,020-query parity or isolated latency. The all-query v4 HTTP verification is
-running with train-selected raw-CE safeguards. All 265 worktree tests passed
-after the pipeline additions.
-
-Actual HTTP pilot/all-query evaluation must confirm the exported decisions
-and candidate IDs. Component times during background batch work are not final
-latency evidence. Complete full-corpus BM25 capture, fusion, CE scoring, nested
-training, same-budget controls, backend parity, isolated HTTP measurements,
-independent audit, PR/Issue update, and remote verification remain required.
-No shutdown is authorized by partial experiment success.
+The 8-query HTTP pilot matched all ten policies' predicted document lists and
+the learned gate decisions. The later all-query reports retain the observed
+ranking comparisons and independently scored CE-24/CE-33 controls. Benchmark
+latency was sampled under concurrent batch load. Use future quiescent
+measurements for the isolated timing gate, and the frozen internal holdout
+for evaluation outside the CE gate's training and development splits.
+[Quality guard](DUREADER_QUALITY_GUARD.md) · [Full development evidence](DUREADER_FULL_FINAL_REPORT.json) · [Course report](../../REPORT.md#10-ce-重排与逐查询成本分配)
