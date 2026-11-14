@@ -5,6 +5,7 @@ import importlib.util
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -50,6 +51,10 @@ class ExactDenseReferenceTests(unittest.TestCase):
         self.qrels.write_text("q2 0 z 1\nq-hard 0 c 1\n", encoding="utf-8")
         self.prepare_cache()
         self.write_exceptions({"q-hard": {"expected_count": 0, "reason": "explicit constraint"}})
+        proc_patch = patch.object(dense_reference, "_encode_faiss_queries",
+                                  side_effect=dense_reference._encode_queries)
+        proc_patch.start()
+        self.addCleanup(proc_patch.stop)
         encoder_patch = patch.object(dense_reference, "BGEEncoder")
         self.encoder = encoder_patch.start()
         self.addCleanup(encoder_patch.stop)
@@ -58,11 +63,11 @@ class ExactDenseReferenceTests(unittest.TestCase):
         version_patch.start()
         self.addCleanup(version_patch.stop)
 
-    def prepare_cache(self):
+    def prepare_cache(self, encoder_contract=None):
         self.corpus.write_text("".join(json.dumps({"doc_id": doc_id, "title": title, "text": "body"}) + "\n"
                                        for doc_id, title in self.docs), encoding="utf-8")
         self.corpus_sha = sha256_of(self.corpus)
-        config = CacheConfig(self.corpus_sha, len(self.docs), bge_spec(), bge_cache_contract(),
+        config = CacheConfig(self.corpus_sha, len(self.docs), bge_spec(), encoder_contract or bge_cache_contract(),
                              chunk_size=2, batch_size=1, shards=2)
         with CorpusDocuments(self.corpus, expected_sha256=self.corpus_sha,
                              expected_n_docs=len(self.docs)) as reader:
@@ -70,9 +75,9 @@ class ExactDenseReferenceTests(unittest.TestCase):
                 produce_chunks(reader, FixtureProducer(), self.cache, config, shard=shard,
                                verified_source_sha256=self.corpus_sha)
 
-    def write_exceptions(self, entries):
+    def write_exceptions(self, entries, depth=2):
         self.exceptions.write_text(json.dumps({
-            "schema_version": 1, "depth": 2, "corpus_sha256": self.corpus_sha,
+            "schema_version": 1, "depth": depth, "corpus_sha256": self.corpus_sha,
             "queries_sha256": sha256_of(self.queries), "qrels_sha256": sha256_of(self.qrels),
             "short_queries": entries,
         }), encoding="utf-8")
@@ -110,6 +115,77 @@ class ExactDenseReferenceTests(unittest.TestCase):
                                            np.array([9, 1, 4, 3, 0]), 3)
         self.assertEqual(scores.tolist(), [2., 1., 1.])
         self.assertEqual(ids.tolist(), [4, 1, 3])
+
+    def test_faiss_boundary_tie_expands_only_the_affected_query(self):
+        import numpy as np
+
+        # Return later ordinals first for tied scores so the first search omits
+        # the corpus-first document entirely at the cutoff.
+        search_depths = []
+        indexed_vectors = []
+
+        class FlatIPFixture:
+            def __init__(self, dimension):
+                self.ntotal = 0
+                self.dimension = dimension
+
+            def add(self, vectors):
+                self.ntotal += len(vectors)
+                indexed_vectors.append(vectors)
+
+            def search(self, queries, depth):
+                search_depths.append((len(queries), depth))
+                vectors = np.concatenate(indexed_vectors)
+                scores = queries @ vectors.T
+                ids = np.argsort(scores, axis=1, kind="stable")[:, ::-1][:, :depth]
+                return np.take_along_axis(scores, ids, axis=1), ids
+
+        self.docs[1] = ("c", "same-b")
+        self.cache = self.root / "faiss-cache"
+        previous_contract = "historical-fixture-contract"
+        self.prepare_cache(encoder_contract=previous_contract)
+        self.write_exceptions({"q-hard": {"expected_count": 0, "reason": "explicit constraint"}}, depth=1)
+        with patch.object(dense_reference, "bge_cache_contract", return_value=previous_contract):
+            reference = self.generate(depth=1)
+        reference_path = self.out / "manifest.json"
+        reference_sha = sha256_of(reference_path)
+        self.out = self.root / "faiss-run"
+        self.encoder.return_value.encode_query.reset_mock(
+            side_effect=True
+        )
+        self.encoder.return_value.encode_query.side_effect = [_vector(1.0, 0.0), _vector(0.0, 1.0)]
+        fake_faiss = SimpleNamespace(IndexFlatIP=FlatIPFixture,
+                                    cvar=SimpleNamespace(distance_compute_blas_threshold=20))
+        with patch.object(dense_reference, "_load_faiss", return_value=(fake_faiss, "1.10.0")):
+            with self.assertRaisesRegex(ValueError, "reference manifest SHA256 mismatch"):
+                self.generate(backend="faiss", depth=1, reference_manifest=(reference_path, "0" * 64))
+            manifest = self.generate(backend="faiss", query_block=32, depth=1,
+                                     reference_manifest=(reference_path, reference_sha))
+        self.assertEqual(search_depths, [(2, 2), (1, 5)])
+        self.assertTrue(all(vectors.dtype == np.float32 for vectors in indexed_vectors))
+        self.encoder.return_value.encode_documents.assert_not_called()
+        rows = [line.split() for line in (self.out / "run.trec").read_text(encoding="utf-8").splitlines()]
+        self.assertEqual([(row[0], row[2]) for row in rows],
+                         [("q2", "z"), ("q1", "e")])
+        self.assertEqual({row[-1] for row in rows}, {dense_reference.FAISS_RUN_TAG})
+        self.assertEqual(manifest["observed_short_queries"], {"q-hard": 0})
+        self.assertEqual(manifest["scoring"]["method"], "faiss-index-flat-ip-float32")
+        self.assertEqual(manifest["scoring"]["query_block"], 19)
+        self.assertEqual(manifest["dependencies"]["faiss-cpu"], "1.10.0")
+        self.assertEqual(manifest["reference_manifest_sha256"], reference_sha)
+        self.assertEqual(manifest["cache_identity"], reference["cache_identity"])
+        for field in ("query_vectors_sha256", "document_vectors_sha256"):
+            self.assertEqual(manifest[field], reference[field])
+
+        self.out = self.root / "invalid-reference-run"
+        reference["query_vectors_sha256"] = "0" * 64
+        altered = self.root / "altered-reference.json"
+        altered.write_text(json.dumps(reference), encoding="utf-8")
+        self.encoder.return_value.encode_query.side_effect = [_vector(1.0, 0.0), _vector(0.0, 1.0)]
+        with patch.object(dense_reference, "_load_faiss", return_value=(fake_faiss, "1.10.0")):
+            with self.assertRaisesRegex(ValueError, "query vector SHA256 differs"):
+                self.generate(backend="faiss", depth=1, reference_manifest=(altered, sha256_of(altered)))
+        self.assertFalse(self.out.exists())
 
     def test_missing_or_nonzero_policy_and_foreign_exclusion_fail_before_encoding(self):
         with self.assertRaisesRegex(ValueError, "exactly the explicit-constraint"):
