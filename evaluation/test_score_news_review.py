@@ -35,10 +35,13 @@ class NewsReviewScoringTests(unittest.TestCase):
         self.assistant_qrels = assistant / "all.qrels.tsv"
         assistant_sha = put(self.assistant_qrels, "".join(
             f"{qid}\t0\t{doc}\t{grade}\n" for (qid, doc), grade in self.grades.items()))
+        self.seed = self.root / "news-judgments-20261102/seed-judgments-200.validated.jsonl"
+        seed_sha = put(self.seed, '{"query_id":"first","doc_id":"answer","relevance":2}\n')
         old_sha = put(assistant / "manifest.json", {
             "pool_manifest_sha256": pool_sha, "selected_queries_sha256": "queries",
             "status": "POOLED_QRELS_COMPLETE", "reviewer_provenance": score_news_review.ASSISTANT_SOURCE,
             "files": {"all.qrels.tsv": assistant_sha},
+            "seed_judgments_sha256": seed_sha, "seed_reused": 1,
         })
         self.runs = self.root / "news-formal-quality-test-20261104/formal-test"
         arms = {}
@@ -134,3 +137,18 @@ class NewsReviewScoringTests(unittest.TestCase):
             stream.write(b"first\t0\tunknown\t2\n")
         with self.assertRaisesRegex(ValueError, "Qrels SHA-256"):
             score_news_review.score_news_assistant(self.root)
+
+    def test_seed_sensitivity_keeps_queries_and_marks_source_unjudged(self):
+        score_news_review.main([str(self.root), "--assistant-labels", "--exclude-source-seeds",
+                                "--out", str(self.output)])
+        result = json.loads(self.output.read_bytes())
+        self.assertEqual(result["scope"], "frozen_news20k_source_seeds_treated_as_unjudged")
+        self.assertEqual(result["excluded_test_judgments"], 1)
+        self.assertEqual(result["test_queries"], 2)
+        self.assertEqual(result["test_queries_without_positive"], 2)
+        self.assertEqual(result["judged_coverage"]["adaptive"]["10"], {"judged": 1, "slots": 20})
+
+    def test_seed_sensitivity_rejects_tampered_source_judgments(self):
+        self.seed.write_text('{"query_id":"first","doc_id":"answer","relevance":1}\n', encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "Frozen source-seed judgments differ"):
+            score_news_review.score_news_assistant(self.root, exclude_source_seeds=True)

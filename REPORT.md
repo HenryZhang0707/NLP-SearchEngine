@@ -113,6 +113,8 @@ Router 对 118 条查询直接执行 lexical，对 32 条执行 hybrid。后者�
 
 请求位置的已判定比例（@10/@100）为 Lexical 100.0%/30.0%；Dense 100.0%/28.1%；固定 Hybrid 100.0%/41.1%；Adaptive 100.0%/32.1%。未判定命中在指标计算中贡献零增益，池化 Recall/MAP 只覆盖已判定候选。该测试集的查询来自冻结的新闻来源，标签来自 assistant 全文复核。逐查询请求、TREC、回执及 SHA256 索引见 [资源记录](evaluation/RESOURCES.md)。
 
+将每条测试查询的来源文章种子判定视作未判定，同时保留原有 150 条查询和四份排名，Adaptive 相对 Hybrid 的 nDCG@10 差值为 +0.02186，95% 配对区间 [−0.00128, +0.04558]。去掉种子判定后有 68 条查询没有已判正例。该敏感性分析显示主结果受来源文章判定影响，具体覆盖和其他区间见[新闻数据卡](docs/contributions/rfc0002-news20k-dataset-card.md#来源文章判定的敏感性)。
+
 ## 7. 历史前缀试验与后续全量工程验收
 
 本次验收固定使用官方 RocketQA DuReader baseline archive（8,096,668 passages、2,000 dev queries、9,839 dev qrels；archive SHA256 为 `b051d3d966f7b0288aed95a923fc3b706176767d8bdcff8aa8fe5fff84b20662`）。为避免把 v1 全量内存 builder 当成 8M 生产构建，只取 dev corpus 前 20,000 篇文档，seed `20261028` 得到 train/dev/test=3/7/9；该前缀 corpus SHA256 为 `7e2a20ca5f7a75ece81efffbb45f10983c90ebaf500f60a4a53f9c775a55bfc8`。官方资源与固定划分的完整哈希清单见 [evaluation/RESOURCES.md](evaluation/RESOURCES.md)。

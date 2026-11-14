@@ -126,7 +126,7 @@ def score_news_review(evidence_root, qrels, intake, expected_intake_sha256):
     })
 
 
-def score_news_assistant(evidence_root):
+def score_news_assistant(evidence_root, *, exclude_source_seeds=False):
     test_ids, pairs, state, runs = load_review_inputs(evidence_root)
     directory = evidence_root / "news-formal-pooled-qrels-20261104"
     manifest = read_json(directory / "manifest.json", QRELS_MANIFEST_SHA256)
@@ -134,9 +134,28 @@ def score_news_assistant(evidence_root):
             and manifest["reviewer_provenance"] == ASSISTANT_SOURCE,
             "Expected the frozen assistant label provenance")
     grades, digest = read_grades(directory / "all.qrels.tsv", manifest["files"]["all.qrels.tsv"], pairs)
-    return score_rankings(test_ids, state, runs, grades, ASSISTANT_SOURCE, {
+    identity = {
         "qrels_sha256": digest, "qrels_manifest_sha256": QRELS_MANIFEST_SHA256,
+    }
+    if not exclude_source_seeds:
+        return score_rankings(test_ids, state, runs, grades, ASSISTANT_SOURCE, identity)
+
+    seed_path = evidence_root / "news-judgments-20261102/seed-judgments-200.validated.jsonl"
+    seed_bytes = seed_path.read_bytes()
+    seed_sha256 = hashlib.sha256(seed_bytes).hexdigest()
+    require(seed_sha256 == manifest["seed_judgments_sha256"], "Frozen source-seed judgments differ")
+    seed_rows = [json.loads(line) for line in seed_bytes.splitlines()]
+    seed_pairs = {(row["query_id"], row["doc_id"]): row["relevance"] for row in seed_rows}
+    require(len(seed_pairs) == len(seed_rows) == manifest["seed_reused"]
+            and all(grades.get(pair) == grade for pair, grade in seed_pairs.items()),
+            "Source seeds do not bind unique frozen judgments")
+    retained = {pair: grade for pair, grade in grades.items() if pair not in seed_pairs}
+    result = score_rankings(test_ids, state, runs, retained, ASSISTANT_SOURCE, {
+        **identity, "excluded_source_seed_sha256": seed_sha256,
     })
+    result["scope"] = "frozen_news20k_source_seeds_treated_as_unjudged"
+    result["excluded_test_judgments"] = sum(qid in test_ids for qid, _ in seed_pairs)
+    return result
 
 
 def score_rankings(test_ids, state, runs, grades, label_source, label_identity):
@@ -175,6 +194,8 @@ def main(argv=None):
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--assistant-labels", action="store_true", help="Use the frozen assistant qrels and manifest")
     source.add_argument("--qrels", type=Path, help="Qrels from optional independent review")
+    parser.add_argument("--exclude-source-seeds", action="store_true",
+                        help="Sensitivity analysis: treat the frozen source seeds as unjudged")
     parser.add_argument("--intake", type=Path)
     parser.add_argument("--intake-sha256", help="Trusted digest recorded after successful intake")
     parser.add_argument("--out", required=True, type=Path, help="Fresh aggregate JSON path outside Git")
@@ -184,8 +205,10 @@ def main(argv=None):
     if args.assistant_labels:
         if args.intake is not None or args.intake_sha256 is not None:
             parser.error("--assistant-labels does not use reviewer intake")
-        result = score_news_assistant(args.evidence_root)
+        result = score_news_assistant(args.evidence_root, exclude_source_seeds=args.exclude_source_seeds)
     else:
+        if args.exclude_source_seeds:
+            parser.error("--exclude-source-seeds requires --assistant-labels")
         if args.intake is None or args.intake_sha256 is None:
             parser.error("--qrels requires --intake and --intake-sha256")
         result = score_news_review(args.evidence_root, args.qrels, args.intake, args.intake_sha256)
