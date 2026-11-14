@@ -2,6 +2,7 @@
 import importlib
 import math
 from pathlib import Path
+import sys
 import numpy as np
 
 from contracts.index_format import sha256_of
@@ -18,13 +19,20 @@ def load_reader(source,compact):
     directory=Path(source).resolve()/'offline'
     for name,digest in READER_HASHES.items():
         if sha256_of(directory/name)!=digest:raise ValueError('frozen reader source mismatch: '+name)
-    if str(directory) not in offline.__path__:offline.__path__.append(str(directory))
-    for name in ('offline.compact','offline.packed_index'):
-        module=importlib.import_module(name)
-        if Path(module.__file__).resolve().parent!=directory:
+    names = ('offline.compact', 'offline.packed_index')
+    for name in names:
+        module = sys.modules.get(name)
+        if module is not None and Path(module.__file__).resolve().parent != directory:
             raise ValueError('unrelated compact reader already imported')
-    cls=importlib.import_module('offline.packed_index').PackedIndex
-    return cls(compact,cache_bytes=64*1024*1024)
+    offline.__path__.insert(0, str(directory))
+    try:
+        for name in names:
+            module = importlib.import_module(name)
+            if Path(module.__file__).resolve().parent != directory:
+                raise ValueError('unrelated compact reader already imported')
+        return module.PackedIndex(compact, cache_bytes=64*1024*1024)
+    finally:
+        offline.__path__.remove(str(directory))
 
 
 class BoundedPackedBM25(CompiledBM25):

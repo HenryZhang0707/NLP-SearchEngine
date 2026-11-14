@@ -19,9 +19,12 @@ import numpy as np
 
 from contracts import analyzer
 from contracts.api import SearchRequest
-from contracts.retrieval import RetrievalConfig,VectorManifest
-from evaluation.audit_quality_guard_http import AUDIT_CONFIG
+from contracts.retrieval import RetrievalConfig, VectorManifest, check_alignment, valid_query_encoder_runtime
+from evaluation.audit_quality_guard_http import (
+    AUDIT_CONFIG, CAPTURE_RECEIPT, GUARD, GUARD_SOURCE_FILES, POLICIES, request_pairs, validate_runtime,
+)
 from evaluation.dureader_policy_features import FrozenLinear,gate_features,rerank
+from evaluation.evaluate import load_queries
 from evaluation.prepare_bm25_router import jsonl_rows,metrics
 from evaluation.router_metrics import percentile
 from evaluation.study_rerank_actions import FrozenCrossEncoder
@@ -55,18 +58,72 @@ def capture_parity(response, policy, prediction):
     return None if action is None else response['results'] == action[:100]
 
 
+def guard_runtime(reader, encoder, vectors, ce, compact_sha, vector_manifest_sha, backend):
+    """Describe the loaded components without publishing local paths or endpoints."""
+    check_alignment(reader, vectors, encoder)
+    encoder_runtime = encoder.query_encoder_runtime
+    if not valid_query_encoder_runtime(encoder_runtime) or not encoder_runtime["inventory_sha256"]:
+        raise ValueError("quality guard requires a verified local query encoder inventory")
+    manifest = vectors.manifest()
+    return {
+        "compact_manifest_sha256": compact_sha,
+        "vector_manifest_sha256": vector_manifest_sha,
+        "documents": manifest.n_docs,
+        "corpus_fingerprint": manifest.corpus_sha256,
+        "collection": manifest.collection,
+        "declared_snapshot_files": manifest.snapshot_files,
+        "ann": vectors.search_config,
+        "query_encoder": encoder_runtime,
+        "cross_encoder": ce.info,
+        "lexical_backend": backend,
+        "candidate_k": 200,
+        "rrf_c": 60.0,
+    }
+
+
 def benchmark(index,vector_manifest,model_path,ce_model,url,queries,qrels,
               policy_dir,output,policies='bm25,dense,ce0,old-rules-router,ce28,ce40,ce28-ranker,ce40-ranker,learned-router,fixed-pair-budget',
-              limit=0,reader_source=None,quality_threshold=None):
+              limit=0,reader_source=None,quality_threshold=None,capture_only=False):
     from adapters.embedding import BGEEncoder
     output=Path(output)
     if output.exists():raise FileExistsError(output)
     runtime_sources={str(Path(__file__).name):sha256_of(__file__)}
     for path in ['evaluation/dureader_policy_features.py','online/vector_index.py','online/scorers.py']:
         runtime_sources[path]=sha256_of(Path(__file__).resolve().parents[1]/path)
-    bundle=json.loads((Path(policy_dir)/'models.json').read_text())
-    source_predictions={r['query_id']:r for r in jsonl_rows(Path(policy_dir)/'dev-predictions.jsonl')}
-    rows=list(jsonl_rows(queries))
+    models_path = Path(policy_dir) / 'models.json'
+    model_bytes = models_path.read_bytes()
+    bundle = json.loads(model_bytes)
+    fixed = int(json.loads((Path(policy_dir) / 'summary.json').read_bytes())['protocol']['fixed_pair_budget'])
+    selected = policies.split(',')
+    guard_capture = GUARD in selected
+    if capture_only and not guard_capture:
+        raise ValueError('capture-only is available for the paired quality guard')
+    if guard_capture:
+        guard_config = json.loads(AUDIT_CONFIG.read_bytes())
+        if quality_threshold is None:
+            quality_threshold = guard_config["threshold"]
+        if (len(selected) != len(POLICIES) or set(selected) != set(POLICIES) or limit
+                or fixed != 33 or quality_threshold != guard_config["threshold"]
+                or hashlib.sha256(model_bytes).hexdigest() != guard_config["training_model_sha256"]
+                or sha256_of(queries) != guard_config["holdout_sha256"]["queries"]):
+            raise ValueError('quality-guard-40 requires exactly the two frozen arms, models and full holdout')
+        frozen_queries = load_queries(queries)
+        if len(frozen_queries) != 808 or sha256_of(queries) != guard_config["holdout_sha256"]["queries"]:
+            raise ValueError('quality-guard-40 query records do not match the frozen holdout')
+        rows = [{'query_id': item.qid, 'query': item.query} for item in frozen_queries]
+        if reader_source is None:
+            raise ValueError('quality-guard-40 requires the frozen RFC-0004 reader source')
+        compact_manifest = Path(index) / 'compact.json'
+        if not compact_manifest.is_file():
+            raise ValueError('quality-guard-40 requires a verified compact index')
+        compact_sha = sha256_of(compact_manifest)
+        if compact_sha != guard_config["recapture"]["compact_manifest_sha256"]:
+            raise ValueError('quality-guard-40 requires the frozen compact index')
+    else:
+        rows = list(jsonl_rows(queries))
+    source_predictions = {} if guard_capture else {
+        r['query_id']: r for r in jsonl_rows(Path(policy_dir) / 'dev-predictions.jsonl')
+    }
     eligible=[r.get('query_id',r.get('qid')) for r in rows
               if not parse(r.get('query',r.get('text'))).get('explicit_constraints',False)]
     heavy_count=sum(r['heavy'] for r in source_predictions.values())
@@ -74,34 +131,40 @@ def benchmark(index,vector_manifest,model_path,ce_model,url,queries,qrels,
                   hashlib.sha256(f'{seed}:{q}'.encode()).digest())[:heavy_count])
                   for seed in (20261113,20261114)}
     if limit:rows=rows[:limit]
-    selected=policies.split(',')
     allowed={'bm25','dense','ce0','old-rules-router','ce28','ce40','ce28-ranker','ce40-ranker','learned-router','fixed-pair-budget','quality-guard-40'}
     allowed.update({'random-20261113','random-20261114'})
     if not selected or set(selected)-allowed:raise ValueError('invalid policies')
+    vector_bytes = Path(vector_manifest).read_bytes()
+    vector_manifest_sha = hashlib.sha256(vector_bytes).hexdigest()
+    if guard_capture and vector_manifest_sha != guard_config["recapture"]["vector_manifest_sha256"]:
+        raise ValueError('quality-guard-40 requires the frozen vector manifest')
+    manifest = VectorManifest.from_dict(json.loads(vector_bytes))
     accelerator=None
     if reader_source:
         from evaluation.delivery_backend import load_reader,BoundedPackedBM25
         reader=load_reader(reader_source,index)
         accelerator=BoundedPackedBM25(reader)
     else:reader=DiskIndex(index)
-    manifest=VectorManifest.from_dict(json.loads(Path(vector_manifest).read_text()))
     encoder=BGEEncoder(manifest.embedding,str(model_path),'cuda',batch_size=32)
     vectors=QdrantVectorIndex(manifest,url,ef=128)
     lexical_engine=SearchEngine(reader)
     ce=FrozenCrossEncoder(ce_model,device='cuda',batch_size=20,max_length=256)
+    backend = 'frozen-rfc4-compact-bounded-float64' if reader_source else 'DiskIndex-reference'
+    if guard_capture:
+        from evaluation.delivery_backend import READER_HASHES
+        project = Path(__file__).resolve().parents[1]
+        runtime_sources = {name: sha256_of(project / name) for name in GUARD_SOURCE_FILES}
+        runtime_sources.update({f'rfc4/offline/{name}': sha256_of(Path(reader_source) / 'offline' / name)
+                                for name in READER_HASHES})
+        if sha256_of(compact_manifest) != compact_sha:
+            raise ValueError('Compact manifest changed during startup')
+        runtime = guard_runtime(reader, encoder, vectors, ce, compact_sha, vector_manifest_sha, backend)
+        validate_runtime(runtime, guard_config["recapture"])
     gate=FrozenLinear(bundle['gate']['model']);threshold=bundle['gate']['threshold']
     rankers={b:(FrozenLinear(bundle['rankers'][str(b)]['model'])
-                if bundle['rankers'][str(b)]['model'] is not None else None) for b in (28,40)}
+                if bundle['rankers'][str(b)]['model'] is not None else None)
+             for b in (28,40) if f'ce{b}-ranker' in selected}
     rules=RuleRouter(RetrievalConfig())
-    fixed=int(json.loads((Path(policy_dir)/'summary.json').read_text())['protocol']['fixed_pair_budget'])
-    if 'quality-guard-40' in selected:
-        guard_config = json.loads(AUDIT_CONFIG.read_bytes())
-        if quality_threshold is None:
-            quality_threshold = guard_config["threshold"]
-        if (fixed != 33 or quality_threshold != guard_config["threshold"]
-                or sha256_of(Path(policy_dir) / "models.json") != guard_config["training_model_sha256"]
-                or sha256_of(queries) != guard_config["holdout_sha256"]["queries"]):
-            raise ValueError('quality-guard-40 requires the frozen CE-33 baseline, gate and holdout queries')
     identity=None if reader_source else {reader.doc(i).doc_id:i for i in range(reader.n_docs)}
     def search(text,policy,qid):
         constrained=parse(text).get('explicit_constraints',False)
@@ -166,7 +229,8 @@ def benchmark(index,vector_manifest,model_path,ce_model,url,queries,qrels,
         return {'results':results,'heavy':budget>0,'ce_pairs':min(budget,len(row['pool'])),
                 'ce_ms':elapsed,'vector_attempt':use_vector,'gate_heavy':bool(heavy),
                 'gate_features':features.tolist(),'router_ms':router_ms,
-                'explicit_constraints':bool(constrained),'fallback':False}
+                'explicit_constraints':bool(constrained),'fallback':False,
+                **({'pre_rerank_ids': row['pool']} if guard_capture else {})}
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):
             try:
@@ -209,10 +273,31 @@ def benchmark(index,vector_manifest,model_path,ce_model,url,queries,qrels,
     finally:server.shutdown();server.server_close()
     (output/'requests.pending.jsonl').rename(output/'requests.jsonl')
     prediction_sha=sha256_of(output/'requests.jsonl')
-    if 'quality-guard-40' in selected and sha256_of(qrels) != guard_config["holdout_sha256"]["qrels"]:
-        raise ValueError('quality-guard-40 requires the frozen holdout qrels')
+    if guard_capture:
+        request_pairs(records, {item.qid: item.query for item in frozen_queries}, gate, quality_threshold)
+        capture = {
+            'schema_version': 2,
+            'status': 'PAIRED_REQUESTS_CHECKED_BEFORE_SCORING',
+            'requests_sha256': prediction_sha,
+            'models_sha256': hashlib.sha256(model_bytes).hexdigest(),
+            'queries_sha256': guard_config['holdout_sha256']['queries'],
+            'policy_order': selected,
+            'queries': len(frozen_queries),
+            'threshold': quality_threshold,
+            'runtime': runtime,
+            'runtime_source_sha256': runtime_sources,
+        }
+        with (output/CAPTURE_RECEIPT).open('x', encoding='utf-8') as handle:
+            json.dump(capture, handle, indent=2, allow_nan=False)
+            handle.write('\n')
+            handle.flush()
+            os.fsync(handle.fileno())
+        if capture_only:
+            return capture
+        if sha256_of(qrels) != guard_config["holdout_sha256"]["qrels"]:
+            raise ValueError('quality-guard-40 requires the frozen holdout qrels')
     labels={}
-    for line in Path(qrels).read_text().splitlines():
+    for line in Path(qrels).read_text(encoding='utf-8').splitlines():
         q,_,d,g=line.split();labels.setdefault(q,{})[d]=float(g)
     summary={}
     for policy in selected:
@@ -230,10 +315,10 @@ def benchmark(index,vector_manifest,model_path,ce_model,url,queries,qrels,
                          'exact_ids_match_capture_queries':len(parity)}
     summary['protocol']={'queries':len(rows),'partial_pilot':bool(limit),'qrels_read_after_requests':True,
                          'requests_sha256_before_labels':prediction_sha,
-                         'models_sha256':sha256_of(Path(policy_dir)/'models.json'),
-                         'vector_manifest_sha256':sha256_of(vector_manifest),
+                         'models_sha256':hashlib.sha256(model_bytes).hexdigest(),
+                         'vector_manifest_sha256':vector_manifest_sha,
                          'candidate_replay':False,'search_params':{'hnsw_ef':128,'exact':False},
-                         'lexical_backend':'frozen-rfc4-compact-bounded-float64' if reader_source else 'DiskIndex-reference',
+                         'lexical_backend':backend,
                          'runtime_source_sha256':runtime_sources,'cpu_affinity':sorted(os.sched_getaffinity(0)),
                          'thread_environment':{k:os.environ.get(k) for k in ['OMP_NUM_THREADS','OPENBLAS_NUM_THREADS','TOKENIZERS_PARALLELISM']},
                          'qrels_sha256':sha256_of(qrels),'queries_sha256':sha256_of(queries),
@@ -251,4 +336,6 @@ if __name__=='__main__':
     p.add_argument('--reader-source')
     p.add_argument('--quality-threshold',type=float,
                    help='Optional assertion of the frozen quality-guard threshold')
+    p.add_argument('--capture-only', action='store_true',
+                   help='Stop a paired quality guard run before opening qrels')
     print(json.dumps(benchmark(**vars(p.parse_args())),indent=2))

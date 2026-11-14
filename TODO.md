@@ -40,7 +40,7 @@
 - [x] **RFC-0001 100k 等预算随机质量对照**。独立复算 1,020 条实测排名及冻结的随机计划，学习门控和随机组各用 21,600 个 CE 对，四项配对区间均跨过零。随机组实时 HTTP 计时仍在采集。[开发对照](REPORT.md#同检索配置下的-100k-等预算开发对照)
 - [x] **RFC-0001/0002 配对评测运行时核验**。新配对协议将查询编码器实现、实际设备、权重精度和可核验的模型清单摘要纳入服务身份。历史 journal 按原协议复验。CE 留出采集可用 `--fit-receipt` 将运行时、门控权重和检索配置绑定到训练回执，并另行记录真实硬件和负载条件。
 - [ ] **RFC-0001 CE 独立留出复验**。在 PR #9 的 CE 开发集对照基础上，对词法索引、向量快照及冻结策略进行身份核验，再运行固定 CE 和等成本对照。既有全量 CE HTTP 延迟来自并发负载环境，隔离计时待按冻结策略复验。离线复算入口从封存 SQLite、原始 qrels 和拟合回执重建 TREC、配对区间与随机对照摘要，并核对封存哈希。
-- [ ] **RFC-0001 CE‑33/40 成本对照复核**。[PR #9](https://github.com/ShwStone/NLP-SearchEngine/pull/9) 新增了独立的回环基准。最新阈值汇总复用了此前请求，原始请求、阈值选择回执和模型仍待回读。新采集需独立核实运行使用的索引、向量集合和模型身份。仅通过逐条核验的新采集会生成 `audit-unbound.json`，供复算指标。见[复核说明](docs/rfc0001/FULL_ROUTER_HTTP_QUALITY_GUARD.md)。
+- [ ] **RFC-0001 CE‑33/40 成本对照复核**。[PR #9](https://github.com/ShwStone/NLP-SearchEngine/pull/9) 的最新阈值汇总复用了此前请求，原始请求与阈值选择回执仍待回读。新采集会校验两臂的候选顺序、BM25 特征及实际重排范围，并支持在读取 qrels 前停止和封存请求。复验入口已核对索引、模型身份和同一 Qdrant 恢复实例的见证格式，仍待全量原生运行。见[复核说明](docs/rfc0001/FULL_ROUTER_HTTP_QUALITY_GUARD.md)。
 - [x] **Windows 回归验证**。修复 checkpoint 子进程退出后锁释放的时序断言、CLI 子进程编码、原生路径断言和 JSON 解码异常的测试稳定性。完整 Windows unittest 运行 211 项，跳过两项 POSIX 专用用例，其余通过。
 - [x] **旧 PR 功能核对**。[PR #2](https://github.com/ShwStone/NLP-SearchEngine/pull/2) 的采集与界面改动已进入主干。通用 SentenceTransformer 的批次配置和 Qdrant 逐批消费与失败清理回归在 [PR #11](https://github.com/ShwStone/NLP-SearchEngine/pull/11)。联合候选复用 [PR #7](https://github.com/ShwStone/NLP-SearchEngine/pull/7) 的[三种磁盘读器端到端对照](tests/test_scale_support.py)，并覆盖 PackedIndex 并发、缓存和失败重试。
 - [ ] **旧 PR 处置**。PR #2 待 PR #11 合入后核对主干覆盖再关闭。PR #7 由其作者或维护者确认联合候选中的回归覆盖与原贡献记录后处理。
@@ -48,7 +48,7 @@
 ## 证据边界
 
 - 官方公开基线的判定来自 dev。808 条留出查询来自该集合。开题报告中的 100001/2000/9839 是团队提出的目标快照，来源见 [资源记录](evaluation/RESOURCES.md)。
-- 2026-11-13 [公开演示站点](https://search.shwstone.cn/)的 `/health` 返回 200，`/index/info` 仍回显 `tiny`、10 篇、`retrieval.vector_ready=false`。本地 20k 验收使用独立服务。
+- 2026-11-14 [公开演示站点](https://search.shwstone.cn/)的 `/health` 返回 200，`/index/info` 仍回显 `tiny`、10 篇、`retrieval.vector_ready=false`。本地 20k 验收使用独立服务。
 - 自爬评测的判定来源为 assistant 全文复核，报告按工程评测解释。数据、模型、快照、索引与生成结果均保存在 Git 外。
 
 ## 复验入口
