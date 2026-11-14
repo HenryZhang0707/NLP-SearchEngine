@@ -1,6 +1,6 @@
 """Read the frozen RFC-0002 evidence and print aggregate audit results."""
 import argparse
-from collections import Counter
+from collections import Counter, defaultdict
 import hashlib
 import json
 import math
@@ -8,6 +8,8 @@ from pathlib import Path
 from statistics import median
 import unicodedata
 from urllib.parse import urlsplit
+
+from .clean_news import NEAR_HAMMING_MAX, is_near_duplicate, signature
 
 
 # Anchors from evaluation/RESOURCES.md and the local frozen evidence.
@@ -51,6 +53,33 @@ def jsonl(path):
 
 def distribution(counts):
     return {"min": min(counts), "median": median(counts), "max": max(counts)}
+
+
+def residual_duplicates(bodies):
+    """Count exact and nonexact near-duplicate pairs under the crawl rules."""
+    require(NEAR_HAMMING_MAX < 4, "The four-band search cannot cover the configured threshold")
+    exact_counts = Counter()
+    bands = defaultdict(list)
+    signatures = []
+    exact_pairs = near_pairs = candidate_pairs = 0
+    for body in bodies:
+        current = signature(body)
+        exact_pairs += exact_counts[current.normalized_text_sha256]
+        exact_counts[current.normalized_text_sha256] += 1
+        keys = [(i, (current.simhash64 >> (16 * i)) & 0xffff) for i in range(4)]
+        # At most three differing bits leave at least one of four bands intact.
+        candidates = {index for key in keys for index in bands[key]}
+        candidate_pairs += len(candidates)
+        near_pairs += sum(
+            previous.normalized_text_sha256 != current.normalized_text_sha256
+            and is_near_duplicate(previous, current)
+            for previous in (signatures[index] for index in candidates)
+        )
+        for key in keys:
+            bands[key].append(len(signatures))
+        signatures.append(current)
+    return {"documents": len(signatures), "normalized_exact_pairs": exact_pairs,
+            "nonexact_near_pairs": near_pairs, "band_candidate_pairs": candidate_pairs}
 
 
 def corpus_stats(directory, receipt, *, visit_sidecar=None):
@@ -285,7 +314,7 @@ def ranked_coverage(directory, qrels, qrel_hash, test_ids):
     return coverage_for_rankings(runs, qrels)
 
 
-def audit(root, official_corpus=None):
+def audit(root, official_corpus=None, *, check_residual_duplicates=False):
     crawl = root / "news-clean-20k-20261102"
     receipt = read_json(crawl / "receipt.json", RECEIPT_SHA256)
     documents, corpus = corpus_stats(crawl, receipt)
@@ -313,6 +342,11 @@ def audit(root, official_corpus=None):
     results["official_corpus_exact_body_overlap"] = (
         exact_body_overlap(official_corpus, documents, official_freeze)
         if official_corpus is not None else {"status": "not_requested"})
+    if check_residual_duplicates:
+        results["corpus"]["residual_duplicates"] = {
+            "corpus_sha256": receipt["corpus_sha256"],
+            **residual_duplicates(row["text"] for row in documents.values()),
+        }
     return results
 
 
@@ -320,8 +354,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("evidence_root", type=Path)
     parser.add_argument("--official-corpus", type=Path, help="Optional frozen official full JSONL")
+    parser.add_argument("--residual-duplicates", action="store_true",
+                        help="Check every final news document under the crawl deduplication rules")
     args = parser.parse_args()
-    print(json.dumps(audit(args.evidence_root, args.official_corpus), ensure_ascii=True, indent=2, sort_keys=True))
+    result = audit(args.evidence_root, args.official_corpus, check_residual_duplicates=args.residual_duplicates)
+    print(json.dumps(result, ensure_ascii=True, indent=2, sort_keys=True))
 
 
 if __name__ == "__main__":

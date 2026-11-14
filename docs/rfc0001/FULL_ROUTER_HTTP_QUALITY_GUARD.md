@@ -23,7 +23,9 @@ The loopback HTTP benchmark evaluates a separate CE-33/CE-40 policy. It selects 
 
 The reported differences relative to CE-33 are `+0.00498` nDCG@10 (paired-query bootstrap 95% CI `[+0.00149, +0.00897]`) and `+0.00622` Recall@10 (95% CI `[+0.00271, +0.01022]`). The reported mean is below the absolute cap of `36.49` CE pairs and above the 33-pair comparison cost. The author reports 91 newly promoted requests and 717 reused decisions from the earlier threshold. The table's wall latencies combine those sources. The confidence intervals use query-level resampling.
 
-Re-verify using the original request log, frozen model bundle, query file, and qrels. Use the original log digest in the configuration, or record a fresh capture's digest before scoring. The historical log did not record an explicit fallback field; fresh captures must include it. The audit writes a separate `audit-verified.json`.
+Re-verify using the original request log, frozen model bundle, query file, and qrels. Use the original log digest in the configuration, or record a fresh capture's digest before scoring. The historical log predates the explicit fallback field required for fresh captures.
+
+The original digest identifies the historical capture. Its metrics are written to `audit-verified.json`. Its CLI exit status is 0 when the historical quality gate passes and 2 when it fails. A fresh capture can establish the paired request structure and recompute the same metrics. The request digest does not establish which index, vector collection, or model runtime executed the requests. A structurally valid fresh capture receives the source label `unbound_recapture`, writes its metrics to `audit-unbound.json`, and exits with status 3 even when its quality gate passes. Acceptance of fresh results requires independently attested run identity.
 
 ```bash
 python -m evaluation.audit_quality_guard_http --folder RUN_DIR --qrels QRELS --models MODELS_JSON \

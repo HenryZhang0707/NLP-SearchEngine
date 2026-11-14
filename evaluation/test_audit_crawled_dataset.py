@@ -2,11 +2,26 @@ import hashlib
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
-from evaluation.audit_crawled_dataset import exact_body_overlap, overlap
+from evaluation.audit_crawled_dataset import exact_body_overlap, overlap, residual_duplicates
+from evaluation.clean_news import TextSignature
 
 
 class CrawledDatasetAuditTest(unittest.TestCase):
+    def test_final_dedup_matches_pairs_across_bit_and_length_boundaries(self):
+        fixtures = {
+            "original": TextSignature("first", 0, 100),
+            "exact": TextSignature("first", 0, 100),
+            "near": TextSignature("second", (1 << 32) | (1 << 16) | 1, 90),
+            "four_bits": TextSignature("third", (1 << 48) | (2 << 32) | (2 << 16) | 2, 100),
+            "too_short": TextSignature("fourth", 0, 80),
+        }
+        with patch("evaluation.audit_crawled_dataset.signature", side_effect=fixtures.__getitem__):
+            result = residual_duplicates(fixtures)
+        self.assertEqual(result, {"documents": 5, "normalized_exact_pairs": 1,
+                                  "nonexact_near_pairs": 2, "band_candidate_pairs": 6})
+
     def test_query_overlap_distinguishes_normalized_exact_and_near(self):
         self.assertEqual(
             overlap(["ＡＢＣＤＥＦＧＨＩ！"], ["abcdefghi", "abcdefghij", "unrelated"]),

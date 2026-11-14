@@ -77,18 +77,16 @@ def audit(folder, qrels_path, models_path, queries_path, requests_sha256):
     model = json.loads(verify_bytes(models_path, config["training_model_sha256"]))
     frozen = config["holdout_sha256"]
     verify_bytes(queries_path, frozen["queries"])
-    verify_bytes(qrels_path, frozen["qrels"])
     queries = {row.qid: row.query for row in load_queries(queries_path)}
-    qrels = load_qrels(qrels_path)
     verify_bytes(queries_path, frozen["queries"])
-    verify_bytes(qrels_path, frozen["qrels"])
-    if len(queries) != 808 or set(queries) != set(qrels):
-        raise ValueError("Frozen holdout/query relevance coverage differs")
+    if len(queries) != 808:
+        raise ValueError("Frozen holdout query count differs")
     runs = request_pairs((json.loads(line) for line in requests.splitlines() if line.strip()),
                          queries, FrozenLinear(model["gate"]["model"]), config["threshold"],
                          historical=original_run)
     result = {
-        "queries": len(queries), "quality_guard_source": "historical" if original_run else "recapture",
+        "queries": len(queries),
+        "quality_guard_source": "historical" if original_run else "unbound_recapture",
         "heavy_count": sum(row["gate_heavy"] for row in runs[GUARD]),
         "ce_pairs_mean": {arm: float(np.mean([row["ce_pairs"] for row in runs[arm]])) for arm in POLICIES},
         "requests_sha256": requests_sha256, "inputs_sha256": frozen,
@@ -97,6 +95,11 @@ def audit(folder, qrels_path, models_path, queries_path, requests_sha256):
     }
     if result["ce_pairs_mean"][GUARD] > config["cost_gate"]["max_mean_ce_pairs"]:
         raise ValueError("Absolute CE cost gate failed")
+    verify_bytes(qrels_path, frozen["qrels"])
+    qrels = load_qrels(qrels_path)
+    verify_bytes(qrels_path, frozen["qrels"])
+    if set(queries) != set(qrels):
+        raise ValueError("Frozen holdout query/relevance coverage differs")
     scored = {arm: [metrics(row["results"], qrels[qid]) for qid, row in zip(queries, rows, strict=True)]
               for arm, rows in runs.items()}
     query_ids = np.asarray(list(queries))
@@ -112,7 +115,8 @@ def audit(folder, qrels_path, models_path, queries_path, requests_sha256):
               for label, quantile in (("p50", .5), ("p95", .95))}
         for arm, rows in runs.items()
     }
-    with (folder / "audit-verified.json").open("x", encoding="utf-8") as output:
+    filename = "audit-verified.json" if original_run else "audit-unbound.json"
+    with (folder / filename).open("x", encoding="utf-8") as output:
         json.dump(result, output, ensure_ascii=False, indent=2)
         output.write("\n")
     return result
@@ -126,6 +130,8 @@ def main():
     args = cli.parse_args()
     result = audit(args.folder, args.qrels, args.models, args.queries, args.requests_sha256)
     print(json.dumps(result, ensure_ascii=False, indent=2))
+    if result["quality_guard_source"] == "unbound_recapture":
+        return 3
     return 0 if result["quality_gate_passed"] else 2
 
 

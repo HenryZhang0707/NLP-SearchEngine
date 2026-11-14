@@ -26,18 +26,20 @@
 - [x] **RFC-0002 20k 路由日志对账**。50 条开发查询逐一运行四模式，200 条 HTTP 结果均匹配同一服务的日志。固定 RRF 调用向量 50 次，规则 Router 调用 9 次，无回退。单次顺序工程测量见[资源记录](evaluation/RESOURCES.md#新闻-20k-本地浏览器演示与恢复验收)。
 - [x] **RFC-0002 配对 HTTP 复验入口**。冻结查询、执行顺序和服务身份，通过日志对账验收，导出同批排名以便独立复算质量。既有 1,152 次四模式交错计时与 2,040 次规则/线性收益对照沿用各自的原始计划和回执。见[评测手册](evaluation/README.md#paired-live-http-measurements)。
 - [x] **RFC-0002 盲审导入与复评工具**。裁决包只包含分歧条目。正式导入核对准备回执、冻结计划和原始评分，复评沿用 150 条查询的四份冻结 HTTP 排名。见[复评命令](docs/contributions/rfc0002-news20k-dataset-card.md#人工评分复评)。
+- [x] **RFC-0002 冻结新闻语料去重复验**。核查最终 20,000 篇，按原正文规范化和 SimHash64 规则确认精确与近重复均为 0 对。独立核对冻结语料与压缩索引文档表。[语料与复验命令](docs/contributions/rfc0002-news20k-dataset-card.md#采集与文档)
 - [ ] **RFC-0002 自爬人工实测**。复用冻结的 20k 语料、划分、候选池与双索引。四份离线盲审包已回读校验，覆盖 8,281 对，其中 1,656 对有独立重叠安排。收齐四份完整评分后准备裁决、导入正式 qrels、重评四模式并报告判定覆盖和配对区间。现有辅助标注结果单列。
 - [ ] **RFC-0002 公开 20k 部署复验**。部署负责人切换获准发布的冻结双索引后，用[验收命令](docs/contributions/rfc0003-online-acceptance.md#公开部署切换后的发布身份复验)验证索引、实际编码器运行时、同一服务实例、四种检索模式和错误路径。
 - [x] **RFC-0001 两动作对照**。完成规则与同预算随机对照、线性收益模型独立训练和等预算回放。固定训练阈值与规则在 100k 开发集另有 2,040 次真实 HTTP 对照，向量调用为 715 对 748，质量与耗时证据支持保留现有默认规则。详见 [Router 对照](docs/contributions/rfc0001-router-budget.md)。
 - [x] **RFC-0001 Router 预算、消融与分组复验**。冻结检索排名，比较等向量调用预算、特征移除和按查询组重采样。保留规则、学习模型、随机期望及事后最优分配的证据。见[Router 预算报告](docs/contributions/rfc0001-router-budget.md#开发集向量调用预算曲线)。
 - [x] **RFC-0001 双动作研究与域迁移分析**。[Issue #3](https://github.com/ShwStone/NLP-SearchEngine/issues/3) 的 BM25 与混合检索选择研究已有[文献矩阵](docs/rfc0001/LITERATURE.md)、[方案和选型](docs/rfc0001/PROPOSALS.md)及[冻结实验和失败分析](docs/rfc0001/RESULTS.md)。256 条 CMedQA 迁移查询的质量损失超过预设上限，保留现行默认策略。
 - [x] **RFC-0002 ANN 参数敏感性**。在同一 100k 快照及开发划分上对照 `hnsw_ef=128/256`，记录一致指标、约束拒绝和延迟比较边界。见[ANN 对照](docs/contributions/rfc0002-ann-ef-sensitivity.md)。
-- [ ] **RFC-0001 与 RFC-0002 合并评审**。[PR #11](https://github.com/ShwStone/NLP-SearchEngine/pull/11) 的 `5d585ca` 含 FAISS 对照和 [PR #12](https://github.com/ShwStone/NLP-SearchEngine/pull/12) 的 `791bd4a`。Router 联合候选包含这两个提交及 [PR #9](https://github.com/ShwStone/NLP-SearchEngine/pull/9) 的阈值更新 `f6838a0`。已对当前 `master` 基线复核联合候选的合并树。PR #9 本身仍显示冲突，待作者或维护者评审联合候选。
+- [ ] **RFC-0001 与 RFC-0002 合并评审**。[PR #11](https://github.com/ShwStone/NLP-SearchEngine/pull/11) 的 `5d585ca` 含 FAISS 对照，且已包含 [PR #12](https://github.com/ShwStone/NLP-SearchEngine/pull/12) 的 `791bd4a`。维护者可先评审 #11，再在更新后的 `master` 核对 #12 的覆盖。Router 联合候选包含这两个提交及 [PR #9](https://github.com/ShwStone/NLP-SearchEngine/pull/9) 的阈值更新 `f6838a0`。联合候选已对当前 `master` 复核合并树。PR #9 仍有冲突，待作者或维护者评审联合候选。
 - [x] **RFC-0001 可选 CE 接线及对照入口**。固定和学习门控共用冻结的混合检索候选，服务回显重排身份和实际打分数，配对评估校验同一服务实例与等重排预算。见[评测手册](evaluation/README.md#train-and-evaluate-a-ce40-gate)。
 - [x] **RFC-0001 开发集 CE 质量与成本对照**。课程报告复用 PR #9 的 100k 与全量开发实验，保留固定深度、同量级 CE 预算、训练内排序选型、负结果及负载差异。详见 [CE 重排与逐查询成本分配](REPORT.md#10-ce-重排与逐查询成本分配)。
+- [x] **RFC-0001 100k 等预算随机质量对照**。独立复算 1,020 条实测排名及冻结的随机计划，学习门控和随机组各用 21,600 个 CE 对，四项配对区间均跨过零。随机组实时 HTTP 计时仍在采集。[开发对照](REPORT.md#同检索配置下的-100k-等预算开发对照)
 - [x] **RFC-0001/0002 配对评测运行时核验**。新配对协议将查询编码器实现、实际设备、权重精度和可核验的模型清单摘要纳入服务身份。历史 journal 按原协议复验。CE 留出采集可用 `--fit-receipt` 将运行时、门控权重和检索配置绑定到训练回执，并另行记录真实硬件和负载条件。
 - [ ] **RFC-0001 CE 独立留出复验**。在 PR #9 的 CE 开发集对照基础上，对词法索引、向量快照及冻结策略进行身份核验，再运行固定 CE 和等成本对照。既有全量 CE HTTP 延迟来自并发负载环境，隔离计时待按冻结策略复验。离线复算入口从封存 SQLite、原始 qrels 和拟合回执重建 TREC、配对区间与随机对照摘要，并核对封存哈希。
-- [ ] **RFC-0001 CE‑33/40 成本对照复核**。[PR #9](https://github.com/ShwStone/NLP-SearchEngine/pull/9) 新增了独立的回环基准。最新阈值汇总复用了此前请求，原始请求、阈值选择回执和模型仍待回读。逐查询固定 33 对及门控预算的核验方式见[复核说明](docs/rfc0001/FULL_ROUTER_HTTP_QUALITY_GUARD.md)。
+- [ ] **RFC-0001 CE‑33/40 成本对照复核**。[PR #9](https://github.com/ShwStone/NLP-SearchEngine/pull/9) 新增了独立的回环基准。最新阈值汇总复用了此前请求，原始请求、阈值选择回执和模型仍待回读。新采集需独立核实运行使用的索引、向量集合和模型身份。仅通过逐条核验的新采集会生成 `audit-unbound.json`，供复算指标。见[复核说明](docs/rfc0001/FULL_ROUTER_HTTP_QUALITY_GUARD.md)。
 - [x] **Windows 回归验证**。修复 checkpoint 子进程退出后锁释放的时序断言、CLI 子进程编码、原生路径断言和 JSON 解码异常的测试稳定性。完整 Windows unittest 运行 211 项，跳过两项 POSIX 专用用例，其余通过。
 - [x] **旧 PR 功能核对**。[PR #2](https://github.com/ShwStone/NLP-SearchEngine/pull/2) 的采集与界面改动已进入主干。通用 SentenceTransformer 的批次配置和 Qdrant 逐批消费与失败清理回归在 [PR #11](https://github.com/ShwStone/NLP-SearchEngine/pull/11)。联合候选复用 [PR #7](https://github.com/ShwStone/NLP-SearchEngine/pull/7) 的[三种磁盘读器端到端对照](tests/test_scale_support.py)，并覆盖 PackedIndex 并发、缓存和失败重试。
 - [ ] **旧 PR 处置**。PR #2 待 PR #11 合入后核对主干覆盖再关闭。PR #7 由其作者或维护者确认联合候选中的回归覆盖与原贡献记录后处理。
