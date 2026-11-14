@@ -7,7 +7,7 @@
     "relative_gap",
     "candidate_hits"
   ],
-  "threshold": 0.153,
+  "threshold": 0.15146,
   "actions": {
     "heavy": "CE-40",
     "cheap": "fixed-CE-33"
@@ -20,8 +20,8 @@
     "qrels": "e32323a42dab45c07fa49b6e43954f397584ccd87d104bb0df4d2bbc9f19abca"
   },
   "training_model_sha256": "2c6bb8e23543f0abff256edb6b03f6090559b137f938713660585e9bbc4d2ee2",
-  "http_requests_sha256": "d1e8d3f0bd4e9a451fbe006b99ad00477cb71791b2544475e441204ec76eab80",
-  "http_audit_sha256": "1b04119bc8534941151ca0f6fceed47e3f7ec0a796bf5140502088123ecfa215",
+  "http_requests_sha256": "804b07acf61312fe2bcc8f1f1a8030770a5b87308f3d5ca45a5cdde46d40f029",
+  "http_audit_sha256": "ee970fb18c25f1f4883d0014e8f038d405a2032dab15fa5487a8e12ec37e58ee",
   "qrels_read_after_requests": true,
   "fallback": "fixed-CE-33",
   "status": "historical_summary_pending_raw_readback"

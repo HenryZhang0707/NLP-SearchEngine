@@ -20,6 +20,7 @@ import numpy as np
 from contracts import analyzer
 from contracts.api import SearchRequest
 from contracts.retrieval import RetrievalConfig,VectorManifest
+from evaluation.audit_quality_guard_http import AUDIT_CONFIG
 from evaluation.dureader_policy_features import FrozenLinear,gate_features,rerank
 from evaluation.prepare_bm25_router import jsonl_rows,metrics
 from evaluation.router_metrics import percentile
@@ -56,7 +57,7 @@ def capture_parity(response, policy, prediction):
 
 def benchmark(index,vector_manifest,model_path,ce_model,url,queries,qrels,
               policy_dir,output,policies='bm25,dense,ce0,old-rules-router,ce28,ce40,ce28-ranker,ce40-ranker,learned-router,fixed-pair-budget',
-              limit=0,reader_source=None,quality_threshold=0.153):
+              limit=0,reader_source=None,quality_threshold=None):
     from adapters.embedding import BGEEncoder
     output=Path(output)
     if output.exists():raise FileExistsError(output)
@@ -94,8 +95,9 @@ def benchmark(index,vector_manifest,model_path,ce_model,url,queries,qrels,
     rules=RuleRouter(RetrievalConfig())
     fixed=int(json.loads((Path(policy_dir)/'summary.json').read_text())['protocol']['fixed_pair_budget'])
     if 'quality-guard-40' in selected:
-        from evaluation.audit_quality_guard_http import AUDIT_CONFIG
         guard_config = json.loads(AUDIT_CONFIG.read_bytes())
+        if quality_threshold is None:
+            quality_threshold = guard_config["threshold"]
         if (fixed != 33 or quality_threshold != guard_config["threshold"]
                 or sha256_of(Path(policy_dir) / "models.json") != guard_config["training_model_sha256"]
                 or sha256_of(queries) != guard_config["holdout_sha256"]["queries"]):
@@ -247,5 +249,6 @@ if __name__=='__main__':
     p.add_argument('--policies',default='bm25,dense,ce0,old-rules-router,ce28,ce40,ce28-ranker,ce40-ranker,learned-router,fixed-pair-budget')
     p.add_argument('--limit',type=int,default=0)
     p.add_argument('--reader-source')
-    p.add_argument('--quality-threshold',type=float,default=0.153)
+    p.add_argument('--quality-threshold',type=float,
+                   help='Optional assertion of the frozen quality-guard threshold')
     print(json.dumps(benchmark(**vars(p.parse_args())),indent=2))
