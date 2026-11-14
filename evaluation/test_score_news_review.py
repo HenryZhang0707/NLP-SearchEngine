@@ -31,8 +31,15 @@ class NewsReviewScoringTests(unittest.TestCase):
             json.dumps({"query_id": qid, "doc_id": doc}) + "\n" for qid, doc in self.grades))
         pool_sha = put(pool / "manifest.json",
                        {"files": {"pool-provenance.jsonl": provenance_sha}, "pool_pairs": len(self.grades)})
-        old_sha = put(self.root / "news-formal-pooled-qrels-20261104/manifest.json",
-                      {"pool_manifest_sha256": pool_sha, "selected_queries_sha256": "queries"})
+        assistant = self.root / "news-formal-pooled-qrels-20261104"
+        self.assistant_qrels = assistant / "all.qrels.tsv"
+        assistant_sha = put(self.assistant_qrels, "".join(
+            f"{qid}\t0\t{doc}\t{grade}\n" for (qid, doc), grade in self.grades.items()))
+        old_sha = put(assistant / "manifest.json", {
+            "pool_manifest_sha256": pool_sha, "selected_queries_sha256": "queries",
+            "status": "POOLED_QRELS_COMPLETE", "reviewer_provenance": score_news_review.ASSISTANT_SOURCE,
+            "files": {"all.qrels.tsv": assistant_sha},
+        })
         self.runs = self.root / "news-formal-quality-test-20261104/formal-test"
         arms = {}
         for arm in audit_crawled_dataset.NEWS_ARMS:
@@ -112,3 +119,18 @@ class NewsReviewScoringTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "lacks the frozen pre-adjudication receipt"):
             self.run_cli(self.bind_intake(prepared=False))
         self.assertFalse(self.output.exists())
+
+    def test_replays_assistant_labels_without_reviewer_intake(self):
+        score_news_review.main([str(self.root), "--assistant-labels", "--out", str(self.output)])
+        result = json.loads(self.output.read_bytes())
+        self.assertEqual(result["label_source"], score_news_review.ASSISTANT_SOURCE)
+        self.assertEqual(result["identity"]["qrels_manifest_sha256"], score_news_review.QRELS_MANIFEST_SHA256)
+        self.assertNotIn("intake_sha256", result["identity"])
+        self.assertEqual(result["test_queries"], 2)
+        self.assertEqual(result["metrics"]["adaptive"]["ndcg_at_10"], .5)
+
+    def test_rejects_tampered_assistant_labels(self):
+        with self.assistant_qrels.open("ab") as stream:
+            stream.write(b"first\t0\tunknown\t2\n")
+        with self.assertRaisesRegex(ValueError, "Qrels SHA-256"):
+            score_news_review.score_news_assistant(self.root)

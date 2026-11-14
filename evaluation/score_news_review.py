@@ -1,4 +1,4 @@
-"""Score the frozen RFC-0002 test rankings after independent adjudication."""
+"""Rescore the frozen RFC-0002 rankings using verified relevance labels."""
 
 import argparse
 from collections import Counter
@@ -23,6 +23,7 @@ REVIEW_PAIRS = 8281
 REVIEW_OVERLAP = 1656
 TEST_PAIRS = 6214
 TEST_QUERIES = 150
+ASSISTANT_SOURCE = "assistant_semantic_review_not_human_gold"
 BOOTSTRAP_SAMPLES = 10_000
 BOOTSTRAP_SEED = 20261028
 METRIC_FIELDS = {"ndcg_at_10": "ndcg", "recall_at_10": "recall", "mrr_at_10": "mrr", "map_at_100": "map"}
@@ -97,9 +98,14 @@ def verify_intake(receipt):
 def load_review_grades(qrels, intake, expected_intake_sha256, pairs):
     receipt = read_json(intake, expected_intake_sha256)
     preparation_sha256 = verify_intake(receipt)
+    grades, digest = read_grades(qrels, receipt["qrels"]["sha256"], pairs)
+    return grades, digest, preparation_sha256
+
+
+def read_grades(qrels, expected_sha256, pairs):
     payload = qrels.read_bytes()
     digest = hashlib.sha256(payload).hexdigest()
-    require(digest == receipt["qrels"]["sha256"], "Qrels SHA-256 differs from the intake receipt")
+    require(digest == expected_sha256, "Qrels SHA-256 differs from the verified label record")
     grades = {}
     for row in payload.decode("utf-8").splitlines():
         qid, iteration, doc_id, grade = row.split()
@@ -108,12 +114,32 @@ def load_review_grades(qrels, intake, expected_intake_sha256, pairs):
                 "Invalid or repeated qrels row")
         grades[pair] = int(grade)
     require(set(grades) == pairs, "Qrels do not cover the exact frozen news pool")
-    return grades, digest, preparation_sha256
+    return grades, digest
 
 
 def score_news_review(evidence_root, qrels, intake, expected_intake_sha256):
     test_ids, pairs, state, runs = load_review_inputs(evidence_root)
     grades, qrels_digest, preparation_sha256 = load_review_grades(qrels, intake, expected_intake_sha256, pairs)
+    return score_rankings(test_ids, state, runs, grades, "reviewer_submissions", {
+        "qrels_sha256": qrels_digest, "intake_sha256": expected_intake_sha256,
+        "pre_adjudication_sha256": preparation_sha256, "review_plan_sha256": REVIEW_PLAN_SHA256,
+    })
+
+
+def score_news_assistant(evidence_root):
+    test_ids, pairs, state, runs = load_review_inputs(evidence_root)
+    directory = evidence_root / "news-formal-pooled-qrels-20261104"
+    manifest = read_json(directory / "manifest.json", QRELS_MANIFEST_SHA256)
+    require(manifest["status"] == "POOLED_QRELS_COMPLETE"
+            and manifest["reviewer_provenance"] == ASSISTANT_SOURCE,
+            "Expected the frozen assistant label provenance")
+    grades, digest = read_grades(directory / "all.qrels.tsv", manifest["files"]["all.qrels.tsv"], pairs)
+    return score_rankings(test_ids, state, runs, grades, ASSISTANT_SOURCE, {
+        "qrels_sha256": digest, "qrels_manifest_sha256": QRELS_MANIFEST_SHA256,
+    })
+
+
+def score_rankings(test_ids, state, runs, grades, label_source, label_identity):
     test_qrels = {qid: {} for qid in sorted(test_ids)}
     for (qid, doc_id), grade in grades.items():
         if qid in test_qrels:
@@ -129,14 +155,12 @@ def score_news_review(evidence_root, qrels, intake, expected_intake_sha256):
     }
     return {
         "schema_version": 1, "scope": "frozen_news20k_test_rankings_rescored",
-        "label_source": "reviewer_submissions", "test_queries": len(test_qrels),
+        "label_source": label_source, "test_queries": len(test_qrels),
         "test_queries_without_positive": sum(not any(rows.values()) for rows in test_qrels.values()),
         "test_grade_counts": dict(sorted(Counter(grade for rows in test_qrels.values()
                                                 for grade in rows.values()).items())),
         "identity": {
-            "qrels_sha256": qrels_digest, "intake_sha256": expected_intake_sha256,
-            "pre_adjudication_sha256": preparation_sha256,
-            "review_plan_sha256": REVIEW_PLAN_SHA256, "run_state_sha256": RUN_STATE_SHA256,
+            **label_identity, "run_state_sha256": RUN_STATE_SHA256,
             "pool_manifest_sha256": state["pool_manifest_sha256"],
             "run_sha256": {arm: state["arms"][arm]["sha256"] for arm in NEWS_ARMS},
         },
@@ -148,14 +172,23 @@ def score_news_review(evidence_root, qrels, intake, expected_intake_sha256):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("evidence_root", type=Path)
-    parser.add_argument("--qrels", required=True, type=Path)
-    parser.add_argument("--intake", required=True, type=Path)
-    parser.add_argument("--intake-sha256", required=True, help="Trusted digest recorded after successful intake")
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--assistant-labels", action="store_true", help="Use the frozen assistant qrels and manifest")
+    source.add_argument("--qrels", type=Path, help="Qrels from optional independent review")
+    parser.add_argument("--intake", type=Path)
+    parser.add_argument("--intake-sha256", help="Trusted digest recorded after successful intake")
     parser.add_argument("--out", required=True, type=Path, help="Fresh aggregate JSON path outside Git")
     args = parser.parse_args(argv)
     if args.out.exists() or args.out.is_symlink():
         parser.error("output already exists")
-    result = score_news_review(args.evidence_root, args.qrels, args.intake, args.intake_sha256)
+    if args.assistant_labels:
+        if args.intake is not None or args.intake_sha256 is not None:
+            parser.error("--assistant-labels does not use reviewer intake")
+        result = score_news_assistant(args.evidence_root)
+    else:
+        if args.intake is None or args.intake_sha256 is None:
+            parser.error("--qrels requires --intake and --intake-sha256")
+        result = score_news_review(args.evidence_root, args.qrels, args.intake, args.intake_sha256)
     encoded = json.dumps(result, ensure_ascii=True, sort_keys=True, indent=2, allow_nan=False)
     with args.out.open("x", encoding="utf-8", newline="\n") as handle:
         handle.write(encoded + "\n")
