@@ -36,6 +36,24 @@ dependencies is therefore visibly degraded rather than silently labeled as a
 successful hybrid experiment. Add `--fail-on-fallback` to reject any such query
 with a nonzero exit status.
 
+For server-side timing analysis, pass a distinct `--request-tag` per HTTP
+attempt. The evaluator sends it as the public `run_tag` field and records it
+in the request journal and snapshot. The tag starts with an ASCII letter or
+digit, can also contain `.`, `_` and `-`, and is at most 128 characters.
+`--tag` continues to name the TREC run.
+
+Keep the full server log, including its startup record, and pass it together
+with the finalized request sidecar:
+
+```bash
+python3 -m evaluation.serving_cost --run runs/bm25.trec.requests.json service.log
+```
+
+Use a distinct tag per serial attempt. The log intentionally contains no query
+IDs. The checker verifies ordered HTTP status and routing agreement within one
+startup epoch. It reports server stage timings and client HTTP latency
+separately. Repeated `--run` arguments preserve the per-attempt timing scopes.
+
 Standalone TREC runs contain no routing or latency evidence: those fields are
 `null`, not zero failures or zero latency.
 
@@ -198,11 +216,296 @@ python3 -m evaluation.compare --qrels data/duretrieval/qrels.test.tsv \
   --metric ndcg --samples 10000 --seed 2026
 ```
 
-Run the evaluator tests with:
+Install the evaluator test dependencies and run both test entry points:
 
 ```bash
+python3 -m pip install pytest numpy ijson==3.4.0.post0
 python3 -m unittest discover -s evaluation -p 'test_*.py'
+python3 -m pytest evaluation
 ```
+
+## External TREC runs and the DuReader 100k development subset
+
+The shared [DuReader 100k rebuild recipe](https://huggingface.co/datasets/ShwStone/dureader-mini-100k/tree/2db5eadeb4adabec463324b4ca3562b7b79fda94)
+pins 100,000 documents and 172 train / 1,020 development queries from the
+public official-dev release. Use its published hashes to verify the rebuilt
+files. These development results use a different candidate corpus from the
+full-corpus 808-query holdout.
+
+External baselines can generate a six-column TREC file in a separate
+environment. The validator checks one run tag, unique documents and
+contiguous ranks per query, corpus membership and minimum depth. It scores
+every query in the supplied order, with zero metrics for queries without qrels.
+Latency and routing are unavailable from a TREC run alone. Use the hashes in the
+receipt to check that each compared run used the same frozen input bytes.
+
+```bash
+python -m evaluation.external_run \
+  --corpus data/mini100k/corpus.jsonl \
+  --queries data/mini100k/queries.dev.jsonl --qrels data/mini100k/qrels.dev.tsv \
+  --run runs/reference.trec --depth 100 --output-json runs/reference.validation.json
+```
+
+A method that legitimately yields fewer than 100 documents needs a reviewed
+`--exceptions` JSON file. Freeze the eligibility rule before inspecting
+quality metrics and verify the exact counts independently of the submitted run.
+An explicit-constraint rejection can be accounted for with an expected count of
+zero. The evaluator keeps the query in the denominator. An unexplained missing
+or truncated query fails validation.
+
+```json
+{
+  "schema_version": 1,
+  "corpus_sha256": "<frozen corpus SHA256>",
+  "queries_sha256": "<frozen queries SHA256>",
+  "qrels_sha256": "<frozen qrels SHA256>",
+  "depth": 100,
+  "short_queries": {
+    "<frozen query ID>": {"expected_count": 0, "reason": "<reviewed reason>"}
+  }
+}
+```
+
+The optional formula-aligned BM25S reference scores document body tokens using
+the shared analyzer and `bm25s==0.2.14` with ATIRE term-frequency saturation,
+Lucene IDF, `k1=1.2`, `b=0.75` and float64. Corpus order breaks score ties.
+Queries with Boolean or phrase constraints use the project's positional filter
+on a separately built lexical index whose ordered corpus fingerprint must match.
+BM25S supplies all scores. The reference does not use qrels while retrieving.
+
+```bash
+python -m pip install bm25s==0.2.14
+python -m evaluation.bm25s_reference \
+  --corpus data/mini100k/corpus.jsonl --n-docs 100000 \
+  --corpus-sha256 f24b50b6012b47f6fb5f72272666dbf187124a869f19d1c8d83f7e30d6cb62b4 \
+  --queries data/mini100k/queries.dev.jsonl --depth 100 \
+  --constraint-index artifacts/mini100k/compact --out runs/bm25s-mini100k
+```
+
+The output contains `run.trec` and a manifest with hashes, versions and
+observed short rankings. Use `evaluation.external_run` to validate and score
+the TREC file. Observed short counts are diagnostic until independently checked.
+
+### Exact dense reference
+
+The exact reference uses the same frozen BGE model and verified FP32 document
+cache as the Qdrant arm. It evaluates every document with float64 cosine,
+breaking score ties by corpus order. The paired comparison measures agreement
+between exact search and ANN on the shared embeddings. Record the exact and ANN
+backends separately when reporting results.
+
+```bash
+python -m evaluation.dense_reference \
+  --corpus data/mini100k/corpus.jsonl --n-docs 100000 \
+  --corpus-sha256 f24b50b6012b47f6fb5f72272666dbf187124a869f19d1c8d83f7e30d6cb62b4 \
+  --queries data/mini100k/queries.dev.jsonl --qrels data/mini100k/qrels.dev.tsv \
+  --exceptions data/mini100k/dense-depth-exceptions.json \
+  --cache-dir artifacts/mini100k/bge-cache --model-path models/bge-small-zh-v1.5 \
+  --chunk-size 1024 --batch-size 32 --shards 1 --depth 100 --out runs/bge-exact-mini100k
+```
+
+The default backend is NumPy. Install `faiss-cpu==1.10.0` and add
+`--backend faiss` to run the independent FAISS CPU reference on the same
+embeddings. FAISS uses a flat inner-product index with L2-normalized float32
+inputs and resolves exact score ties in corpus order, including ties across
+the requested cutoff. Query encoding runs in a separate process so Windows can load each backend's
+OpenMP library independently. The manifest identifies the backend, arithmetic, and
+package version. The [FAISS metric documentation](https://github.com/facebookresearch/faiss/wiki/MetricType-and-distances)
+describes the equivalence of normalized inner product and cosine similarity.
+
+To compare against a sealed historical NumPy run, also pass
+`--reference-manifest /path/to/manifest.json <verified-SHA256>`. This admits
+the historical cache contract only if the other cache fields and the frozen
+query inputs match. The document and query vector SHA256 values must match
+before the FAISS ranking is published.
+
+Pass the same cache partition parameters used by the producer. When the frozen
+query set includes explicit lexical constraints, the exceptions file must list
+exactly those queries with `expected_count: 0`. Keep their query IDs in the
+evaluation denominator. Run `evaluation.external_run` on the emitted TREC
+file with the same exceptions. The qrels bind the policy by SHA256 and do not
+participate in ranking.
+
+### Matched HTTP runs on the shared development corpus
+
+Point the serving profile at the 100k compact lexical index and the matching
+Qdrant snapshot. Use the same verified BGE cache for the snapshot and the exact
+reference above. The development protocol uses BGE
+`BAAI/bge-small-zh-v1.5@7999e1d3359715c523056ef9478215996d62a620`,
+512-dimensional FP32 vectors, `candidate_k=200`, `rrf_c=60`,
+`hnsw_ef=256`, and the built-in `rule` policy. Verify the corpus fingerprint,
+embedding, search parameters, collection count and HNSW readiness before and
+after each arm. Record an immutable copy of the service log for each arm.
+The [serving guide](../docs/online-serving.md) describes the profile and log
+formats.
+
+For each of `lexical`, `dense`, `hybrid` and `adaptive`, use a fresh output
+path and unique request tag. This example shows the dense arm, for which the
+frozen HTTP policy records one unsupported explicit-constraint query:
+
+```bash
+python -m evaluation.evaluate --endpoint http://127.0.0.1:8000/search \
+  --queries data/mini100k/queries.dev.jsonl --qrels data/mini100k/qrels.dev.tsv \
+  --mode dense --scorer bm25 --expander none --k 10 --map-k 100 \
+  --unsupported-policy data/mini100k/dense-http-unsupported.json \
+  --include-per-query --fail-on-fallback --timeout 30 \
+  --request-tag mini100k-dense-attempt-001 --tag mini100k-dense \
+  --output-run runs/mini100k/dense.trec --output-json runs/mini100k/dense.json
+
+python -m evaluation.serving_cost \
+  --run runs/mini100k/dense.trec.requests.json runs/mini100k/dense.server.log
+```
+
+Omit `--unsupported-policy` in the other three arms. Keep the constraint query
+in all quality denominators; it contributes an empty ranking to dense and
+exact dense. Confirm that hybrid and adaptive preserve its lexical filter.
+For ANN agreement, compare the exact and ANN document sets at depths 10 and
+100 over the remaining 1,019 queries. Run paired bootstrap with all 1,020
+queries for quality and report the direction of each subtraction.
+
+Measure HTTP latency in a separate warm run with one client request at a time,
+the same frozen query sample for all modes, and an interleaved mode order.
+Keep the per-request wall-clock observations and their matching server log
+rows. Time measured inside the server and wall time measured by the client
+have different boundaries. The exact reference is an offline run, so it has
+no comparable HTTP latency.
+
+To reconstruct the 100k cost schedule, exclude the declared constraint ID,
+sort the remaining IDs by the bytes of SHA-256 of UTF-8 `2026:<qid>`, and
+take the first 96. For each zero-based repeat `r = 0, 1, 2`, copy that list
+and shuffle it with Python `random.Random(2026 + r)`. At zero-based position
+`i` in the shuffled list, request the mode indices
+`[(j + i + r) % 4 for j in (0, 1, 3, 2)]` from
+`[lexical, dense, hybrid, adaptive]`, at depth 100. Before measuring, warm up
+each mode with the first ten eligible training queries. Average each
+query's three repeats before resampling paired latency differences.
+
+### Paired live HTTP measurements
+
+For a new paired measurement, freeze a JSON plan with these fields:
+
+| Field | Value |
+| --- | --- |
+| `schema_version` | `2` for new runtime-bound measurements. Use `1` to verify historical journals under their original identity rules. |
+| `queries_sha256`, `corpus_sha256` | SHA-256 of the exact query file and the expected corpus identity from `/index/info` |
+| `query_ids`, `warmup_query_ids` | Ordered, disjoint ID arrays from that file. Preselect the measured queries. Include warmup query records in the same file. |
+| `repeats`, `depth`, `timeout_s` | Positive repeat count, retrieval depth and request timeout in seconds. Use depth 100 for MAP@100. |
+| `arms` | Ordered objects with `label`, HTTP(S) origin `endpoint`, `mode`, and expected `policy_version`. Set optional `identity_sha256` to pin the full serving identity for that arm. |
+
+Use one vector-ready endpoint with four modes for a mode comparison, or two
+endpoints with `adaptive` and different policy versions for a Router comparison.
+Both endpoints must expose the same index, vector and effective search configuration.
+Version 2 also binds the query encoder implementation, loaded device, weight dtype
+and available verified model inventory to both HTTP identity and the server startup
+event. Record hardware models and load separately when interpreting latency.
+For a strict rerun, copy each arm's `identity_sha256` from the prior verified
+report from the same schema version. Version 1 covers the index, vector, search
+configuration and policy objects. Version 2 adds the encoder runtime.
+Requests use BM25 and expansion `none`. When a dense arm is present, choose a
+panel it can execute successfully and record any exclusions when freezing the plan.
+Within each repeat the runner walks the listed query IDs and rotates which arm goes
+first after each query. Freeze the query order before inspecting results.
+
+```bash
+mkdir -p runs
+python -m evaluation.paired_http collect --plan paired.json \
+  --queries panel.jsonl --out runs/router-paired
+python -m evaluation.paired_http verify --plan paired.json \
+  --queries panel.jsonl --journal runs/router-paired/requests.jsonl \
+  --server-log rules=rules.server.log --server-log gain=gain.server.log \
+  --run-dir runs/router-paired-trec > runs/router-paired-verified.json
+python -m evaluation.compare --qrels panel.qrels.tsv \
+  --run-a runs/router-paired-trec/rules.trec \
+  --run-b runs/router-paired-trec/gain.trec --metric ndcg --k 10 --map-k 100
+```
+
+Supply the same server log path for labels served by the same endpoint. Keep each
+server's startup event and request logs. The verifier checks the entire schedule,
+including warmup, against unique request tags, the startup identity and the
+client's routing record. A failed request, fallback, changed identity or incomplete
+journal prevents acceptance. Preserve an interrupted journal and collect again into
+a fresh directory so the latency sample covers one measurement session.
+
+The report includes client and server timings, vector attempts and successes,
+and 95% paired intervals for right arm minus left arm. Repeats are averaged
+per query before bootstrap sampling. TREC output uses the first repeat and records
+rank-derived scores. Use qrels restricted to the plan's measured IDs, including
+queries with empty results. The historical 100k schedule above remains the
+reference for the published measurement.
+
+## Human review of a frozen candidate pool
+
+Use the frozen corpus, query split and candidate pool already admitted for the
+experiment. Export all pairs, including any source-anchor pairs that were
+graded separately in a previous run. Each input JSONL row requires
+`query_id`, `query`, `doc_id`, `title`, `text`, `document_sha256` and
+`query_sha256`. Hash the query as UTF-8 and the document as the UTF-8 bytes of
+the compact JSON array `[doc_id,title,text]` with unescaped Unicode.
+
+```bash
+python -m evaluation.annotation_packet \
+  --candidates data/frozen/blinded-pairs.jsonl \
+  --candidates data/frozen/seed-candidates.jsonl \
+  --packet data/review/reviewer.jsonl --private-map data/review/private/mapping.json
+```
+
+Keep both outputs outside Git. Share only `reviewer.jsonl` with reviewers.
+Each row contains `pair_id`, `query`, `title` and `text`; keep pool-system
+membership, original IDs, seed roles and old judgments with the coordinator.
+Use relevance grades 0 (irrelevant), 1 (partly relevant) and 2 (directly
+relevant), and record each grade with its opaque `pair_id`. Assign a subset to
+independent reviewers, resolve disagreements and preserve the adjudication
+before deriving qrels. Exporting a packet records candidate coverage and does
+not assign labels.
+
+Freeze the reviewer assignments and record the plan SHA256 before collecting
+grades. A version 1 plan contains `schema_version`, `packet_sha256`,
+`private_map_sha256` and `reviewers`. The last field maps pseudonymous
+reviewer IDs to their exact assigned `pair_id` lists. Assign every pair to at
+least one reviewer and include an independently reviewed overlap.
+
+Once every reviewer has submitted their complete assignment, prepare the
+adjudication materials against the same frozen inputs:
+
+```bash
+python -m evaluation.annotation_intake \
+  --packet data/review/reviewer.jsonl --private-map data/review/private/mapping.json \
+  --plan data/review/private/plan.json --plan-sha256 "$FROZEN_PLAN_SHA256" \
+  --reviewer reviewer-a data/review/private/reviewer-a.jsonl \
+  --reviewer reviewer-b data/review/private/reviewer-b.jsonl \
+  --prepare-adjudication data/review/disputes.jsonl data/review/adjudication-template.jsonl \
+    data/review/private/pre-adjudication.json
+```
+
+Use fresh paths for all three outputs. The private report binds the input and
+output hashes and records the number of assigned pairs, independently reviewed
+pairs, unanimous overlaps and disputes. The agreement rate divides unanimous
+overlaps by all overlaps. When disputes exist, give the adjudicator only the
+dispute packet and matching template. The packet retains the original blind
+order and contains `pair_id`, `query`, `title` and `text` for disputed pairs.
+Copy the template to a new file, replace every `null` grade with an integer
+`0/1/2`, and keep the completed file private. When every overlap is unanimous,
+the command writes the private report alone. Record the private report's SHA256
+before sending the adjudication materials. Use it at final import to verify
+the exact reviewer submissions and the reconstructed dispute material.
+
+Import the completed judgments to create qrels:
+
+```bash
+python -m evaluation.annotation_intake \
+  --packet data/review/reviewer.jsonl --private-map data/review/private/mapping.json \
+  --plan data/review/private/plan.json --plan-sha256 "$FROZEN_PLAN_SHA256" \
+  --reviewer reviewer-a data/review/private/reviewer-a.jsonl \
+  --reviewer reviewer-b data/review/private/reviewer-b.jsonl \
+  --pre-adjudication data/review/private/pre-adjudication.json "$TRUSTED_PRE_ADJUDICATION_SHA256" \
+  --adjudication data/review/private/adjudication.jsonl \
+  --qrels data/review/news-human.qrels.tsv --receipt data/review/private/intake.json
+```
+
+Each submission row contains only `pair_id` and an integer `relevance` in
+`0/1/2`. Provide adjudication for exactly the pairs whose grades disagree.
+Omit `--adjudication` when the independent submissions agree on every
+overlapping pair. Keep the reviewer inputs, private map and receipt outside Git.
 
 ## Simple bounded crawler
 

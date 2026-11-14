@@ -27,11 +27,12 @@ class BGEEncoder:
         self._lock = threading.Lock()
         source = model_path or self.spec.model_id
         kwargs = {"local_files_only": True} if model_path else {"revision": self.spec.revision}
+        inventory_sha256 = None
         # A local copy must carry the downloaded revision's SHA256 inventory.
         if model_path:
             from .model_files import verify_model
             try:
-                verify_model(model_path, self.spec)
+                inventory_sha256 = verify_model(model_path, self.spec)
             except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
                 raise RetrievalUnavailable(f"BGE local model inventory verification failed: {error}") from error
         try:
@@ -47,6 +48,12 @@ class BGEEncoder:
         except Exception as error:
             raise RetrievalUnavailable(f"BGE model initialization failed: {error}") from error
         self._torch = torch
+        self.query_encoder_runtime = {
+            "implementation": "bge-cls-torch",
+            "device": str(self.model.device),
+            "dtype": str(self.model.dtype).removeprefix("torch."),
+            "inventory_sha256": inventory_sha256,
+        }
 
     def _encode(self, texts):
         try:

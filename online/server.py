@@ -23,8 +23,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from ipaddress import ip_address
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
+from uuid import uuid4
 
-from contracts.api import ApiError, SearchRequest
+from contracts.api import ApiError, SEARCH_INSTANCE_HEADER, SearchRequest
 from contracts.retrieval import RetrievalConfig, RetrievalUnavailable, VectorManifest
 from offline.disk_index import DiskIndex
 
@@ -132,6 +133,7 @@ def make_handler(engine: SearchEngine, static_root: Path | None = None, *,
     read_timeout = serving_state["request_timeout_s"]
     logger = search_log if search_log is not None else SearchLogger()
     identity = _identity_reader(engine)
+    instance_id = uuid4().hex
     policy = getattr(engine, "policy", None)
     policy_version = (policy.get("policy_version") if isinstance(policy, dict) else None)
 
@@ -145,6 +147,7 @@ def make_handler(engine: SearchEngine, static_root: Path | None = None, *,
             self.send_response(code)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
+            self.send_header(SEARCH_INSTANCE_HEADER, instance_id)
             self.end_headers()
             self.wfile.write(body)
             return serialization_ms
@@ -154,6 +157,7 @@ def make_handler(engine: SearchEngine, static_root: Path | None = None, *,
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header(SEARCH_INSTANCE_HEADER, instance_id)
             self.end_headers()
             self.wfile.write(body)
 
@@ -647,6 +651,8 @@ def main(argv=None):
         "vector_identity": info.get("vector_identity"),
         "search_config": info.get("search_config"),
         "policy": info.get("policy"),
+        **({"query_encoder_runtime": info["query_encoder_runtime"]}
+           if "query_encoder_runtime" in info else {}),
     })
     print(f"索引已加载（{engine.reader.n_docs} 篇），监听 {actual_host}:{actual_port}",
           flush=True)

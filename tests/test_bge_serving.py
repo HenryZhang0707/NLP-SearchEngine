@@ -15,6 +15,37 @@ from adapters.embedding import BGEEncoder, bge_spec
 from adapters import model_files
 from contracts.retrieval import RetrievalUnavailable, VectorManifest
 from online import server
+from online.embeddings import SentenceTransformerEncoder
+
+
+class SentenceTransformerServingTests(unittest.TestCase):
+    def test_default_and_explicit_batch_sizes_reach_encoder(self):
+        for kwargs, batch_size in (({}, 32), ({"batch_size": 3}, 3)):
+            model = Mock()
+            model.encode.side_effect = lambda texts, **options: [[1.0, 0.0] for _ in texts]
+            model.parameters.return_value = iter([SimpleNamespace(device="cpu", dtype="torch.float32")])
+            factory = Mock(return_value=model)
+            with self.subTest(batch_size=batch_size), patch.dict(
+                sys.modules, {"sentence_transformers": SimpleNamespace(SentenceTransformer=factory)}
+            ):
+                encoder = SentenceTransformerEncoder(
+                    "fixture", "rev-1", 2, query_prefix="q:", document_prefix="d:", **kwargs)
+                self.assertEqual(encoder.encode_documents(["one", "two"]), [[1.0, 0.0]] * 2)
+                self.assertEqual(encoder.encode_query("one"), [1.0, 0.0])
+                self.assertEqual(encoder.query_encoder_runtime, {
+                    "implementation": "sentence-transformers", "device": "cpu",
+                    "dtype": "float32", "inventory_sha256": None,
+                })
+                self.assertEqual([call.args[0] for call in model.encode.call_args_list],
+                                 [["d:one", "d:two"], ["q:one"]])
+                self.assertEqual([call.kwargs["batch_size"] for call in model.encode.call_args_list],
+                                 [batch_size, batch_size])
+
+    def test_invalid_batch_sizes_are_rejected_before_loading_the_model(self):
+        with patch.dict(sys.modules, {"sentence_transformers": None}):
+            for value in (False, 0, -1, 1.5, "8"):
+                with self.subTest(batch_size=value), self.assertRaisesRegex(ValueError, "batch_size"):
+                    SentenceTransformerEncoder("fixture", "rev-1", 2, batch_size=value)
 
 
 class BGEServingTests(unittest.TestCase):
@@ -131,6 +162,8 @@ class BGEServingTests(unittest.TestCase):
     def test_verified_local_initialization_is_fp32_right_truncation_no_download(self):
         tokenizer = SimpleNamespace(truncation_side="left")
         model = Mock()
+        model.device = "cpu"
+        model.dtype = "torch.float32"
         model.float.return_value = model
         model.to.return_value = model
         model.eval.return_value = model
@@ -138,12 +171,17 @@ class BGEServingTests(unittest.TestCase):
         auto_model = SimpleNamespace(from_pretrained=Mock(return_value=model))
         modules = {"torch": SimpleNamespace(), "transformers": SimpleNamespace(
             AutoModel=auto_model, AutoTokenizer=auto_tokenizer)}
-        with patch.object(model_files, "verify_model") as verify, patch.dict(sys.modules, modules):
+        with patch.object(model_files, "verify_model", return_value="a" * 64) as verify, \
+                patch.dict(sys.modules, modules):
             encoder = BGEEncoder(model_path=self.root, device="cpu")
         verify.assert_called_once_with(self.root, bge_spec())
         auto_tokenizer.from_pretrained.assert_called_once_with(self.root, local_files_only=True)
         auto_model.from_pretrained.assert_called_once_with(self.root, use_safetensors=True, local_files_only=True)
         self.assertEqual(encoder.tokenizer.truncation_side, "right")
+        self.assertEqual(encoder.query_encoder_runtime, {
+            "implementation": "bge-cls-torch", "device": "cpu", "dtype": "float32",
+            "inventory_sha256": "a" * 64,
+        })
         model.float.assert_called_once_with()
         model.to.assert_called_once_with("cpu")
         model.eval.assert_called_once_with()

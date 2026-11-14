@@ -7,6 +7,7 @@
 import hashlib
 import json
 import math
+import re
 from dataclasses import asdict, dataclass, field
 from typing import Iterable, Protocol, Sequence
 
@@ -118,6 +119,20 @@ class TextEncoder(Protocol):
     def encode_query(self, query: str) -> list[float]:
         """应用 query_prefix、相同 tokenizer/截断规则与 L2 归一化。"""
         ...
+
+
+def valid_query_encoder_runtime(value: object) -> bool:
+    """Validate the optional, path-free runtime identity used in paired evaluation."""
+    if not isinstance(value, dict) or value.keys() != {
+        "implementation", "device", "dtype", "inventory_sha256",
+    }:
+        return False
+    labels = (value["implementation"], value["device"], value["dtype"])
+    digest = value["inventory_sha256"]
+    return all(isinstance(label, str) and re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,63}", label)
+               for label in labels) and (digest is None or (
+        isinstance(digest, str) and re.fullmatch(r"[a-f0-9]{64}", digest) is not None
+    ))
 
 
 class VectorWriter(Protocol):

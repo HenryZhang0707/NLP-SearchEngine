@@ -15,12 +15,15 @@ class SentenceTransformerEncoder:
 
     def __init__(self, model_id: str, revision: str, dimension: int,
                  max_tokens: int = 512, query_prefix: str = "",
-                 document_prefix: str = ""):
+                 document_prefix: str = "", batch_size: int = 32):
+        if type(batch_size) is not int or batch_size <= 0:
+            raise ValueError("batch_size 必须是正整数")
         self.spec = EmbeddingSpec(
             model_id=model_id, revision=revision, dimension=dimension,
             max_tokens=max_tokens, query_prefix=query_prefix,
             document_prefix=document_prefix,
         )
+        self.batch_size = batch_size
         try:
             from sentence_transformers import SentenceTransformer
         except ImportError as error:
@@ -30,14 +33,22 @@ class SentenceTransformerEncoder:
         try:
             self._model = SentenceTransformer(model_id, revision=revision)
             self._model.max_seq_length = max_tokens
+            parameter = next(self._model.parameters(), None)
         except Exception as error:
             raise RetrievalUnavailable(f"无法加载 embedding 模型: {error}") from error
+        if parameter is not None:
+            self.query_encoder_runtime = {
+                "implementation": "sentence-transformers",
+                "device": str(parameter.device),
+                "dtype": str(parameter.dtype).removeprefix("torch."),
+                "inventory_sha256": None,
+            }
 
     def _encode(self, texts: list[str]) -> list[list[float]]:
         try:
             values = self._model.encode(
                 texts, normalize_embeddings=True, convert_to_numpy=False,
-                show_progress_bar=False,
+                show_progress_bar=False, batch_size=self.batch_size,
             )
             vectors = [[float(component) for component in vector] for vector in values]
         except Exception as error:

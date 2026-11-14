@@ -13,6 +13,7 @@
 from dataclasses import asdict, dataclass, field
 
 API_VERSION = "2.0"
+SEARCH_INSTANCE_HEADER = "X-Search-Instance"
 MODES = ("lexical", "dense", "hybrid", "adaptive")
 SCORERS = ("bm25", "tfidf")
 EXPANDERS = ("none", "rm3", "slm")

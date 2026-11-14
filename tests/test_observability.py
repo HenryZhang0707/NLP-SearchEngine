@@ -307,11 +307,18 @@ class HttpServingTests(unittest.TestCase):
         body = b'{"query":"SECRET_QUERY_TEXT","k":' + b"9" * 5000 + b"}"
         self._assert_json_parser_failure_is_sanitized(body)
 
-    def test_deeply_nested_json_is_sanitized_400_before_search(self):
-        depth = sys.getrecursionlimit() + 100
-        body = (b'{"query":"SECRET_QUERY_TEXT","k":'
-                + b"[" * depth + b"0" + b"]" * depth + b"}")
-        self._assert_json_parser_failure_is_sanitized(body)
+    def test_json_decoder_recursion_error_is_sanitized_400_before_search(self):
+        payload = '{"query":"SECRET_QUERY_TEXT","k":[[0]]}'
+
+        def decode(text):
+            # Decoder nesting limits vary by Python version.
+            if text == payload:
+                raise RecursionError("decoder nesting limit exceeded")
+            return json.loads(text)
+
+        with patch("online.server.json", wraps=json) as decoder:
+            decoder.loads.side_effect = decode
+            self._assert_json_parser_failure_is_sanitized(payload.encode("utf-8"))
 
     def test_content_length_digits_are_strict_ascii_and_bounded(self):
         calls = []

@@ -19,6 +19,7 @@ from offline.stream_build import build
 from offline.compact import CompactIndex
 from offline.compact_stream import compile_streaming
 from offline import checkpoint_compact as compiler
+from tests.checkpoint_lock_support import wait_for_windows_lock_release
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -349,6 +350,7 @@ with _state_lock(Path(sys.argv[1])):
             child.wait(timeout=10)
             for pipe in (child.stdin, child.stdout, child.stderr):
                 pipe.close()
+        wait_for_windows_lock_release(self.state_dir)
         self.compile()
         self.oracle()
 

@@ -295,3 +295,95 @@ done
 ```
 
 该 TREC 离线入口重算质量与区间；请求覆盖/400 policy、路由、epoch、journal 和延迟必须同时核对已封存的请求证据，不能从 TREC 行数推断。最新 Windows Python3.13 复验核心69/69、evaluation83/83、Node7/7、compileall 与 diffcheck 通过；同环境原生69/83/7及固定 Linux153 的源码身份未改变。数据、模型、索引、快照、runs、原始收据及任何凭据不提交 Git。
+## DuReader 100k 协作开发集词法对照
+
+使用维护者发布的 [DuReader 100k v1.0 重建材料](https://huggingface.co/datasets/ShwStone/dureader-mini-100k/tree/2db5eadeb4adabec463324b4ca3562b7b79fda94)，从已规范化的官方公开语料重建 100,000 篇、172 条 train 和 1,020 条 dev。五份数据文件和压缩包的 SHA-256 均与[发布记录](https://huggingface.co/datasets/ShwStone/dureader-mini-100k/blob/v1.0/verification.json)一致。此处的查询来自公开 official-dev 的内部开发划分。
+
+在源码 `d1f2d12` 上通过本地公开 HTTP `POST /search` 执行手写 BM25，使用同一份冻结语料的 A1 索引。外部参考使用 `bm25s==0.2.14` 的 ATIRE 词频饱和、Lucene IDF 和 float64，双方使用同一 bigram 分词、`k1=1.2`、`b=0.75`。一条显式约束查询共用项目的硬过滤，BM25S 独立计分。1,020 次请求全部返回 HTTP 200；两份 run 都有 101,872 条记录。三条查询的短榜分别为 41、43 和 88 篇，经扫描全部 100,000 篇原文独立复核。其余 1,017 条查询各返回 100 篇。
+
+| 方法 | nDCG@10 | Recall@10 | MRR@10 | MAP@100 |
+| --- | ---: | ---: | ---: | ---: |
+| 手写 BM25（HTTP） | 0.133959 | 0.157120 | 0.217316 | 0.131827 |
+| BM25S 公式对齐 | 0.133959 | 0.157120 | 0.217316 | 0.131827 |
+
+两份 run 的全部排名逐条一致。按 HTTP 的六位小数精度比较，101,872 个分数全部相同。使用 seed `2026` 做 10,000 次查询级配对 bootstrap，四项指标差均为 0，95% 区间均为 `[0, 0]`。这组结果用于验证词法实现的一致性。HTTP 单次顺序开发评测的平均/p50/p95 分别为 76.10/69.17/140.04 ms，期间本机有索引压缩任务；BM25S 的外部 run 无可比较的 HTTP 延迟。
+
+HTTP 和 BM25S 两份 TREC 文件 SHA-256 分别为 `2bea488509bc591c52858c30adbe2677d5fc5fe14bb65dc3a9d6957ec76645bf`、`e46e616b962c5fccb03707feeefe4aaeb01d9060f618dcfe3ff5a39b4484945f`。逐查询证据与校验收据保存在 Git 外。复建、TREC 校验和参考入口见 [评测说明](README.md#external-trec-runs-and-the-dureader-100k-development-subset)。
+
+## DuReader 100k 四模式与精确稠密参考
+
+2026-11-12 在固定运行源码 `71284695a822e08088e3c393eb387ea3b8d54667` 上完成
+100,000 篇、1,020 条 dev 查询、4,960 条 qrels 的四模式质量测试。
+冻结协议 SHA-256 为 `26c99b6ab9cfe8ed97adddd54864450b48b5bc6e2f7cf68321e53d94aea77e64`。
+四臂使用同一压缩词法索引、候选池 200、RRF 60、规则 `rules-v1`、
+BM25 和关闭查询扩展的配置，评测深度 100。语义路径使用
+[固定 BGE revision](https://huggingface.co/BAAI/bge-small-zh-v1.5/tree/7999e1d3359715c523056ef9478215996d62a620)，
+512 维 FP32、CLS、右截断 512、L2 归一化和固定查询前缀。
+98 个封存的文档向量块同时供精确参考和 Qdrant 1.16.0 使用；
+精确参考以 float64 计算余弦相似度。HNSW 使用 `m=16`、
+`ef_construct=100`、`full_scan_threshold=10` KiB、`max_indexing_threads=2`、
+`on_disk=true`、`hnsw_ef=256`，正式请求前核验精确点数 100,000，
+索引向量数 100,000，collection 为 `green`。快照恢复后重复该核验。
+
+语料的有序指纹为 `0792a807c614de14e3b57f3b8f051add2b1c4d7556eee743f4e3cd69f28d5457`，
+Qdrant 快照 SHA-256 为 `4d5bf2e061a30a4be4b51711e951637851a510fec73acd9937e4c811bc3dbcfd`。
+四模式的词法与向量身份及请求配置均通过逐臂前后检查。
+一条显式约束查询按预先登记的规则留在 Dense 和精确参考的分母内，
+以空排名计分；Hybrid 和 Adaptive 继续执行硬过滤。
+质量分数、配对区间、约束边界和成本见[报告第 9 节](../REPORT.md#9-协作开发集与-router-对照)。
+精确参考与 ANN 使用同一编码器，故它们的差异衡量近似检索与实现一致性。
+
+| 方法 | TREC 行数 | TREC SHA-256 |
+| --- | ---: | --- |
+| HTTP BM25（compact） | 101,872 | `2bea488509bc591c52858c30adbe2677d5fc5fe14bb65dc3a9d6957ec76645bf` |
+| HTTP Dense | 101,900 | `62caf89b6e77e3af0d3fc8f0de870e02e45d96df657be9051cde2508299abdc2` |
+| HTTP Hybrid | 102,000 | `dae02ed96fb606d5fbeade44bffad29938565b107cb03dbfbe96c492c4c24d37` |
+| HTTP Adaptive | 101,943 | `3fc535ca9eec398aacf9bf808faf5c2474cee53a8306555c29d8e752a04c080e` |
+| 精确 Dense 参考 | 101,900 | `240637c36bcd50dc059a95c587c776edb1e072900740383f6120fdd5aa92e859` |
+
+外部 FAISS 参考生成 101,900 行 TREC，SHA256 为 `344a6ba79a630d3e79daf906b186b005958cbe14c7c25d953fcf5ccdd9dcbe71`。
+它在同一冻结语料、1,020 条开发查询和 4,960 条 qrels 上评分，显式约束查询保留为空排名。
+采用 FAISS CPU 1.10.0，核对文档及查询原始向量摘要后，用 L2 归一化向量执行 float32 平面内积扫描。
+用 `evaluation.external_run` 验证文档 ID、查询覆盖、深度 100 和四项指标；
+与 NumPy 精确参考和 Qdrant ANN 都按查询配对重采样 10,000 次，seed 2026，95% 百分位区间。
+FAISS 相对 Qdrant 的平均 Top-10/100 集合重合率分别为 99.98%/97.83%，MAP@100 差值为 +0.0000080，
+95% 区间为 [−0.0000724, +0.0001152]，其余三项差值和区间均为 0。
+汇总回执 SHA256 为 `4a0f89ccfe6bc3a7254b834f040b34976094a0edcba765c60851a963f484119f`。
+复现参数见[精确向量参考](README.md#exact-dense-reference)。TREC、逐查询指标及回执保存在 Git 外。
+
+两个服务 epoch 使用同一快照和参数。质量臂保留各自的请求与服务日志，
+跨臂延迟仅使用随后单独运行的交错计时。复现步骤见
+[同语料 HTTP 评测](README.md#matched-http-runs-on-the-shared-development-corpus)。
+计时环境为 Intel Core Ultra 7 155H、Windows Python 3.13.5 CPU 推理、
+WSL 内 Qdrant 1.16.0 和回环 HTTP。计时回执 SHA-256 为
+`6dfcb325e462edee38b0335c6b6a26711c180e299953a6f9642d8e980bc3acb5`。
+质量配对回执 SHA-256 为 `28ec2c9e3407003b6979bc1ce1f37ff10f874372855cfc0c237686b6138187bc`，
+逐臂 TREC 重评分、ANN 重合率与单一计时服务日志的复核回执 SHA-256 为
+`25b137212b918173b9eaa9fc94baed5b48c71d09e2b4d9aefd9162be19554b34`。
+原始请求、逐查询结果、TREC、回执和快照保存在 Git 外。
+
+## 新闻 20k 本地浏览器演示与恢复验收
+
+本地恢复并核对交接清单中的 10 个索引与向量文件，验证语料指纹
+`1480ab10cbefcb57bc1132871420b1f88d18ac5f260150080953f9441377a861` 和
+Qdrant 快照 SHA-256 `143724e357d88a40ed5ec5f0d0a22f2f3c1e3769e8aa6d0cad35859100104036`。
+从干净的 Linux Qdrant 1.16.0 实例恢复快照，精确计数为 20,000。
+固定 `rules-v1`、候选池 200、RRF 60 和 `hnsw_ef=256`，使用
+`scripts/online_acceptance.py` 验证健康 23/23、后端断开 10/10、
+同一 HTTP 进程恢复 27/27。断开时强制 dense 和 hybrid 返回 503，
+词法仍可用，自适应会明确报告回退。
+
+Chrome 无头浏览器访问实际服务，用开发查询“抚州采茶戏如何培养青年演员并抢救散落的老剧本和曲谱？”
+经表单执行四模式，并验证索引身份和路由回显。未闭合引号返回查询错误，浏览器清除先前的结果。
+这些记录覆盖本地端到端演示和故障恢复。检索质量的人评结论等待盲审 qrels。
+
+同一语料和快照上的另一轮本地工程验收使用冻结的 50 条开发查询。四种模式分别运行
+50 次串行 HTTP 请求，200 次全部返回 HTTP 200，且客户端 journal 与同一服务进程的
+标签、状态及路由逐条一致。固定 RRF 调用向量检索 50 次，规则 Router 调用 9 次（18%），
+其余 41 次执行词法检索。向量调用全部成功，各模式均无 fallback。规则 Router 的服务端
+决策耗时 p95 为 0.091 ms。
+
+这轮是顺序单次工程测量，运行时同机有 BGE 文档编码，未独立预热或交错各臂。HTTP
+延迟保留在原始收据中，速度比较需要独立的交错重复测量。相关性判断仍沿用已有辅助标注，
+人评质量结论等待盲审。完整 TREC、journal、服务日志与对账收据保存在 Git 外，
+对账收据 SHA-256 为 `c5b5b167e505404b5539210e158270feb226b66479ab04db38d5573b7c2d308c`。

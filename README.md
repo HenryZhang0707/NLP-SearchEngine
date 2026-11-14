@@ -4,6 +4,8 @@
 
 - [设计与分工](DESIGN.md)
 - [跨组 API 契约](contracts/RETRIEVAL.md)
+- [实验报告](REPORT.md) / [当前交付与待办](TODO.md)
+- [RFC-0001 等向量预算与学习型 Router 对照](docs/contributions/rfc0001-router-budget.md)
 - [RFC-0004 离线产物交付补充](docs/contributions/rfc0004-delivery-validation.md)
 - [RFC-0004 接收机实测与合并修正](docs/contributions/rfc0004-receiver-acceptance.md)
 - [在线服务部署与验收](docs/online-serving.md)
@@ -56,9 +58,11 @@ python3 -m offline.build --corpus fixtures/tiny_corpus.jsonl \
 # 2. 词法 conformance
 python3 -m contracts.conformance /tmp/nlp-tiny-bm25 fixtures/tiny_corpus.jsonl
 
-# 3. 核心契约、评测器和额外 unittest（可选依赖缺失时相应专项会 skip）
+# 3. 核心契约与评测器
 python3 tests/run.py
 python3 -m unittest discover -s evaluation -p 'test_*.py'
+# 扩展测试包括流式索引合并，需要 ijson
+python3 -m pip install ijson==3.4.0.post0
 python3 -m unittest discover -s tests -p 'test_*.py'
 # 可选：浏览器高亮逻辑的 Unicode/转义回归测试（Node.js 18+，无需 npm 依赖）
 node --test tests/test_web.cjs
@@ -236,6 +240,8 @@ python3 -m evaluation.evaluate \
 paired bootstrap 已完成并独立复算。Dense 四项质量最高，当前规则 Adaptive 在该集上
 低于固定 Hybrid；完整结果见报告第 8 节。该包没有
 官方 test labels，内部 holdout 不冒称官方 test。
+另在协作版 DuReader 100k 的 1,020 条开发查询上，复验了四种在线模式、BM25S 和同源精确稠密参考。
+规则 Adaptive 减少了向量调用，质量低于固定 Hybrid；详见[报告第 9 节](REPORT.md#9-协作开发集与-router-对照)。
 数据、模型、快照、索引和生成 run 均留在 Git 外；具体结果与边界见 [报告](REPORT.md)
 和 [资源记录](evaluation/RESOURCES.md)。公开演示站点当前仍使用 tiny lexical 索引。
 
