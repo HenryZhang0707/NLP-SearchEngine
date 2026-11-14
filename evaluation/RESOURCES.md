@@ -341,6 +341,16 @@ Qdrant 快照 SHA-256 为 `4d5bf2e061a30a4be4b51711e951637851a510fec73acd9937e4c
 | HTTP Adaptive | 101,943 | `3fc535ca9eec398aacf9bf808faf5c2474cee53a8306555c29d8e752a04c080e` |
 | 精确 Dense 参考 | 101,900 | `240637c36bcd50dc059a95c587c776edb1e072900740383f6120fdd5aa92e859` |
 
+外部 FAISS 参考生成 101,900 行 TREC，SHA256 为 `344a6ba79a630d3e79daf906b186b005958cbe14c7c25d953fcf5ccdd9dcbe71`。
+它在同一冻结语料、1,020 条开发查询和 4,960 条 qrels 上评分，显式约束查询保留为空排名。
+采用 FAISS CPU 1.10.0，核对文档及查询原始向量摘要后，用 L2 归一化向量执行 float32 平面内积扫描。
+用 `evaluation.external_run` 验证文档 ID、查询覆盖、深度 100 和四项指标；
+与 NumPy 精确参考和 Qdrant ANN 都按查询配对重采样 10,000 次，seed 2026，95% 百分位区间。
+FAISS 相对 Qdrant 的平均 Top-10/100 集合重合率分别为 99.98%/97.83%，MAP@100 差值为 +0.0000080，
+95% 区间为 [−0.0000724, +0.0001152]，其余三项差值和区间均为 0。
+汇总回执 SHA256 为 `4a0f89ccfe6bc3a7254b834f040b34976094a0edcba765c60851a963f484119f`。
+复现参数见[精确向量参考](README.md#exact-dense-reference)。TREC、逐查询指标及回执保存在 Git 外。
+
 两个服务 epoch 使用同一快照和参数。质量臂保留各自的请求与服务日志，
 跨臂延迟仅使用随后单独运行的交错计时。复现步骤见
 [同语料 HTTP 评测](README.md#matched-http-runs-on-the-shared-development-corpus)。

@@ -216,10 +216,12 @@ python3 -m evaluation.compare --qrels data/duretrieval/qrels.test.tsv \
   --metric ndcg --samples 10000 --seed 2026
 ```
 
-Run the evaluator tests with:
+Install the evaluator test dependencies and run both test entry points:
 
 ```bash
+python3 -m pip install pytest numpy ijson==3.4.0.post0
 python3 -m unittest discover -s evaluation -p 'test_*.py'
+python3 -m pytest evaluation
 ```
 
 ## External TREC runs and the DuReader 100k development subset
@@ -301,6 +303,21 @@ python -m evaluation.dense_reference \
   --cache-dir artifacts/mini100k/bge-cache --model-path models/bge-small-zh-v1.5 \
   --chunk-size 1024 --batch-size 32 --shards 1 --depth 100 --out runs/bge-exact-mini100k
 ```
+
+The default backend is NumPy. Install `faiss-cpu==1.10.0` and add
+`--backend faiss` to run the independent FAISS CPU reference on the same
+embeddings. FAISS uses a flat inner-product index with L2-normalized float32
+inputs and resolves exact score ties in corpus order, including ties across
+the requested cutoff. Query encoding runs in a separate process so Windows can load each backend's
+OpenMP library independently. The manifest identifies the backend, arithmetic, and
+package version. The [FAISS metric documentation](https://github.com/facebookresearch/faiss/wiki/MetricType-and-distances)
+describes the equivalence of normalized inner product and cosine similarity.
+
+To compare against a sealed historical NumPy run, also pass
+`--reference-manifest /path/to/manifest.json <verified-SHA256>`. This admits
+the historical cache contract only if the other cache fields and the frozen
+query inputs match. The document and query vector SHA256 values must match
+before the FAISS ranking is published.
 
 Pass the same cache partition parameters used by the producer. When the frozen
 query set includes explicit lexical constraints, the exceptions file must list
